@@ -430,27 +430,5 @@ ALTER TASK AIRPORT_<XXX>.V5.TASK_INGEST_ADSB RESUME;
 
 - **[Overture Maps](https://overturemaps.org/)**: Open-source geospatial data for airport infrastructure
 
----
-
-## 🔒 Security Notes
-
-- **Never commit** API keys or PAT tokens to Git
-- Store secrets in Snowflake `SECRET` objects (as shown in Option 2)
-- Use `.gitignore` to exclude `aviationstack_api_key.txt` and `pat_*.txt` files
-- Rotate GitHub PATs regularly (recommend 90-day expiration)
-- Use role-based access control (RBAC) for Streamlit apps in production
-
----
-
-## 🆘 Support
-
-For issues or questions:
-1. Check this README troubleshooting section
-2. Review [COMPREHENSIVE_README.md](COMPREHENSIVE_README.md) for technical details
-3. Check Monitoring page in Dashboard for data pipeline health
-4. Review Snowflake task history: `SELECT * FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY())`
-
----
-
 **Built with Snowflake Native Architecture**  
 Version: V5 | Last Updated: January 2026
