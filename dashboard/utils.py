@@ -10,6 +10,17 @@ import json
 from snowflake.snowpark.context import get_active_session
 
 # =============================================================================
+# QUERY TAG FOR TELEMETRY
+# =============================================================================
+
+def set_query_tag(_session):
+    """Set query tag for telemetry tracking on all dashboard queries."""
+    try:
+        _session.sql("ALTER SESSION SET QUERY_TAG = 'UC-FLEET-1'").collect()
+    except Exception:
+        pass  # Fail silently if query tag setting fails
+
+# =============================================================================
 # DATABASE SELECTION UTILITIES
 # =============================================================================
 
@@ -20,6 +31,7 @@ def get_available_airports():
     Returns a list of dicts with 'database', 'iata_code', 'airport_name'.
     """
     session = get_active_session()
+    set_query_tag(session)
     
     def _has_v5_airport_geometry(db_name: str) -> bool:
         """Return True if db has V5.PROPERTIES_AIRPORT (our installer baseline object)."""
@@ -412,6 +424,7 @@ def get_airport_default_view(session, padding: float = 0.05):
 def get_airport_bbox(_session):
     """Return bounding box + center for the selected airport from <db>.V5.PROPERTIES_AIRPORT.
     Used by pages to avoid hardcoded lat/lon bounds."""
+    set_query_tag(_session)
     db = get_selected_database()
     schema = get_schema()
     try:
@@ -534,6 +547,7 @@ def get_table_date_bounds(_session, table_fqn: str, ts_col: str) -> tuple:
         table_fqn: Fully qualified table name, e.g. AIRPORT_YVR.V5.ADSB_DATA_LOCAL
         ts_col: Timestamp column name/expression, e.g. TIMESTAMP or t_entry
     """
+    set_query_tag(_session)
     # Very small guardrail against accidental SQL injection via ts_col.
     # (table_fqn is constructed by our code, not user input.)
     import re as _re
@@ -631,6 +645,7 @@ def get_airline_name_map(_session, start_date=None, end_date=None):
     """Return dict mapping airline code (ICAO and IATA) to full marketing carrier name.
     Derived on-demand from FLIGHT_SCHEDULE (we no longer create AIRLINE_NAME_MAP).
     """
+    set_query_tag(_session)
     db = get_selected_database()
     schema = get_schema()
     # Optional date filtering: helps performance on large schedules
@@ -814,6 +829,533 @@ def render_navigation(current_page_label: str = "Flight Tracker") -> None:
 
 
 # =============================================================================
+# TIMEZONE UTILITIES
+# =============================================================================
+
+@st.cache_data(ttl=3600)
+def get_airport_tzid(_session, db_prefix: str) -> str:
+    """Get airport IANA timezone ID from PROPERTIES_AIRPORT.
+    
+    Returns:
+        IANA timezone ID (e.g., 'Europe/Berlin', 'America/New_York')
+        Falls back to 'UTC' if not available or if AIRPORT_TZID column doesn't exist.
+    """
+    set_query_tag(_session)
+    try:
+        q = f"""
+        SELECT AIRPORT_TZID
+        FROM {db_prefix}.PROPERTIES_AIRPORT
+        LIMIT 1
+        """
+        r = _session.sql(q).collect()
+        if r and r[0]['AIRPORT_TZID']:
+            return str(r[0]['AIRPORT_TZID'])
+    except Exception:
+        pass
+    return 'UTC'
+
+
+@st.cache_data(ttl=3600)
+def _check_airport_tzid_exists(_session, db_prefix: str) -> bool:
+    """Check if PROPERTIES_AIRPORT has AIRPORT_TZID column (V5 feature)."""
+    try:
+        _session.sql(f"SELECT AIRPORT_TZID FROM {db_prefix}.PROPERTIES_AIRPORT LIMIT 0").collect()
+        return True
+    except Exception:
+        return False
+
+
+def get_airport_local_date_sql(db_prefix: str, ts_expr: str = "SYSDATE()") -> str:
+    """Return SQL expression to compute airport-local DATE from a UTC timestamp expression.
+    
+    Args:
+        db_prefix: Fully-qualified db.schema prefix
+        ts_expr: SQL timestamp expression (default: SYSDATE() for "now")
+    
+    Returns:
+        SQL expression that converts UTC timestamp to airport-local date.
+        Falls back to UTC date (::DATE) if AIRPORT_TZID column doesn't exist.
+    
+    Example:
+        WHERE service_date = {get_airport_local_date_sql(db_prefix)}
+    
+    Note: Requires PROPERTIES_AIRPORT.AIRPORT_TZID column (V5 update).
+          If not present, falls back to UTC date for backward compatibility.
+    """
+    # Backward compatibility: if AIRPORT_TZID doesn't exist, just use UTC date
+    # This allows dashboards to work with older V5 deployments
+    try:
+        # Try to get session from Streamlit context
+        from snowflake.snowpark.context import get_active_session
+        session = get_active_session()
+        has_tzid = _check_airport_tzid_exists(session, db_prefix)
+    except Exception:
+        # If we can't check, assume it exists (optimistic)
+        has_tzid = True
+    
+    if has_tzid:
+        return f"""TO_DATE(
+            CONVERT_TIMEZONE(
+                'UTC',
+                (SELECT AIRPORT_TZID FROM {db_prefix}.PROPERTIES_AIRPORT LIMIT 1),
+                {ts_expr}
+            )
+        )"""
+    else:
+        # Fallback: just use UTC date
+        return f"{ts_expr}::DATE"
+
+
+@st.cache_data(ttl=300)
+def get_airport_local_today(_session, db_prefix: str) -> str:
+    """Get airport-local 'today' as a DATE string (YYYY-MM-DD).
+    
+    Uses PROPERTIES_AIRPORT.AIRPORT_TZID to compute the local date from SYSDATE() (UTC).
+    """
+    set_query_tag(_session)
+    try:
+        q = f"""
+        SELECT {get_airport_local_date_sql(db_prefix)} AS local_today
+        """
+        r = _session.sql(q).collect()
+        if r and r[0]['LOCAL_TODAY']:
+            return str(r[0]['LOCAL_TODAY'])
+    except Exception:
+        pass
+    # Fallback: session CURRENT_DATE (may be wrong for airports far from session timezone)
+    import datetime
+    return datetime.date.today().isoformat()
+
+
+# =============================================================================
+# LANDING PAGE ("LIVE") QUERY HELPERS
+# =============================================================================
+
+@st.cache_data(ttl=30)
+def get_live_latest_positions(
+    _session,
+    db_prefix: str,
+    *,
+    lookback_minutes: int = 10,
+    max_flights: int = 80,
+):
+    """Return latest ADS-B point per flight within the lookback window.
+
+    Columns returned (typical):
+      FLIGHT, ICAO_HEX, REGISTRATION, LAST_SEEN, LAT, LON, ALTITUDE_BARO, VELOCITY, TRACK
+    """
+    lookback_minutes = int(lookback_minutes or 10)
+    max_flights = int(max_flights or 80)
+    lookback_minutes = max(1, min(60, lookback_minutes))
+    max_flights = max(1, min(300, max_flights))
+
+    # ADS-B event timestamps are stored as TIMESTAMP_NTZ in UTC-by-convention.
+    # Avoid LTZ/NTZ comparison pitfalls by anchoring windows to an explicit UTC TIMESTAMP_NTZ.
+    now_utc_ntz = "TO_TIMESTAMP_NTZ(CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP()))"
+
+    q = f"""
+    WITH recent AS (
+      SELECT
+        FLIGHT,
+        ICAO_HEX,
+        REGISTRATION,
+        AIRCRAFT_DESC,
+        TIMESTAMP AS last_seen,
+        ST_Y(LOCATION) AS lat,
+        ST_X(LOCATION) AS lon,
+        ALTITUDE_BARO,
+        VELOCITY,
+        TRACK,
+        ROW_NUMBER() OVER (PARTITION BY FLIGHT ORDER BY TIMESTAMP DESC) AS rn
+      FROM {db_prefix}.ADSB_DATA_LOCAL
+      WHERE TIMESTAMP >= DATEADD('minute', -{lookback_minutes}, {now_utc_ntz})
+        AND LOCATION IS NOT NULL
+        AND FLIGHT IS NOT NULL
+    )
+    SELECT
+      FLIGHT,
+      ICAO_HEX,
+      REGISTRATION,
+      AIRCRAFT_DESC,
+      last_seen,
+      lat,
+      lon,
+      ALTITUDE_BARO,
+      VELOCITY,
+      TRACK
+    FROM recent
+    WHERE rn = 1
+    ORDER BY last_seen DESC
+    LIMIT {max_flights}
+    """
+    try:
+        return _session.sql(q).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=30)
+def get_live_timetable(_session, db_prefix: str, *, lookback_minutes: int = 10, max_flights: int = 80):
+    """Return the landing timetable for flights seen recently.
+
+    Rows represent flights seen in ADSB_DATA_LOCAL within lookback_minutes.
+    Enriches with:
+      - schedule fields from FLIGHT_SCHEDULE (Aviationstack)
+      - actual gate from GATE_ANALYSIS_FLIGHT_GATE_TIME
+
+    The function first tries a centralized helper view (created by installer):
+      {db_prefix}.HELPER_LANDING_LIVE_TIMETABLE
+    and falls back to an inline query if that view is missing.
+    """
+    lookback_minutes = int(lookback_minutes or 10)
+    max_flights = int(max_flights or 80)
+    lookback_minutes = max(1, min(60, lookback_minutes))
+    max_flights = max(1, min(300, max_flights))
+
+    now_utc_ntz = "TO_TIMESTAMP_NTZ(CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP()))"
+
+    # 1) Preferred: installer-provided helper view
+    try:
+        q_view = f"""
+        SELECT *
+        FROM {db_prefix}.HELPER_LANDING_LIVE_TIMETABLE
+        WHERE last_seen >= DATEADD('minute', -{lookback_minutes}, {now_utc_ntz})
+        ORDER BY last_seen DESC
+        LIMIT {max_flights}
+        """
+        df = _session.sql(q_view).to_pandas()
+        if df is not None:
+            return df
+    except Exception:
+        pass
+
+    # 2) Fallback: inline query (keeps dashboard usable even if view is not installed yet)
+    q = f"""
+    WITH airport AS (
+      SELECT
+        UPPER(airport_code) AS airport_code,
+        UPPER(airport_icao) AS airport_icao
+      FROM {db_prefix}.PROPERTIES_AIRPORT
+      LIMIT 1
+    ),
+    live AS (
+      SELECT
+        FLIGHT,
+        ICAO_HEX,
+        REGISTRATION,
+        AIRCRAFT_DESC,
+        TIMESTAMP AS last_seen,
+        ST_Y(LOCATION) AS lat,
+        ST_X(LOCATION) AS lon,
+        ALTITUDE_BARO,
+        VELOCITY,
+        TRACK,
+        ROW_NUMBER() OVER (PARTITION BY FLIGHT ORDER BY TIMESTAMP DESC) AS rn
+      FROM {db_prefix}.ADSB_DATA_LOCAL
+      WHERE TIMESTAMP >= DATEADD('minute', -{lookback_minutes}, {now_utc_ntz})
+        AND LOCATION IS NOT NULL
+        AND FLIGHT IS NOT NULL
+    ),
+    live_latest AS (
+      SELECT *
+      FROM live
+      WHERE rn = 1
+      QUALIFY ROW_NUMBER() OVER (ORDER BY last_seen DESC) <= {max_flights}
+    ),
+    ids AS (
+      SELECT
+        l.*,
+        UPPER(TRIM(l.flight)) AS flight_norm,
+        REGEXP_SUBSTR(UPPER(TRIM(l.flight)), '^[A-Z]{{{{2,3}}}}') AS prefix,
+        REGEXP_SUBSTR(UPPER(TRIM(l.flight)), '[0-9]+') AS flight_num
+      FROM live_latest l
+    ),
+    dim_icao AS (
+      SELECT
+        TRIM(UPPER(AIRLINE_ICAO)) AS airline_icao,
+        MAX(NULLIF(TRIM(AIRLINE_IATA), '')) AS airline_iata,
+        MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
+      FROM {db_prefix}.HELPER_AIRLINE_DIM
+      WHERE AIRLINE_ICAO IS NOT NULL AND TRIM(AIRLINE_ICAO) <> ''
+      GROUP BY 1
+    ),
+    dim_iata AS (
+      SELECT
+        TRIM(UPPER(AIRLINE_IATA)) AS airline_iata,
+        MAX(NULLIF(TRIM(AIRLINE_ICAO), '')) AS airline_icao,
+        MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
+      FROM {db_prefix}.HELPER_AIRLINE_DIM
+      WHERE AIRLINE_IATA IS NOT NULL AND TRIM(AIRLINE_IATA) <> ''
+      GROUP BY 1
+    ),
+    nearest_gate AS (
+      -- Nearest gate to the *latest position* (\"now\"). This explains what the user sees on the map.
+      SELECT
+        i.flight,
+        g.gate_name AS nearest_gate,
+        ST_DISTANCE(TO_GEOGRAPHY(ST_POINT(i.lon, i.lat)), g.gate_geom) AS nearest_gate_dist_m
+      FROM ids i
+      JOIN {db_prefix}.PROPERTIES_GATES g
+        ON ST_DWITHIN(TO_GEOGRAPHY(ST_POINT(i.lon, i.lat)), g.gate_geom, 300)
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY i.flight
+        ORDER BY ST_DISTANCE(TO_GEOGRAPHY(ST_POINT(i.lon, i.lat)), g.gate_geom) ASC NULLS LAST
+      ) = 1
+    ),
+    sched_candidates AS (
+      SELECT
+        i.flight AS flight,
+        s.*,
+        IFF(UPPER(TRIM(s.FLIGHT_ICAO)) = i.flight_norm, 0,
+            IFF(UPPER(TRIM(s.FLIGHT_IATA)) = i.flight_norm, 1, 2)
+        ) AS match_rank,
+        ABS(DATEDIFF('day', s.FLIGHT_DATE, CURRENT_DATE())) AS date_diff
+      FROM ids i
+      JOIN {db_prefix}.FLIGHT_SCHEDULE s
+        ON s.FLIGHT_DATE BETWEEN DATEADD('day', -1, CURRENT_DATE()) AND DATEADD('day', 1, CURRENT_DATE())
+       AND (
+            UPPER(TRIM(s.FLIGHT_ICAO)) = i.flight_norm
+         OR UPPER(TRIM(s.FLIGHT_IATA)) = i.flight_norm
+         OR (
+              i.flight_num IS NOT NULL
+          AND s.FLIGHT_NUMBER = i.flight_num
+          AND (
+                (LENGTH(i.prefix) = 3 AND UPPER(TRIM(s.AIRLINE_ICAO)) = i.prefix)
+             OR (LENGTH(i.prefix) = 2 AND UPPER(TRIM(s.AIRLINE_IATA)) = i.prefix)
+          )
+         )
+       )
+    ),
+    sched_best AS (
+      SELECT
+        flight,
+        FLIGHT_DATE,
+        FLIGHT_STATUS,
+        DEPARTURE_AIRPORT,
+        ARRIVAL_AIRPORT,
+        DEPARTURE_SCHEDULED,
+        DEPARTURE_ESTIMATED,
+        DEPARTURE_ACTUAL,
+        DEPARTURE_TERMINAL,
+        DEPARTURE_GATE,
+        ARRIVAL_SCHEDULED,
+        ARRIVAL_ESTIMATED,
+        ARRIVAL_ACTUAL,
+        ARRIVAL_TERMINAL,
+        ARRIVAL_GATE,
+        AIRLINE_NAME,
+        AIRLINE_IATA,
+        AIRLINE_ICAO,
+        FLIGHT_NUMBER,
+        FLIGHT_IATA,
+        FLIGHT_ICAO,
+        UPDATED_AT,
+        IFF(
+          UPPER(DEPARTURE_AIRPORT) IN (a.airport_code, a.airport_icao),
+          'departure',
+          IFF(UPPER(ARRIVAL_AIRPORT) IN (a.airport_code, a.airport_icao), 'arrival', 'unknown')
+        ) AS direction
+      FROM sched_candidates c
+      CROSS JOIN airport a
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY flight ORDER BY match_rank ASC, date_diff ASC, UPDATED_AT DESC) = 1
+    ),
+    gate_actual AS (
+      -- Gate actual service_date is airport-local day (from installer)
+      SELECT
+        service_date,
+        UPPER(TRIM(flight_number)) AS flight_number_norm,
+        gate_name AS actual_gate,
+        dwell_seconds
+      FROM {db_prefix}.GATE_ANALYSIS_FLIGHT_GATE_TIME
+      WHERE service_date BETWEEN DATEADD('day', -1, {get_airport_local_date_sql(db_prefix)}) 
+                            AND DATEADD('day', 1, {get_airport_local_date_sql(db_prefix)})
+        AND flight_number IS NOT NULL
+    )
+    SELECT
+      i.flight AS flight,
+      i.icao_hex AS icao_hex,
+      i.registration AS registration,
+      i.aircraft_desc AS aircraft_desc,
+      i.last_seen AS last_seen,
+      i.lat AS lat,
+      i.lon AS lon,
+      i.altitude_baro AS altitude_baro,
+      i.velocity AS velocity,
+      i.track AS track,
+      sb.direction AS direction,
+      COALESCE(sb.airline_name, di.airline_name, dj.airline_name) AS airline_name,
+      COALESCE(sb.airline_iata, di.airline_iata, dj.airline_iata) AS airline_iata,
+      COALESCE(sb.airline_icao, di.airline_icao, dj.airline_icao) AS airline_icao,
+      sb.departure_airport AS departure_airport,
+      sb.arrival_airport AS arrival_airport,
+      sb.departure_scheduled AS departure_scheduled,
+      sb.departure_estimated AS departure_estimated,
+      sb.departure_actual AS departure_actual,
+      sb.arrival_scheduled AS arrival_scheduled,
+      sb.arrival_estimated AS arrival_estimated,
+      sb.arrival_actual AS arrival_actual,
+      sb.departure_terminal AS departure_terminal,
+      sb.departure_gate AS departure_gate_planned,
+      sb.arrival_terminal AS arrival_terminal,
+      sb.arrival_gate AS arrival_gate_planned,
+      IFF(sb.direction = 'departure', sb.departure_gate, IFF(sb.direction = 'arrival', sb.arrival_gate, NULL)) AS planned_gate,
+      IFF(sb.direction = 'departure', sb.departure_terminal, IFF(sb.direction = 'arrival', sb.arrival_terminal, NULL)) AS planned_terminal,
+      ng.nearest_gate AS nearest_gate,
+      ng.nearest_gate_dist_m AS nearest_gate_dist_m,
+      ga.actual_gate AS actual_gate,
+      ga.dwell_seconds AS actual_gate_dwell_seconds,
+      sb.flight_number AS schedule_flight_number,
+      sb.flight_iata AS schedule_flight_iata,
+      sb.flight_icao AS schedule_flight_icao,
+      sb.flight_date AS schedule_flight_date,
+      sb.flight_status AS schedule_status
+    FROM ids i
+    LEFT JOIN sched_best sb
+      ON sb.flight = i.flight
+    -- Fallback airline name when schedule match is missing: infer from callsign prefix via HELPER_AIRLINE_DIM
+    LEFT JOIN dim_icao di
+      ON LENGTH(i.prefix) = 3 AND di.airline_icao = i.prefix
+    LEFT JOIN dim_iata dj
+      ON LENGTH(i.prefix) = 2 AND dj.airline_iata = i.prefix
+    LEFT JOIN nearest_gate ng
+      ON ng.flight = i.flight
+    LEFT JOIN gate_actual ga
+      ON ga.service_date = COALESCE(sb.flight_date, i.last_seen::DATE)
+     AND ga.flight_number_norm = UPPER(TRIM(i.flight))
+    ORDER BY i.last_seen DESC
+    """
+    try:
+        return _session.sql(q).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60)
+def get_live_trajectories(
+    _session,
+    db_prefix: str,
+    flight_ids: list,
+    *,
+    lookback_hours: int = 2,
+    points_per_flight: int | None = 80,
+):
+    """Return trajectories (as paths) for the given flight IDs.
+
+    Args:
+        points_per_flight: If None, returns all points. Otherwise decimates to this many points per flight.
+
+    Returns a DataFrame with columns:
+      flight, path (array of [lon,lat]), start_ts, end_ts, n_points
+    """
+    try:
+        lookback_hours = int(lookback_hours or 2)
+        lookback_hours = max(1, min(6, lookback_hours))
+    except Exception:
+        lookback_hours = 2
+
+    # If points_per_flight is None, show all points (no decimation)
+    decimate = True
+    if points_per_flight is None:
+        decimate = False
+        points_per_flight = 1000  # dummy value, won't be used
+    else:
+        try:
+            points_per_flight = int(points_per_flight or 80)
+            points_per_flight = max(20, min(1000, points_per_flight))
+        except Exception:
+            points_per_flight = 80
+
+    if not flight_ids:
+        return pd.DataFrame(columns=["flight", "path", "start_ts", "end_ts", "n_points"])
+
+    # Build a VALUES list safely (these are DB values, but still escape quotes).
+    safe_ids = [str(x).strip().replace("'", "''") for x in flight_ids if str(x).strip()]
+    safe_ids = safe_ids[:200]  # hard cap for payload + query compile time
+    if not safe_ids:
+        return pd.DataFrame(columns=["flight", "path", "start_ts", "end_ts", "n_points"])
+    values_sql = ", ".join(["('%s')" % x for x in safe_ids])
+
+    now_utc_ntz = "TO_TIMESTAMP_NTZ(CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP()))"
+
+    if decimate:
+        # Decimate trajectories to points_per_flight
+        q = f"""
+        WITH ids AS (
+          SELECT column1::STRING AS flight
+          FROM VALUES {values_sql}
+        ),
+        pts AS (
+          SELECT
+            a.FLIGHT AS flight,
+            a.TIMESTAMP AS ts,
+            ST_X(a.LOCATION) AS lon,
+            ST_Y(a.LOCATION) AS lat
+          FROM {db_prefix}.ADSB_DATA_LOCAL a
+          JOIN ids i ON i.flight = a.FLIGHT
+          WHERE a.TIMESTAMP >= DATEADD('hour', -{lookback_hours}, {now_utc_ntz})
+            AND a.LOCATION IS NOT NULL
+        ),
+        ranked AS (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (PARTITION BY flight ORDER BY ts) AS rn,
+            COUNT(*) OVER (PARTITION BY flight) AS n
+          FROM pts
+        ),
+        step_calc AS (
+          SELECT
+            *,
+            GREATEST(1, FLOOR(n / {int(points_per_flight)})) AS step
+          FROM ranked
+        ),
+        decimated AS (
+          SELECT *
+          FROM step_calc
+          WHERE rn = 1 OR rn = n OR MOD(rn, step) = 0
+        )
+        SELECT
+          flight,
+          ARRAY_AGG(ARRAY_CONSTRUCT(lon, lat)) WITHIN GROUP (ORDER BY ts) AS path,
+          MIN(ts) AS start_ts,
+          MAX(ts) AS end_ts,
+          COUNT(*) AS n_points
+        FROM decimated
+        GROUP BY flight
+        """
+    else:
+        # Show all points (no decimation)
+        q = f"""
+        WITH ids AS (
+          SELECT column1::STRING AS flight
+          FROM VALUES {values_sql}
+        ),
+        pts AS (
+          SELECT
+            a.FLIGHT AS flight,
+            a.TIMESTAMP AS ts,
+            ST_X(a.LOCATION) AS lon,
+            ST_Y(a.LOCATION) AS lat
+          FROM {db_prefix}.ADSB_DATA_LOCAL a
+          JOIN ids i ON i.flight = a.FLIGHT
+          WHERE a.TIMESTAMP >= DATEADD('hour', -{lookback_hours}, {now_utc_ntz})
+            AND a.LOCATION IS NOT NULL
+        )
+        SELECT
+          flight,
+          ARRAY_AGG(ARRAY_CONSTRUCT(lon, lat)) WITHIN GROUP (ORDER BY ts) AS path,
+          MIN(ts) AS start_ts,
+          MAX(ts) AS end_ts,
+          COUNT(*) AS n_points
+        FROM pts
+        GROUP BY flight
+        """
+    try:
+        return _session.sql(q).to_pandas()
+    except Exception:
+        return pd.DataFrame(columns=["flight", "path", "start_ts", "end_ts", "n_points"])
+
+
+# =============================================================================
 # INFRASTRUCTURE LAYER UTILITIES
 # =============================================================================
 
@@ -865,6 +1407,7 @@ def get_available_infrastructure_types(_session, db_prefix: str):
     Query distinct infrastructure types from PROPERTIES_INFRASTRUCTURE.
     Returns DataFrame with columns: layer_type, is_aeroway, object_count
     """
+    set_query_tag(_session)
     q = f"""
     SELECT 
         COALESCE(osm_aeroway, class) AS layer_type,
@@ -893,6 +1436,7 @@ def get_infrastructure_layers(_session, db_prefix: str, layer_types: list, inclu
         layer_types: List of layer types to fetch
         include_tags: If True, include source_tags_json column for tooltip display
     """
+    set_query_tag(_session)
     if not layer_types:
         return pd.DataFrame()
     

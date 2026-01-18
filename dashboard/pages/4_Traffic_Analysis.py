@@ -496,7 +496,7 @@ def get_schedule_vs_actual(_session, date):
             REGEXP_SUBSTR(FLIGHT, '[0-9]+') AS FLIGHT_NUMBER,
             MIN(TIMESTAMP) AS FIRST_SEEN
     FROM {db_prefix}.ADSB_DATA_LOCAL
-        WHERE TIMESTAMP::DATE = '{date}'::DATE
+        WHERE {utils.get_airport_local_date_sql(db_prefix, "TIMESTAMP")} = '{date}'::DATE
           AND FLIGHT IS NOT NULL
         GROUP BY 1
     )

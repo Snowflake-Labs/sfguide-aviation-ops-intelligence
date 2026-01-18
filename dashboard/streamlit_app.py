@@ -2,7 +2,7 @@
 Dashboard Home
 
 Uses Streamlit built-in multipage sidebar navigation (dashboard/pages/*).
-We redirect to Flight Tracker for a "single entry" experience.
+We redirect to Live View for a "single entry" experience.
 """
 
 import streamlit as st
@@ -21,6 +21,6 @@ if not airports:
     st.write("Run the installer Streamlit app first, then come back here.")
     st.stop()
 
-st.switch_page("pages/1_Flight_Tracker.py")
+st.switch_page("pages/0_Live_View.py")
 
 

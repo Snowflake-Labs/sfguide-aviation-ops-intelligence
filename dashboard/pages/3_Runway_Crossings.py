@@ -166,24 +166,16 @@ def get_crossing_analytics(_session, start_d, end_d, dirs):
     """Get ALL crossing events with flight/airline data for analytics (no limit)"""
     dir_filter = "','".join(dirs)
     q = f"""
-    WITH crossings AS (
-      SELECT
-        c.flight_key,
-        c.t_entry,
-        c.direction,
-        c.duration_s
-      FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED c
-      WHERE DATE(c.t_entry) BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
-        AND c.direction IN ('{dir_filter}')
-    )
-    SELECT 
-      c.*,
-      a.FLIGHT AS flight_number,
-      SUBSTR(a.FLIGHT, 1, 3) AS airline_code
-    FROM crossings c
-    LEFT JOIN {db_prefix}.ADSB_DATA_LOCAL a
-      ON a.FLIGHT_KEY = c.flight_key
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY c.flight_key ORDER BY a.TIMESTAMP) = 1
+    SELECT
+      flight_key,
+      t_entry,
+      direction,
+      duration_s,
+      flight_number,
+      airline_code
+    FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
+    WHERE DATE(t_entry) BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+      AND direction IN ('{dir_filter}')
     """
     try:
         return _session.sql(q).to_pandas()
@@ -195,32 +187,24 @@ def get_crossing_details(_session, start_d, end_d, dirs, limit=100):
     """Get recent crossing events for table display (limited)"""
     dir_filter = "','".join(dirs)
     q = f"""
-    WITH crossings AS (
-      SELECT
-        c.flight_key,
-        c.t_entry,
-        c.t_exit,
-        c.direction,
-        c.duration_s,
-        ROUND(c.duration_s/60.0, 2) AS duration_min,
-        ROUND(c.max_speed_kts, 1) AS max_speed_kts,
-        ROUND(c.chord_m, 1) AS chord_m,
-        ST_Y(c.midpoint_geom) AS lat,
-        ST_X(c.midpoint_geom) AS lon
-      FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED c
-      WHERE DATE(c.t_entry) BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
-        AND c.direction IN ('{dir_filter}')
-      ORDER BY c.t_entry DESC
-      LIMIT {limit}
-    )
-    SELECT 
-      c.*,
-      a.FLIGHT AS flight_number,
-      SUBSTR(a.FLIGHT, 1, 3) AS airline_code
-    FROM crossings c
-    LEFT JOIN {db_prefix}.ADSB_DATA_LOCAL a
-      ON a.FLIGHT_KEY = c.flight_key
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY c.flight_key ORDER BY a.TIMESTAMP) = 1
+    SELECT
+      flight_key,
+      t_entry,
+      t_exit,
+      direction,
+      duration_s,
+      ROUND(duration_s/60.0, 2) AS duration_min,
+      ROUND(max_speed_kts, 1) AS max_speed_kts,
+      ROUND(chord_m, 1) AS chord_m,
+      ST_Y(midpoint_geom) AS lat,
+      ST_X(midpoint_geom) AS lon,
+      flight_number,
+      airline_code
+    FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
+    WHERE DATE(t_entry) BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+      AND direction IN ('{dir_filter}')
+    ORDER BY t_entry DESC
+    LIMIT {limit}
     """
     try:
         return _session.sql(q).to_pandas()
@@ -546,7 +530,7 @@ else:
         map_style='light'
     )
     
-    st.pydeck_chart(r, use_container_width=True)
+    st.pydeck_chart(r, use_container_width=True, key="runway_crossings")
     
     st.caption(f"💡 Hexagon color and height represent {metric_label}. Zoom and tilt for 3D view.")
 
@@ -743,53 +727,50 @@ if not analytics_df.empty:
     
     # Gates used by crossing flights
     st.subheader("🚪 Gates by Crossing Flights")
-    if not flight_paths_df.empty and 'DIRECTION' in flight_paths_df.columns:
-        # Merge gate assignments with flight type from paths
-        gate_types = flight_paths_df[['FLIGHT_KEY', 'DIRECTION']].drop_duplicates()
-        
+    if not analytics_df.empty and 'FLIGHT_KEY' in analytics_df.columns:
         # Get gate assignments for crossing flights from analytics
         crossing_keys = analytics_df['FLIGHT_KEY'].unique().tolist()
         if len(crossing_keys) > 0:
-            # Query gate assignments
+            # Query gate assignments using natural join keys (ICAO_HEX, SERVICE_DATE, FLIGHT_NUMBER)
             keys_clause = "','".join([str(k) for k in crossing_keys[:1000]])
             gate_q = f"""
-            SELECT flight_key, gate_name
-            FROM {db_prefix}.GATE_ANALYSIS_FLIGHT_GATE_TIME
-            WHERE flight_key IN ('{keys_clause}')
+            SELECT 
+              r.flight_key,
+              r.direction,
+              gt.gate_name
+            FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED r
+            INNER JOIN {db_prefix}.GATE_ANALYSIS_FLIGHT_GATE_TIME gt
+              ON gt.ICAO_HEX = r.icao_hex
+             AND gt.SERVICE_DATE = r.service_date  
+             AND gt.FLIGHT_NUMBER = r.flight_number
+            WHERE r.flight_key IN ('{keys_clause}')
+              AND r.icao_hex IS NOT NULL
+              AND r.service_date IS NOT NULL
+              AND r.flight_number IS NOT NULL
             """
             
             try:
                 gate_df = session.sql(gate_q).to_pandas()
-                if not gate_df.empty:
-                    # Merge with flight types
-                    gate_with_type = gate_df.merge(gate_types, on='FLIGHT_KEY', how='left')
-                    gate_with_type = gate_with_type[gate_with_type['DIRECTION'].notna()]
+                if not gate_df.empty and 'GATE_NAME' in gate_df.columns:
+                    # Aggregate by gate and runway direction
+                    gate_agg = gate_df.groupby(['GATE_NAME', 'DIRECTION']).size().reset_index(name='count')
+                    gate_pivot = gate_agg.pivot(index='GATE_NAME', columns='DIRECTION', values='count').fillna(0)
                     
-                    if not gate_with_type.empty and 'GATE_NAME' in gate_with_type.columns:
-                        # Aggregate by gate and flight type
-                        gate_agg = gate_with_type.groupby(['GATE_NAME', 'DIRECTION']).size().reset_index(name='count')
-                        gate_pivot = gate_agg.pivot(index='GATE_NAME', columns='DIRECTION', values='count').fillna(0)
-                        
-                        # Sort by total
-                        gate_pivot['total'] = gate_pivot.sum(axis=1)
-                        gate_pivot = gate_pivot.sort_values('total', ascending=True).drop('total', axis=1).tail(15)
-                        
+                    # Sort by total
+                    gate_pivot['total'] = gate_pivot.sum(axis=1)
+                    gate_pivot = gate_pivot.sort_values('total', ascending=True).drop('total', axis=1).tail(15)
+                    
+                    if not gate_pivot.empty:
                         fig_gate = go.Figure()
-                        if 'Arrival' in gate_pivot.columns:
+                        # Add bars for each direction (N→S, S→N)
+                        for i, direction in enumerate(gate_pivot.columns):
+                            colors = ['#00BCD4', '#FF5722', '#4CAF50', '#FFC107']
                             fig_gate.add_trace(go.Bar(
-                                x=gate_pivot['Arrival'],
+                                x=gate_pivot[direction],
                                 y=gate_pivot.index,
-                                name='Arrival',
+                                name=direction,
                                 orientation='h',
-                                marker_color='#00BCD4'
-                            ))
-                        if 'Departure' in gate_pivot.columns:
-                            fig_gate.add_trace(go.Bar(
-                                x=gate_pivot['Departure'],
-                                y=gate_pivot.index,
-                                name='Departure',
-                                orientation='h',
-                                marker_color='#FF5722'
+                                marker_color=colors[i % len(colors)]
                             ))
                         
                         fig_gate.update_layout(
@@ -802,7 +783,7 @@ if not analytics_df.empty:
                             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                         )
                         st.plotly_chart(fig_gate, use_container_width=True)
-                        st.caption("Top 15 gates by total crossings. Blue=Arrivals, Orange=Departures (stacked)")
+                        st.caption(f"Top 15 gates by total crossings from flights that crossed runways")
                     else:
                         st.info("No gate assignment data available")
                 else:
@@ -812,7 +793,7 @@ if not analytics_df.empty:
         else:
             st.info("No crossings or gate data available")
     else:
-        st.info("No flight/gate data available for the selected period")
+        st.info("No crossing data available for the selected period")
     
     st.divider()
     
@@ -902,23 +883,40 @@ if not analytics_df.empty:
         except Exception:
             hdr = pd.DataFrame()
         if hdr is not None and not hdr.empty:
-            # normalize to expected casing
-            if 'flight_id' in hdr.columns and 'FLIGHT_ID' not in hdr.columns:
-                hdr = hdr.rename(columns={
-                    'flight_id': 'FLIGHT_NUMBER',
-                    'airline_name': 'AIRLINE_NAME',
-                    'origin_airport': 'ORIGIN_AIRPORT',
-                    'destination_airport': 'DESTINATION_AIRPORT',
-                })
-            flight_agg = flight_agg.merge(
-                hdr[['FLIGHT_NUMBER', 'AIRLINE_NAME', 'ORIGIN_AIRPORT', 'DESTINATION_AIRPORT']],
-                on='FLIGHT_NUMBER',
-                how='left'
-            )
-            flight_agg['LABEL'] = flight_agg.apply(
-                lambda r: f"{r['FLIGHT_NUMBER']} — {r.get('AIRLINE_NAME') or 'N/A'} — {(r.get('ORIGIN_AIRPORT') or 'N/A')}→{(r.get('DESTINATION_AIRPORT') or 'N/A')}",
-                axis=1
-            )
+            # Normalize column names to uppercase and standardize names
+            hdr.columns = [c.upper() for c in hdr.columns]
+            
+            # Map various possible column names to expected names
+            column_mapping = {
+                'FLIGHT_ID': 'FLIGHT_NUMBER',
+                'FLIGHT': 'FLIGHT_NUMBER',
+                'SCHEDULE_FLIGHT_NUMBER': 'FLIGHT_NUMBER',
+            }
+            hdr = hdr.rename(columns=column_mapping)
+            
+            # Remove duplicate columns (can happen if multiple columns map to FLIGHT_NUMBER)
+            hdr = hdr.loc[:, ~hdr.columns.duplicated()]
+            
+            # Select only columns that actually exist
+            merge_cols = ['FLIGHT_NUMBER']
+            optional_cols = ['AIRLINE_NAME', 'ORIGIN_AIRPORT', 'DESTINATION_AIRPORT']
+            
+            available_cols = [c for c in merge_cols + optional_cols if c in hdr.columns]
+            
+            if 'FLIGHT_NUMBER' in available_cols:
+                flight_agg = flight_agg.merge(
+                    hdr[available_cols],
+                    on='FLIGHT_NUMBER',
+                    how='left'
+                )
+                # Build label with available fields
+                flight_agg['LABEL'] = flight_agg.apply(
+                    lambda r: f"{r['FLIGHT_NUMBER']} — {r.get('AIRLINE_NAME') or 'N/A'} — {(r.get('ORIGIN_AIRPORT') or 'N/A')}→{(r.get('DESTINATION_AIRPORT') or 'N/A')}",
+                    axis=1
+                )
+            else:
+                # Fallback if FLIGHT_NUMBER missing
+                flight_agg['LABEL'] = flight_agg['FLIGHT_NUMBER'].astype(str)
         else:
             flight_agg['LABEL'] = flight_agg['FLIGHT_NUMBER']
         

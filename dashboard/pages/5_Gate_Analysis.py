@@ -151,75 +151,18 @@ def get_gate_dow_heatmap(_session, start_dt, end_dt):
 
 @st.cache_data(ttl=300)
 def get_top_dwell_flights(_session, start_dt, end_dt, top_n: int = 20):
-    """Top N ground sessions by dwell minutes within the given period."""
+    """Top N ground sessions by dwell minutes within the given period (pre-joined table)."""
     q = f"""
-    WITH dim_icao AS (
-      SELECT
-        TRIM(UPPER(AIRLINE_ICAO)) AS airline_icao,
-        MAX(NULLIF(TRIM(AIRLINE_IATA), '')) AS airline_iata,
-        MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
-      FROM {db_prefix}.HELPER_AIRLINE_DIM
-      WHERE AIRLINE_ICAO IS NOT NULL AND TRIM(AIRLINE_ICAO) <> ''
-      GROUP BY 1
-    ),
-    dim_iata AS (
-      SELECT
-        TRIM(UPPER(AIRLINE_IATA)) AS airline_iata,
-        MAX(NULLIF(TRIM(AIRLINE_ICAO), '')) AS airline_icao,
-        MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
-      FROM {db_prefix}.HELPER_AIRLINE_DIM
-      WHERE AIRLINE_IATA IS NOT NULL AND TRIM(AIRLINE_IATA) <> ''
-      GROUP BY 1
-    ),
-    per_session AS (
-      SELECT ground_session_id, icao_hex, service_date AS day, SUM(lag_seconds)/60.0 AS dwell_minutes
-      FROM {db_prefix}.GATE_ANALYSIS_ADSB_GROUND_POINTS
-      WHERE ts::DATE BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
-        AND closest_gate_name IS NOT NULL
-      GROUP BY 1,2,3
-    ),
-    gate AS (
-      SELECT ground_session_id, gate_name, dwell_seconds, flight_number
-      FROM {db_prefix}.GATE_ANALYSIS_FLIGHT_GATE_TIME
-      WHERE service_date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
-    ),
-    airline AS (
-      SELECT
-        ICAO_HEX,
-        TIMESTAMP::DATE AS day,
-        MAX(NULLIF(TRIM(AIRLINE_ICAO), '')) AS airline_icao,
-        MAX(NULLIF(TRIM(AIRLINE_IATA), '')) AS airline_iata,
-        MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
-      FROM {db_prefix}.ADSB_DATA_LOCAL
-      WHERE TIMESTAMP::DATE BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
-      GROUP BY 1, 2
-    )
     SELECT 
-      COALESCE(NULLIF(TRIM(g.flight_number), ''), p.icao_hex) AS flight_number,
-      COALESCE(
-        a.airline_icao,
-        a.airline_iata,
-        di.airline_icao,
-        dj.airline_iata,
-        REGEXP_SUBSTR(UPPER(TRIM(g.flight_number)), '^[A-Z]{{3}}'),
-        REGEXP_SUBSTR(UPPER(TRIM(g.flight_number)), '^[A-Z]{{2}}'),
-        'UNK'
-      ) AS airline_code,
-      COALESCE(
-        a.airline_name,
-        di.airline_name,
-        dj.airline_name
-      ) AS airline_name,
-      p.day,
-      g.gate_name,
-      ROUND(p.dwell_minutes) AS dwell_minutes
-    FROM per_session p
-    LEFT JOIN gate g ON g.ground_session_id = p.ground_session_id
-    LEFT JOIN airline a ON a.icao_hex = p.icao_hex AND a.day = p.day
-    -- Fallback: infer airline from callsign prefix when ADSB enrichment is missing
-    LEFT JOIN dim_icao di ON di.airline_icao = REGEXP_SUBSTR(UPPER(TRIM(g.flight_number)), '^[A-Z]{{3}}')
-    LEFT JOIN dim_iata dj ON dj.airline_iata = REGEXP_SUBSTR(UPPER(TRIM(g.flight_number)), '^[A-Z]{{2}}')
-    ORDER BY p.dwell_minutes DESC
+      flight_number,
+      airline_code,
+      airline_name,
+      service_date AS day,
+      gate_name,
+      dwell_minutes
+    FROM {db_prefix}.GATE_ANALYSIS_FLIGHT_DWELL_WITH_AIRLINE
+    WHERE service_date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+    ORDER BY dwell_minutes DESC
     LIMIT {int(top_n)}
     """
     return _session.sql(q).to_pandas()

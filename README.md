@@ -12,8 +12,6 @@ A Snowflake-native solution for real-time aviation analytics using ADS-B flight 
 - **Infrastructure Visualization**: Dynamic rendering of runways, taxiways, gates, and terminals
 - **Multi-Airport Support**: Deploy separate databases for multiple airports
 
-📚 **For detailed technical documentation**, see [COMPREHENSIVE_README.md](COMPREHENSIVE_README.md)
-
 ---
 
 ## 📋 Prerequisites
@@ -29,25 +27,22 @@ A Snowflake-native solution for real-time aviation analytics using ADS-B flight 
    - CREATE STREAMLIT
 
 2. **Warehouse**: 
-   - XS-S warehouse for Installer app
-   - M-L warehouse for production data pipelines
+   - M-L warehouse for Installer app and production data pipelines
+   - M warehouse for Streamlit dashboard
 
 3. **Snowflake Marketplace Listings** (free):
    - [Overture Maps - Base](https://app.snowflake.com/marketplace/listing/GZT0Z4CM1E9KV/carto-overture-maps-base)
-   - [Overture Maps - Buildings](https://app.snowflake.com/marketplace/listing/GZT0Z4CM1E9KN/carto-overture-maps-buildings)
-   - [Overture Maps - Transportation](https://app.snowflake.com/marketplace/listing/GZT0Z4CM1E9KJ/carto-overture-maps-transportation)
 
 ### API Keys
 
-1. **Aviationstack API Key** (required for flight schedules)
+1. **Aviationstack API Key (Optional)** (required for flight schedules)
    - Sign up at [aviationstack.com](https://aviationstack.com)
    - Free tier: 100 requests/month (sufficient for 1-2 airports)
    - Paid tier recommended for production
 
-2. **GitHub Personal Access Token** (required for historical ADS-B backfill)
+2. **GitHub Personal Access Token** (If you access installer and Dashboard via GitHub integration)
    - Generate at GitHub Settings → Developer Settings → Personal Access Tokens
    - Scopes needed: `public_repo` (read-only)
-   - Used to download TAR archives from `wiedehopf/globe_history` releases
 
 ---
 
@@ -72,7 +67,6 @@ Choose one of two deployment methods:
 6. In the file browser on the left:
    - Upload `installer/streamlit_app.py` (main file)
    - Upload `installer/airlines.csv` (reference data)
-   - Upload `installer/aviationstack_api_key.txt` (API key file - see note below)
 7. Set `streamlit_app.py` as the main file
 8. Click **Run**
 
@@ -169,7 +163,7 @@ ALTER GIT REPOSITORY AVIA_INSTALLER.PUBLIC.avia_fleet_repo FETCH;
 SHOW GIT REPOSITORIES;
 
 -- List files in repository (optional verification)
-LS @AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/poc-stable-v5;
+LS @AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/main;
 ```
 
 **Note**: Replace `<your-org>` and repository name as appropriate. Use branch name `poc-stable-v5` or your preferred branch. Replace `AVIA_INSTALLER.PUBLIC` with your chosen database and schema.
@@ -179,7 +173,7 @@ LS @AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/poc-stable-v5;
 ```sql
 -- Create Installer app (fully qualified)
 CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_installer
-  ROOT_LOCATION = '@AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/poc-stable-v5/installer'
+  ROOT_LOCATION = '@AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/main/installer'
   MAIN_FILE = 'streamlit_app.py'
   QUERY_WAREHOUSE = <your_warehouse_name>
   TITLE = 'Airport Analytics Installer';
@@ -195,7 +189,7 @@ GRANT USAGE ON STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_installer TO RO
 ```sql
 -- Create Dashboard app (fully qualified)
 CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_dashboard
-  ROOT_LOCATION = '@AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/poc-stable-v5/dashboard'
+  ROOT_LOCATION = '@AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/main/dashboard'
   MAIN_FILE = 'streamlit_app.py'
   QUERY_WAREHOUSE = <your_warehouse_name>
   TITLE = 'Airport Analytics Dashboard';
@@ -390,7 +384,7 @@ SHOW API INTEGRATIONS LIKE 'github_api_integration';
 SHOW GIT REPOSITORIES;
 
 -- Test repository access (fully qualified)
-LS @AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/poc-stable-v5;
+LS @AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/main;
 ```
 
 If listing fails, regenerate your GitHub PAT with correct permissions and recreate the secret.

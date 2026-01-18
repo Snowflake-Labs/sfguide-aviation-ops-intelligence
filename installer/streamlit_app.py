@@ -44,7 +44,7 @@ def _normalize_git_repo_stage_base(stage_base: str) -> str:
     """
     s = (stage_base or "").strip()
     if not s:
-        return "@AVIA_INSTALLER.PUBLIC.AVIA_FLEET_REPO/branches/poc-v5-adsb-tar-sql"
+        return "@AVIA_INSTALLER.PUBLIC.AVIA_FLEET_REPO/branches/main"
     if not s.startswith("@"):
         s = "@" + s
 
@@ -61,7 +61,7 @@ try:
     from snowflake.snowpark.context import get_active_session
     session = get_active_session()
     IN_SNOWFLAKE = True
-except:
+except Exception:
     session = None
     IN_SNOWFLAKE = False
 
@@ -229,8 +229,42 @@ GRANT USAGE ON DATABASE {database} TO ROLE PUBLIC;
 GRANT USAGE ON SCHEMA {database}.{schema} TO ROLE PUBLIC;
 
 -- -----------------------------------------------------------------------------
+-- PyPI Network Access (for Python package installation in procedures)
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE NETWORK RULE {database}.{schema}.{schema}_pypi_network_rule
+  MODE = EGRESS
+  TYPE = HOST_PORT
+  VALUE_LIST = ('pypi.org', 'pypi.python.org', 'pythonhosted.org', 'files.pythonhosted.org');
+CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {database}_{schema}_pypi_access_integration
+  ALLOWED_NETWORK_RULES = ({database}.{schema}.{schema}_pypi_network_rule)
+  ENABLED = TRUE;
+
+-- -----------------------------------------------------------------------------
 -- 1. PROPERTIES_AIRPORT
 -- -----------------------------------------------------------------------------
+-- Timezone UDF (IANA tzid) from lat/lon.
+-- We compute tzid inside Snowflake so queries don't depend on installer Python runtime.
+CREATE OR REPLACE FUNCTION {database}.{schema}.UDF_TZID_FROM_LATLON(lat DOUBLE, lon DOUBLE)
+RETURNS STRING
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('timezonefinder')
+HANDLER = 'tzid_from_latlon'
+AS
+$$
+from timezonefinder import TimezoneFinder
+
+_tf = TimezoneFinder()
+
+def tzid_from_latlon(lat, lon):
+    if lat is None or lon is None:
+        return None
+    try:
+        return _tf.timezone_at(lat=float(lat), lng=float(lon))
+    except Exception:
+        return None
+$$;
+
 CREATE OR REPLACE TABLE {database}.{schema}.PROPERTIES_AIRPORT AS
 WITH g AS (
   SELECT i.geometry AS geometry
@@ -251,7 +285,11 @@ SELECT
   ST_XMIN(g.geometry) AS min_lon,
   ST_XMAX(g.geometry) AS max_lon,
   ST_Y(ST_CENTROID(g.geometry)) AS center_lat,
-  ST_X(ST_CENTROID(g.geometry)) AS center_lon
+  ST_X(ST_CENTROID(g.geometry)) AS center_lon,
+  {database}.{schema}.UDF_TZID_FROM_LATLON(
+    ST_Y(ST_CENTROID(g.geometry)),
+    ST_X(ST_CENTROID(g.geometry))
+  ) AS airport_tzid
 FROM g;
 
 -- -----------------------------------------------------------------------------
@@ -569,11 +607,80 @@ WHERE AIRLINE_IATA IS NOT NULL
   AND LENGTH(TRIM(AIRLINE_ICAO)) IN (2,3)
 GROUP BY 1, 2;
 
+-- -----------------------------------------------------------------------------
+-- 8. FLIGHT_SCHEDULE tables (always created, even without API key)
+-- -----------------------------------------------------------------------------
+-- Raw schedule table (Bronze layer)
+CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_SCHEDULE_RAW (
+    flight_date DATE,
+    flight_status VARCHAR(32),
+    departure_airport VARCHAR(8),
+    departure_scheduled TIMESTAMP_NTZ,
+    departure_estimated TIMESTAMP_NTZ,
+    departure_actual TIMESTAMP_NTZ,
+    departure_delay INT,
+    departure_terminal VARCHAR(8),
+    departure_gate VARCHAR(8),
+    arrival_airport VARCHAR(8),
+    arrival_scheduled TIMESTAMP_NTZ,
+    arrival_estimated TIMESTAMP_NTZ,
+    arrival_actual TIMESTAMP_NTZ,
+    arrival_delay INT,
+    arrival_terminal VARCHAR(8),
+    arrival_gate VARCHAR(8),
+    airline_name VARCHAR(128),
+    airline_iata VARCHAR(8),
+    airline_icao VARCHAR(8),
+    flight_number VARCHAR(16),
+    flight_iata VARCHAR(16),
+    flight_icao VARCHAR(16),
+    aircraft_registration VARCHAR(16),
+    aircraft_iata VARCHAR(8),
+    aircraft_icao VARCHAR(8),
+    codeshared_airline VARCHAR(128),
+    codeshared_flight_iata VARCHAR(16),
+    raw_json VARIANT,
+    ingested_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Canonical schedule table (Silver layer)
+CREATE TABLE IF NOT EXISTS {database}.{schema}.FLIGHT_SCHEDULE (
+    FLIGHT_KEY VARCHAR(128),
+    FLIGHT_DATE DATE,
+    FLIGHT_STATUS VARCHAR(32),
+    DEPARTURE_AIRPORT VARCHAR(8),
+    ARRIVAL_AIRPORT VARCHAR(8),
+    DEPARTURE_SCHEDULED TIMESTAMP_NTZ,
+    DEPARTURE_ESTIMATED TIMESTAMP_NTZ,
+    DEPARTURE_ACTUAL TIMESTAMP_NTZ,
+    DEPARTURE_DELAY INT,
+    DEPARTURE_TERMINAL VARCHAR(8),
+    DEPARTURE_GATE VARCHAR(8),
+    ARRIVAL_SCHEDULED TIMESTAMP_NTZ,
+    ARRIVAL_ESTIMATED TIMESTAMP_NTZ,
+    ARRIVAL_ACTUAL TIMESTAMP_NTZ,
+    ARRIVAL_DELAY INT,
+    ARRIVAL_TERMINAL VARCHAR(8),
+    ARRIVAL_GATE VARCHAR(8),
+    AIRLINE_NAME VARCHAR(128),
+    AIRLINE_IATA VARCHAR(8),
+    AIRLINE_ICAO VARCHAR(8),
+    FLIGHT_NUMBER VARCHAR(16),
+    FLIGHT_IATA VARCHAR(16),
+    FLIGHT_ICAO VARCHAR(16),
+    AIRCRAFT_REGISTRATION VARCHAR(16),
+    IS_CODESHARE BOOLEAN,
+    CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
 -- Verify
 SELECT 'PROPERTIES_AIRPORT' AS tbl, COUNT(*) AS cnt FROM {database}.{schema}.PROPERTIES_AIRPORT
 UNION ALL SELECT 'PROPERTIES_INFRASTRUCTURE', COUNT(*) FROM {database}.{schema}.PROPERTIES_INFRASTRUCTURE
 UNION ALL SELECT 'PROPERTIES_GATES', COUNT(*) FROM {database}.{schema}.PROPERTIES_GATES
-UNION ALL SELECT 'PROPERTIES_RUNWAYS', COUNT(*) FROM {database}.{schema}.PROPERTIES_RUNWAYS;
+UNION ALL SELECT 'PROPERTIES_RUNWAYS', COUNT(*) FROM {database}.{schema}.PROPERTIES_RUNWAYS
+UNION ALL SELECT 'HELPER_FLIGHT_SCHEDULE_RAW', COUNT(*) FROM {database}.{schema}.HELPER_FLIGHT_SCHEDULE_RAW
+UNION ALL SELECT 'FLIGHT_SCHEDULE', COUNT(*) FROM {database}.{schema}.FLIGHT_SCHEDULE;
 """
 
 
@@ -792,8 +899,21 @@ DECLARE
   v_days INT;
   v_src_rows NUMBER(38,0);
   v_merge_rows NUMBER(38,0);
+  v_tzid STRING;
+  v_utc_now TIMESTAMP_NTZ;
+  v_local_today DATE;
 BEGIN
   v_days := COALESCE(:p_days_back, 2);
+
+  -- Airport-local service day (for matching) using PROPERTIES_AIRPORT.AIRPORT_TZID
+  SELECT TO_TIMESTAMP_NTZ(CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP()))
+    INTO :v_utc_now;
+  SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC')
+    INTO :v_tzid
+  FROM {database}.{schema}.PROPERTIES_AIRPORT
+  LIMIT 1;
+  SELECT TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, :v_utc_now))
+    INTO :v_local_today;
 
   -- Self-heal: duplicates in ADSB_DATA (by ICAO_HEX,TIMESTAMP) cause MERGE to fail with:
   --   "Duplicate row detected during DML action"
@@ -812,7 +932,7 @@ BEGIN
           ORDER BY INGESTED_AT DESC
         ) AS rn
       FROM {database}.{schema}.ADSB_DATA
-      WHERE TIMESTAMP::DATE >= DATEADD('day', -:v_days, CURRENT_DATE())
+      WHERE TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) >= DATEADD('day', -:v_days, :v_local_today)
         AND ICAO_HEX IS NOT NULL
         AND TIMESTAMP IS NOT NULL
     )
@@ -822,7 +942,7 @@ BEGIN
   -- Source sanity: use calendar days (UTC date) rather than "last N hours"
   SELECT COUNT(*) INTO v_src_rows
   FROM {database}.{schema}.ADSB_DATA
-  WHERE TIMESTAMP::DATE >= DATEADD('day', -:v_days, CURRENT_DATE())
+  WHERE TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) >= DATEADD('day', -:v_days, :v_local_today)
     AND ICAO_HEX IS NOT NULL
     AND TIMESTAMP IS NOT NULL;
 
@@ -837,7 +957,7 @@ BEGIN
       ICAO_HEX,
       REGISTRATION,
       FLIGHT,
-      TIMESTAMP::DATE AS service_date,
+      TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) AS service_date,
       TIMESTAMP AS ts,
       LOCATION,
       VELOCITY,
@@ -851,15 +971,25 @@ BEGIN
         ),
         1, 0
       ) AS is_ground,
-      DATEDIFF('minute', LAG(TIMESTAMP) OVER (PARTITION BY ICAO_HEX, TIMESTAMP::DATE ORDER BY TIMESTAMP), TIMESTAMP) AS gap_min,
+      DATEDIFF(
+        'minute',
+        LAG(TIMESTAMP) OVER (
+          PARTITION BY ICAO_HEX, TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP))
+          ORDER BY TIMESTAMP
+        ),
+        TIMESTAMP
+      ) AS gap_min,
       LAG(IFF(
             COALESCE(VELOCITY, 0) <= 40
             AND (ALTITUDE_BARO IS NULL OR ALTITUDE_BARO <= 50),
             1, 0
           ))
-        OVER (PARTITION BY ICAO_HEX, TIMESTAMP::DATE ORDER BY TIMESTAMP) AS prev_is_ground
+        OVER (
+          PARTITION BY ICAO_HEX, TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP))
+          ORDER BY TIMESTAMP
+        ) AS prev_is_ground
     FROM {database}.{schema}.ADSB_DATA
-    WHERE TIMESTAMP::DATE >= DATEADD('day', -:v_days, CURRENT_DATE())
+    WHERE TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) >= DATEADD('day', -:v_days, :v_local_today)
       AND ICAO_HEX IS NOT NULL
       AND LOCATION IS NOT NULL
       AND TIMESTAMP IS NOT NULL
@@ -894,7 +1024,7 @@ BEGIN
   p0 AS (
     SELECT
       ICAO_HEX,
-      TIMESTAMP::DATE AS service_date,
+      TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) AS service_date,
       TIMESTAMP AS ts,
       LOCATION,
       IFF(
@@ -903,7 +1033,7 @@ BEGIN
         1, 0
       ) AS is_ground
     FROM {database}.{schema}.ADSB_DATA
-    WHERE TIMESTAMP::DATE >= DATEADD('day', -:v_days, CURRENT_DATE())
+    WHERE TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) >= DATEADD('day', -:v_days, :v_local_today)
       AND ICAO_HEX IS NOT NULL
       AND LOCATION IS NOT NULL
       AND TIMESTAMP IS NOT NULL
@@ -962,7 +1092,7 @@ BEGIN
 
   -- Persist legs for debugging/analytics (keep last v_days + 1 due to ±1 day schedule joins)
   DELETE FROM {database}.{schema}.HELPER_FLIGHT_LEG
-  WHERE service_date >= DATEADD('day', -(:v_days + 1), CURRENT_DATE());
+  WHERE service_date >= DATEADD('day', -(:v_days + 1), :v_local_today);
 
   INSERT INTO {database}.{schema}.HELPER_FLIGHT_LEG (
     SERVICE_DATE, ICAO_HEX, SEG_ID, LEG_START_TS, LEG_END_TS,
@@ -1010,7 +1140,7 @@ BEGIN
       ARRIVAL_SCHEDULED
     FROM {database}.{schema}.FLIGHT_SCHEDULE
     -- Include an extra day because ADSB uses UTC dates while schedule is airport-local date in practice.
-    WHERE FLIGHT_DATE >= DATEADD('day', -(:v_days + 1), CURRENT_DATE())
+    WHERE FLIGHT_DATE >= DATEADD('day', -(:v_days + 1), :v_local_today)
   ),
   candidates_reg AS (
     SELECT
@@ -1193,7 +1323,7 @@ BEGIN
 
   -- Persist candidates (debugging)
   DELETE FROM {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES
-  WHERE service_date >= DATEADD('day', -(:v_days + 1), CURRENT_DATE());
+  WHERE service_date >= DATEADD('day', -(:v_days + 1), :v_local_today);
 
   INSERT INTO {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES (
     SERVICE_DATE, ICAO_HEX, SEG_ID,
@@ -1234,7 +1364,7 @@ BEGIN
 
   -- Persist chosen results
   DELETE FROM {database}.{schema}.HELPER_FLIGHT_MATCH_RESULT
-  WHERE service_date >= DATEADD('day', -(:v_days + 1), CURRENT_DATE());
+  WHERE service_date >= DATEADD('day', -(:v_days + 1), :v_local_today);
 
   INSERT INTO {database}.{schema}.HELPER_FLIGHT_MATCH_RESULT (
     SERVICE_DATE, ICAO_HEX, SEG_ID,
@@ -1275,7 +1405,7 @@ BEGIN
       ON r.ICAO_HEX = l.ICAO_HEX AND r.service_date = l.service_date AND r.seg_id = l.seg_id
     LEFT JOIN {database}.{schema}.FLIGHT_SCHEDULE fs
       ON fs.FLIGHT_KEY = r.schedule_flight_key
-    WHERE l.service_date >= DATEADD('day', -30, CURRENT_DATE())
+    WHERE l.service_date >= DATEADD('day', -30, :v_local_today)
       AND l.callsign IS NOT NULL AND TRIM(l.callsign) <> ''
       AND REGEXP_SUBSTR(UPPER(TRIM(l.callsign)), '[0-9]+') IS NOT NULL
       AND callsign_key IS NOT NULL AND callsign_key <> ''
@@ -1345,21 +1475,31 @@ BEGIN
     pts AS (
       SELECT
         s.*,
-        s.TIMESTAMP::DATE AS service_date,
+        TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP)) AS service_date,
         IFF(
           COALESCE(s.VELOCITY, 0) <= 40
           AND (s.ALTITUDE_BARO IS NULL OR s.ALTITUDE_BARO <= 50),
           1, 0
         ) AS is_ground,
-        DATEDIFF('minute', LAG(s.TIMESTAMP) OVER (PARTITION BY s.ICAO_HEX, s.TIMESTAMP::DATE ORDER BY s.TIMESTAMP), s.TIMESTAMP) AS gap_min,
+        DATEDIFF(
+          'minute',
+          LAG(s.TIMESTAMP) OVER (
+            PARTITION BY s.ICAO_HEX, TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP))
+            ORDER BY s.TIMESTAMP
+          ),
+          s.TIMESTAMP
+        ) AS gap_min,
         LAG(IFF(
               COALESCE(s.VELOCITY, 0) <= 40
               AND (s.ALTITUDE_BARO IS NULL OR s.ALTITUDE_BARO <= 50),
               1, 0
             ))
-          OVER (PARTITION BY s.ICAO_HEX, s.TIMESTAMP::DATE ORDER BY s.TIMESTAMP) AS prev_is_ground
+          OVER (
+            PARTITION BY s.ICAO_HEX, TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP))
+            ORDER BY s.TIMESTAMP
+          ) AS prev_is_ground
       FROM {database}.{schema}.ADSB_DATA s
-      WHERE s.TIMESTAMP::DATE >= DATEADD('day', -:v_days, CURRENT_DATE())
+      WHERE TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP)) >= DATEADD('day', -:v_days, :v_local_today)
         AND s.ICAO_HEX IS NOT NULL
         AND s.TIMESTAMP IS NOT NULL
     ),
@@ -1523,10 +1663,10 @@ BEGIN
 END;
 $$;
 
--- Hourly enrichment task (keeps schedule association current without slowing the 1-minute ingest task)
+-- Enrichment task (every 15 minutes - keeps schedule association current without slowing the 5-second ingest task)
 CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB_HOURLY
   WAREHOUSE = {warehouse}
-  SCHEDULE = '60 MINUTE'
+  SCHEDULE = '15 MINUTE'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
 AS
   CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
@@ -1576,7 +1716,8 @@ def enrich(session, p_max_hexes: int = 200, p_days_back: int = 2, p_min_age_hour
     WITH candidates AS (
       SELECT DISTINCT ICAO_HEX
       FROM %s.ADSB_DATA
-      WHERE TIMESTAMP >= DATEADD('day', -%d, CURRENT_TIMESTAMP())
+      -- ADSB timestamps are stored as TIMESTAMP_NTZ in UTC; use SYSDATE() for consistent UTC comparisons.
+      WHERE TIMESTAMP >= DATEADD('day', -%d, SYSDATE())
         AND ICAO_HEX IS NOT NULL
         AND (
           AIRCRAFT_DESC IS NULL OR TRIM(AIRCRAFT_DESC) = ''
@@ -1588,7 +1729,7 @@ def enrich(session, p_max_hexes: int = 200, p_days_back: int = 2, p_min_age_hour
       FROM candidates c
       LEFT JOIN %s.HELPER_AIRCRAFT_META m
         ON m.ICAO_HEX = c.ICAO_HEX
-       AND m.UPDATED_AT >= DATEADD('hour', -%d, CURRENT_TIMESTAMP())
+       AND m.UPDATED_AT >= DATEADD('hour', -%d, SYSDATE())
       WHERE m.ICAO_HEX IS NULL
     )
     SELECT ICAO_HEX
@@ -1935,7 +2076,7 @@ END;
 $$;
 
 -- -----------------------------------------------------------------------------
--- Scheduled Task (every minute)
+-- Scheduled Task (every 1 minute for real-time updates)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE TASK {database}.{schema}.TASK_INGEST_ADSB
   WAREHOUSE = {warehouse}
@@ -3129,12 +3270,13 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.PROPERTIES_RUNWAYS (
 -- This is a derived convenience layer for dashboards; ADSB_DATA remains the raw point truth.
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.ADSB_DATA_LOCAL
-  TARGET_LAG = '15 MINUTE'
+  TARGET_LAG = '1 MINUTE'
   WAREHOUSE = {warehouse}
 AS
 WITH airport AS (
   SELECT
     UPPER(airport_code) AS airport_code,
+    COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid,
     geometry AS airport_geom
   FROM {database}.{schema}.PROPERTIES_AIRPORT
   LIMIT 1
@@ -3142,9 +3284,10 @@ WITH airport AS (
 pts AS (
   SELECT
     a.*,
-    a.TIMESTAMP::DATE AS service_date,
+    TO_DATE(CONVERT_TIMEZONE('UTC', airport.airport_tzid, a.TIMESTAMP)) AS service_date,
     COALESCE(NULLIF(TRIM(a.FLIGHT), ''), a.ICAO_HEX) AS flight_id
   FROM {database}.{schema}.ADSB_DATA a
+  CROSS JOIN airport
   WHERE a.ICAO_HEX IS NOT NULL
     AND a.TIMESTAMP IS NOT NULL
 ),
@@ -3185,25 +3328,31 @@ DROP VIEW IF EXISTS {database}.{schema}.ADSB_DATA_LOVAL;
 -- 1. Gate Analysis derived tables (also reused by Runway Crossings)
 -- -----------------------------------------------------------------------------
 -- Canonical join keys:
---   - service_date: TIMESTAMP::DATE (UTC date)
+--   - service_date: airport-local day derived from ADS-B UTC timestamps using PROPERTIES_AIRPORT.AIRPORT_TZID
 --   - aircraft_day_id: MD5(ICAO_HEX || ':' || service_date)
 --   - ground_session_id: MD5(ICAO_HEX || ':' || service_date || ':' || session_seq)
 -- These keys avoid reliance on callsign/flight_key for historical data.
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS
-  TARGET_LAG = '15 MINUTE'
+  TARGET_LAG = '1 MINUTE'
   WAREHOUSE = {warehouse}
 AS
-WITH ground AS (
+WITH ap AS (
+  SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
+  FROM {database}.{schema}.PROPERTIES_AIRPORT
+  LIMIT 1
+),
+ground AS (
   SELECT
     ICAO_HEX,
     REGISTRATION,
-    TIMESTAMP::DATE AS service_date,
+    TO_DATE(CONVERT_TIMEZONE('UTC', ap.airport_tzid, TIMESTAMP)) AS service_date,
     TIMESTAMP AS ts,
     LOCATION,
     VELOCITY,
     ALTITUDE_BARO
   FROM {database}.{schema}.ADSB_DATA_LOCAL
+  CROSS JOIN ap
   WHERE ICAO_HEX IS NOT NULL
     AND TIMESTAMP IS NOT NULL
     AND LOCATION IS NOT NULL
@@ -3241,21 +3390,27 @@ agg AS (
 SELECT * FROM agg;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
-  TARGET_LAG = '15 MINUTE'
+  TARGET_LAG = '1 MINUTE'
   WAREHOUSE = {warehouse}
 AS
-WITH ground AS (
+WITH ap AS (
+  SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
+  FROM {database}.{schema}.PROPERTIES_AIRPORT
+  LIMIT 1
+),
+ground AS (
   SELECT
     flight_key,
     ICAO_HEX,
     REGISTRATION,
     FLIGHT,
-    TIMESTAMP::DATE AS service_date,
+    TO_DATE(CONVERT_TIMEZONE('UTC', ap.airport_tzid, TIMESTAMP)) AS service_date,
     TIMESTAMP AS ts,
     LOCATION,
     VELOCITY,
     ALTITUDE_BARO
   FROM {database}.{schema}.ADSB_DATA_LOCAL
+  CROSS JOIN ap
   -- Altitude on the ground can be noisy (sometimes small positive/negative values).
   -- Treat "ground" as near-zero altitude + low speed.
   WHERE timestamp IS NOT NULL
@@ -3300,7 +3455,7 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY w.ICAO_HEX, w.service_date, w.ts ORDER B
 -- 2. Gate Analysis summaries
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_GATE_TIME
-  TARGET_LAG = '15 MINUTE'
+  TARGET_LAG = '1 MINUTE'
   WAREHOUSE = {warehouse}
 AS
 WITH per_gate AS (
@@ -3418,20 +3573,305 @@ FROM by_session s
 GROUP BY 1,2,3;
 
 -- -----------------------------------------------------------------------------
+-- 2d. Gate dwell with airline (pre-joined for dashboard performance)
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_DWELL_WITH_AIRLINE
+  TARGET_LAG = '15 MINUTE'
+  WAREHOUSE = {warehouse}
+AS
+WITH dim_icao AS (
+  SELECT
+    TRIM(UPPER(AIRLINE_ICAO)) AS airline_icao,
+    MAX(NULLIF(TRIM(AIRLINE_IATA), '')) AS airline_iata,
+    MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
+  FROM {database}.{schema}.HELPER_AIRLINE_DIM
+  WHERE AIRLINE_ICAO IS NOT NULL AND TRIM(AIRLINE_ICAO) <> ''
+  GROUP BY 1
+),
+dim_iata AS (
+  SELECT
+    TRIM(UPPER(AIRLINE_IATA)) AS airline_iata,
+    MAX(NULLIF(TRIM(AIRLINE_ICAO), '')) AS airline_icao,
+    MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
+  FROM {database}.{schema}.HELPER_AIRLINE_DIM
+  WHERE AIRLINE_IATA IS NOT NULL AND TRIM(AIRLINE_IATA) <> ''
+  GROUP BY 1
+),
+per_session AS (
+  SELECT 
+    ground_session_id, 
+    icao_hex, 
+    service_date, 
+    SUM(lag_seconds)/60.0 AS dwell_minutes
+  FROM {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
+  WHERE closest_gate_name IS NOT NULL
+  GROUP BY 1, 2, 3
+),
+gate AS (
+  SELECT 
+    ground_session_id, 
+    gate_name, 
+    dwell_seconds, 
+    flight_number
+  FROM {database}.{schema}.GATE_ANALYSIS_FLIGHT_GATE_TIME
+),
+airline AS (
+  SELECT
+    ICAO_HEX,
+    service_date,
+    MAX(NULLIF(TRIM(AIRLINE_ICAO), '')) AS airline_icao,
+    MAX(NULLIF(TRIM(AIRLINE_IATA), '')) AS airline_iata,
+    MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
+  FROM {database}.{schema}.ADSB_DATA_LOCAL
+  GROUP BY 1, 2
+)
+SELECT 
+  COALESCE(NULLIF(TRIM(g.flight_number), ''), p.icao_hex) AS flight_number,
+  COALESCE(
+    a.airline_icao,
+    a.airline_iata,
+    di.airline_icao,
+    dj.airline_iata,
+    REGEXP_SUBSTR(UPPER(TRIM(g.flight_number)), '^[A-Z]{{3}}'),
+    REGEXP_SUBSTR(UPPER(TRIM(g.flight_number)), '^[A-Z]{{2}}'),
+    'UNK'
+  ) AS airline_code,
+  COALESCE(
+    a.airline_name,
+    di.airline_name,
+    dj.airline_name
+  ) AS airline_name,
+  p.service_date,
+  g.gate_name,
+  ROUND(p.dwell_minutes) AS dwell_minutes
+FROM per_session p
+LEFT JOIN gate g ON g.ground_session_id = p.ground_session_id
+LEFT JOIN airline a ON a.icao_hex = p.icao_hex AND a.service_date = p.service_date
+LEFT JOIN dim_icao di ON di.airline_icao = REGEXP_SUBSTR(UPPER(TRIM(g.flight_number)), '^[A-Z]{{3}}')
+LEFT JOIN dim_iata dj ON dj.airline_iata = REGEXP_SUBSTR(UPPER(TRIM(g.flight_number)), '^[A-Z]{{2}}');
+
+-- -----------------------------------------------------------------------------
+-- 2e. Landing Page helper (live timetable)
+-- Centralizes the join logic for the dashboard landing page:
+--   - latest ADS-B positions (last 10 minutes)
+--   - Aviationstack schedule (FLIGHT_SCHEDULE) enrichment
+--   - planned gate (schedule) + actual gate (gate analytics)
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW {database}.{schema}.HELPER_LANDING_LIVE_TIMETABLE AS
+WITH airport AS (
+  SELECT
+    UPPER(airport_code) AS airport_code,
+    UPPER(airport_icao) AS airport_icao
+  FROM {database}.{schema}.PROPERTIES_AIRPORT
+  LIMIT 1
+),
+live AS (
+  SELECT
+    FLIGHT,
+    ICAO_HEX,
+    REGISTRATION,
+    AIRCRAFT_DESC,
+    TIMESTAMP AS last_seen,
+    ST_Y(LOCATION) AS lat,
+    ST_X(LOCATION) AS lon,
+    ALTITUDE_BARO,
+    VELOCITY,
+    TRACK,
+    ROW_NUMBER() OVER (PARTITION BY FLIGHT ORDER BY TIMESTAMP DESC) AS rn
+  FROM {database}.{schema}.ADSB_DATA_LOCAL
+  -- ADSB timestamps are stored as TIMESTAMP_NTZ in UTC-by-convention.
+  -- Anchor to explicit UTC TIMESTAMP_NTZ to avoid LTZ/NTZ comparison pitfalls in different session timezones.
+  WHERE TIMESTAMP >= DATEADD('minute', -10, TO_TIMESTAMP_NTZ(CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())))
+    AND LOCATION IS NOT NULL
+    AND FLIGHT IS NOT NULL
+),
+live_latest AS (
+  SELECT *
+  FROM live
+  WHERE rn = 1
+),
+ids AS (
+  SELECT
+    l.*,
+    UPPER(TRIM(l.flight)) AS flight_norm,
+    REGEXP_SUBSTR(UPPER(TRIM(l.flight)), '^[A-Z]{2,3}') AS prefix,
+    REGEXP_SUBSTR(UPPER(TRIM(l.flight)), '[0-9]+') AS flight_num
+  FROM live_latest l
+),
+dim_icao AS (
+  SELECT
+    TRIM(UPPER(AIRLINE_ICAO)) AS airline_icao,
+    MAX(NULLIF(TRIM(AIRLINE_IATA), '')) AS airline_iata,
+    MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
+  FROM {database}.{schema}.HELPER_AIRLINE_DIM
+  WHERE AIRLINE_ICAO IS NOT NULL AND TRIM(AIRLINE_ICAO) <> ''
+  GROUP BY 1
+),
+dim_iata AS (
+  SELECT
+    TRIM(UPPER(AIRLINE_IATA)) AS airline_iata,
+    MAX(NULLIF(TRIM(AIRLINE_ICAO), '')) AS airline_icao,
+    MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
+  FROM {database}.{schema}.HELPER_AIRLINE_DIM
+  WHERE AIRLINE_IATA IS NOT NULL AND TRIM(AIRLINE_IATA) <> ''
+  GROUP BY 1
+),
+nearest_gate AS (
+  -- Nearest gate to the *latest position* (\"now\"). This is what the map visually implies.
+  SELECT
+    i.flight,
+    g.gate_name AS nearest_gate,
+    ST_DISTANCE(TO_GEOGRAPHY(ST_POINT(i.lon, i.lat)), g.gate_geom) AS nearest_gate_dist_m
+  FROM ids i
+  JOIN {database}.{schema}.PROPERTIES_GATES g
+    ON ST_DWITHIN(TO_GEOGRAPHY(ST_POINT(i.lon, i.lat)), g.gate_geom, 300)
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY i.flight
+    ORDER BY ST_DISTANCE(TO_GEOGRAPHY(ST_POINT(i.lon, i.lat)), g.gate_geom) ASC NULLS LAST
+  ) = 1
+),
+sched_candidates AS (
+  SELECT
+    i.flight AS flight,
+    s.*,
+    IFF(UPPER(TRIM(s.FLIGHT_ICAO)) = i.flight_norm, 0,
+        IFF(UPPER(TRIM(s.FLIGHT_IATA)) = i.flight_norm, 1, 2)
+    ) AS match_rank,
+    ABS(DATEDIFF('day', s.FLIGHT_DATE, CURRENT_DATE())) AS date_diff
+  FROM ids i
+  JOIN {database}.{schema}.FLIGHT_SCHEDULE s
+    ON s.FLIGHT_DATE BETWEEN DATEADD('day', -1, CURRENT_DATE()) AND DATEADD('day', 1, CURRENT_DATE())
+   AND (
+        UPPER(TRIM(s.FLIGHT_ICAO)) = i.flight_norm
+     OR UPPER(TRIM(s.FLIGHT_IATA)) = i.flight_norm
+     OR (
+          i.flight_num IS NOT NULL
+      AND s.FLIGHT_NUMBER = i.flight_num
+      AND (
+            (LENGTH(i.prefix) = 3 AND UPPER(TRIM(s.AIRLINE_ICAO)) = i.prefix)
+         OR (LENGTH(i.prefix) = 2 AND UPPER(TRIM(s.AIRLINE_IATA)) = i.prefix)
+      )
+     )
+   )
+),
+sched_best AS (
+  SELECT
+    flight,
+    FLIGHT_DATE,
+    FLIGHT_STATUS,
+    DEPARTURE_AIRPORT,
+    ARRIVAL_AIRPORT,
+    DEPARTURE_SCHEDULED,
+    DEPARTURE_ESTIMATED,
+    DEPARTURE_ACTUAL,
+    DEPARTURE_TERMINAL,
+    DEPARTURE_GATE,
+    ARRIVAL_SCHEDULED,
+    ARRIVAL_ESTIMATED,
+    ARRIVAL_ACTUAL,
+    ARRIVAL_TERMINAL,
+    ARRIVAL_GATE,
+    AIRLINE_NAME,
+    AIRLINE_IATA,
+    AIRLINE_ICAO,
+    FLIGHT_NUMBER,
+    FLIGHT_IATA,
+    FLIGHT_ICAO,
+    UPDATED_AT,
+    IFF(
+      UPPER(DEPARTURE_AIRPORT) IN (a.airport_code, a.airport_icao),
+      'departure',
+      IFF(UPPER(ARRIVAL_AIRPORT) IN (a.airport_code, a.airport_icao), 'arrival', 'unknown')
+    ) AS direction
+  FROM sched_candidates c
+  CROSS JOIN airport a
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY flight
+    ORDER BY match_rank ASC, date_diff ASC, UPDATED_AT DESC
+  ) = 1
+),
+gate_actual AS (
+  SELECT
+    service_date,
+    UPPER(TRIM(flight_number)) AS flight_number_norm,
+    gate_name AS actual_gate,
+    dwell_seconds
+  FROM {database}.{schema}.GATE_ANALYSIS_FLIGHT_GATE_TIME
+  WHERE flight_number IS NOT NULL
+)
+SELECT
+  i.flight AS flight,
+  i.icao_hex AS icao_hex,
+  i.registration AS registration,
+  i.aircraft_desc AS aircraft_desc,
+  i.last_seen AS last_seen,
+  i.lat AS lat,
+  i.lon AS lon,
+  i.altitude_baro AS altitude_baro,
+  i.velocity AS velocity,
+  i.track AS track,
+  sb.direction AS direction,
+  COALESCE(sb.airline_name, di.airline_name, dj.airline_name) AS airline_name,
+  COALESCE(sb.airline_iata, di.airline_iata, dj.airline_iata) AS airline_iata,
+  COALESCE(sb.airline_icao, di.airline_icao, dj.airline_icao) AS airline_icao,
+  sb.departure_airport AS departure_airport,
+  sb.arrival_airport AS arrival_airport,
+  sb.departure_scheduled AS departure_scheduled,
+  sb.departure_estimated AS departure_estimated,
+  sb.departure_actual AS departure_actual,
+  sb.arrival_scheduled AS arrival_scheduled,
+  sb.arrival_estimated AS arrival_estimated,
+  sb.arrival_actual AS arrival_actual,
+  sb.departure_terminal AS departure_terminal,
+  sb.departure_gate AS departure_gate_planned,
+  sb.arrival_terminal AS arrival_terminal,
+  sb.arrival_gate AS arrival_gate_planned,
+  IFF(sb.direction = 'departure', sb.departure_gate, IFF(sb.direction = 'arrival', sb.arrival_gate, NULL)) AS planned_gate,
+  IFF(sb.direction = 'departure', sb.departure_terminal, IFF(sb.direction = 'arrival', sb.arrival_terminal, NULL)) AS planned_terminal,
+  ng.nearest_gate AS nearest_gate,
+  ng.nearest_gate_dist_m AS nearest_gate_dist_m,
+  ga.actual_gate AS actual_gate,
+  ga.dwell_seconds AS actual_gate_dwell_seconds,
+  sb.flight_number AS schedule_flight_number,
+  sb.flight_iata AS schedule_flight_iata,
+  sb.flight_icao AS schedule_flight_icao,
+  sb.flight_date AS schedule_flight_date,
+  sb.flight_status AS schedule_status
+FROM ids i
+LEFT JOIN sched_best sb
+  ON sb.flight = i.flight
+-- Fallback airline name when schedule match is missing: infer from callsign prefix via HELPER_AIRLINE_DIM
+LEFT JOIN dim_icao di
+  ON LENGTH(i.prefix) = 3 AND di.airline_icao = i.prefix
+LEFT JOIN dim_iata dj
+  ON LENGTH(i.prefix) = 2 AND dj.airline_iata = i.prefix
+LEFT JOIN nearest_gate ng
+  ON ng.flight = i.flight
+LEFT JOIN gate_actual ga
+  ON ga.service_date = COALESCE(sb.flight_date, i.last_seen::DATE)
+ AND ga.flight_number_norm = UPPER(TRIM(i.flight));
+
+-- -----------------------------------------------------------------------------
 -- 3. Flight Traffic derived tables (used by Traffic Analysis)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
   TARGET_LAG = '15 MINUTE'
   WAREHOUSE = {warehouse}
 AS
+WITH ap AS (
+  SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
+  FROM {database}.{schema}.PROPERTIES_AIRPORT
+  LIMIT 1
+)
 SELECT
-  TIMESTAMP::DATE AS date,
+  TO_DATE(CONVERT_TIMEZONE('UTC', ap.airport_tzid, TIMESTAMP)) AS date,
   COUNT(DISTINCT ICAO_HEX) AS unique_aircraft,
   COUNT(DISTINCT FLIGHT) AS unique_flights,
   COUNT(*) AS total_records,
   AVG(ALTITUDE_BARO) AS avg_altitude,
   AVG(VELOCITY) AS avg_speed
 FROM {database}.{schema}.ADSB_DATA_LOCAL
+CROSS JOIN ap
 GROUP BY date;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
@@ -3450,19 +3890,20 @@ GROUP BY hour;
 -- Precompute per-flight-per-day header fields for fast UI: Airline + Origin/Destination
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRACKER_FLIGHT_LIST
-  TARGET_LAG = '15 MINUTE'
+  TARGET_LAG = '1 MINUTE'
   WAREHOUSE = {warehouse}
 AS
 WITH airport AS (
   SELECT
     UPPER(airport_code) AS airport_code,
+    COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid,
     geometry AS airport_geom
   FROM {database}.{schema}.PROPERTIES_AIRPORT
   LIMIT 1
 ),
 base AS (
   SELECT
-    TIMESTAMP::DATE AS service_date,
+    TO_DATE(CONVERT_TIMEZONE('UTC', airport.airport_tzid, TIMESTAMP)) AS service_date,
     COALESCE(NULLIF(TRIM(FLIGHT), ''), ICAO_HEX) AS flight_id,
     ICAO_HEX,
     TIMESTAMP AS ts,
@@ -3476,6 +3917,7 @@ base AS (
     COALESCE(IS_LOCAL_OD, FALSE) AS is_local_od,
     COALESCE(MATCH_CONFIDENCE, -1) AS match_confidence
   FROM {database}.{schema}.ADSB_DATA_LOCAL
+  CROSS JOIN airport
   WHERE ICAO_HEX IS NOT NULL
     AND TIMESTAMP IS NOT NULL
 ),
@@ -3545,13 +3987,19 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_
   TARGET_LAG = '60 MINUTE'
   WAREHOUSE = {warehouse}
 AS
+WITH ap AS (
+  SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
+  FROM {database}.{schema}.PROPERTIES_AIRPORT
+  LIMIT 1
+)
 SELECT
-  TIMESTAMP::DATE AS date,
+  TO_DATE(CONVERT_TIMEZONE('UTC', ap.airport_tzid, TIMESTAMP)) AS date,
   SUBSTR(FLIGHT, 1, 3) AS airline_code,
   COUNT(DISTINCT ICAO_HEX) AS aircraft_count,
   COUNT(DISTINCT FLIGHT) AS flight_count,
   COUNT(*) AS data_points
 FROM {database}.{schema}.ADSB_DATA_LOCAL
+cross join ap
 WHERE FLIGHT IS NOT NULL
 GROUP BY date, airline_code;
 
@@ -3560,36 +4008,67 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_
   TARGET_LAG = '60 MINUTE'
   WAREHOUSE = {warehouse}
 AS
-WITH schedule AS (
+WITH ap AS (
+  SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
+  FROM {database}.{schema}.PROPERTIES_AIRPORT
+  LIMIT 1
+),
+bounds AS (
+  SELECT
+    ap.airport_tzid AS airport_tzid,
+    TO_DATE(CONVERT_TIMEZONE('UTC', ap.airport_tzid, TO_TIMESTAMP_NTZ(CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())))) AS local_today
+  FROM ap
+),
+airport AS (
+  SELECT
+    UPPER(airport_code) AS airport_code,
+    UPPER(airport_icao) AS airport_icao
+  FROM {database}.{schema}.PROPERTIES_AIRPORT
+  LIMIT 1
+),
+schedule AS (
   SELECT
     FLIGHT_DATE AS travel_date,
     AIRLINE_NAME AS airline,
+    AIRLINE_IATA AS airline_iata,
+    AIRLINE_ICAO AS airline_icao,
     FLIGHT_NUMBER AS flight_number,
-    DEPARTURE_SCHEDULED AS scheduled_time
+    DEPARTURE_SCHEDULED AS scheduled_time,
+    DEPARTURE_ACTUAL AS actual_time
   FROM {database}.{schema}.FLIGHT_SCHEDULE
-  WHERE FLIGHT_DATE >= DATEADD('day', -30, CURRENT_DATE())
+  WHERE FLIGHT_DATE >= DATEADD('day', -30, (SELECT local_today FROM bounds))
     AND DEPARTURE_SCHEDULED IS NOT NULL
+    -- CRITICAL: Only include flights departing FROM this airport (not arrivals)
+    AND (UPPER(DEPARTURE_AIRPORT) = (SELECT airport_code FROM airport) 
+         OR UPPER(DEPARTURE_AIRPORT) = (SELECT airport_icao FROM airport))
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY FLIGHT_DATE, FLIGHT_NUMBER, AIRLINE_IATA, AIRLINE_ICAO 
+    ORDER BY DEPARTURE_SCHEDULED
+  ) = 1
 ),
-actual AS (
+adsb_fallback AS (
   SELECT
-    TIMESTAMP::DATE AS date,
-    SUBSTR(FLIGHT, 1, 3) AS airline,
-    REGEXP_SUBSTR(FLIGHT, '[0-9]+') AS flight_number,
-    MIN(TIMESTAMP) AS first_seen
-  FROM {database}.{schema}.ADSB_DATA_LOCAL
-  WHERE TIMESTAMP >= DATEADD('day', -30, CURRENT_TIMESTAMP())
-    AND FLIGHT IS NOT NULL
+    l.service_date AS date,
+    SUBSTR(l.callsign, 1, 3) AS airline_code,
+    REGEXP_SUBSTR(l.callsign, '[0-9]+') AS flight_number,
+    MIN(l.leg_start_ts) AS first_departure
+  FROM {database}.{schema}.HELPER_FLIGHT_LEG l
+  WHERE l.service_date >= DATEADD('day', -30, (SELECT local_today FROM bounds))
+    AND l.direction = 'departure'
+    AND l.callsign IS NOT NULL
   GROUP BY 1, 2, 3
 ),
 joined AS (
   SELECT
-    a.date,
-    COALESCE(s.airline, a.airline) AS airline,
-    TIMESTAMPDIFF('minute', s.scheduled_time, a.first_seen) AS delay_minutes
-  FROM actual a
-  LEFT JOIN schedule s
+    s.travel_date AS date,
+    s.airline,
+    TIMESTAMPDIFF('minute', s.scheduled_time, 
+      COALESCE(s.actual_time, a.first_departure)) AS delay_minutes
+  FROM schedule s
+  LEFT JOIN adsb_fallback a
     ON s.travel_date = a.date
    AND TO_VARCHAR(s.flight_number) = TO_VARCHAR(a.flight_number)
+   AND (UPPER(s.airline_iata) = UPPER(a.airline_code) OR UPPER(s.airline_icao) = UPPER(a.airline_code))
 )
 SELECT
   date,
@@ -3617,10 +4096,21 @@ WITH runway_union AS (
   WHERE runway_geog IS NOT NULL
 ),
 pts AS (
-  SELECT flight_key, TIMESTAMP AS ts, LOCATION AS geom, VELOCITY, ALTITUDE_BARO
+  SELECT 
+    flight_key, 
+    ICAO_HEX,
+    FLIGHT,
+    TO_DATE(CONVERT_TIMEZONE('UTC', 
+      (SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') 
+       FROM {database}.{schema}.PROPERTIES_AIRPORT LIMIT 1), 
+      TIMESTAMP)) AS service_date,
+    TIMESTAMP AS ts, 
+    LOCATION AS geom, 
+    VELOCITY, 
+    ALTITUDE_BARO
   FROM {database}.{schema}.ADSB_DATA_LOCAL
   -- Limit scope for incremental refresh cost; adjust if you backfill more history.
-  WHERE TIMESTAMP >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+  WHERE TIMESTAMP >= DATEADD('day', -30, SYSDATE())
     AND LOCATION IS NOT NULL AND ALTITUDE_BARO IS NOT NULL
 ),
 pts_tagged AS (
@@ -3674,8 +4164,31 @@ events AS (
   FROM entry_rows e
   JOIN exit_rows x USING (runway_id, flight_key, event_id)
   JOIN stats s USING (runway_id, flight_key, event_id)
+),
+pts_metadata AS (
+  -- Extract ICAO_HEX, SERVICE_DATE, FLIGHT per flight_key (take first occurrence)
+  SELECT DISTINCT
+    flight_key,
+    FIRST_VALUE(ICAO_HEX) OVER (PARTITION BY flight_key ORDER BY ts) AS icao_hex,
+    FIRST_VALUE(service_date) OVER (PARTITION BY flight_key ORDER BY ts) AS service_date,
+    FIRST_VALUE(FLIGHT) OVER (PARTITION BY flight_key ORDER BY ts) AS flight
+  FROM pts
+),
+enriched AS (
+  SELECT 
+    e.*,
+    pm.icao_hex,
+    pm.service_date,
+    pm.flight AS flight_number,
+    SUBSTR(pm.flight, 1, 3) AS airline_code,
+    a.AIRLINE_NAME AS airline_name
+  FROM events e
+  LEFT JOIN pts_metadata pm ON pm.flight_key = e.flight_key
+  LEFT JOIN {database}.{schema}.ADSB_DATA_LOCAL a
+    ON a.FLIGHT_KEY = e.flight_key
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY e.flight_key ORDER BY a.TIMESTAMP) = 1
 )
-SELECT * FROM events
+SELECT * FROM enriched
 -- Loosen thresholds slightly: runway polygons and ADS-B ground speeds can be noisy.
 WHERE max_speed_kts <= 80 AND duration_s <= 300 AND chord_m <= 500 AND direction <> 'uncertain';
 
@@ -3779,7 +4292,7 @@ BEGIN
   SELECT COUNT(*), MAX(TIMESTAMP)
     INTO :v_adsb_cnt_24h, :v_adsb_max_ts
   FROM {database}.{schema}.ADSB_DATA_LOCAL
-  WHERE TIMESTAMP >= DATEADD('day', -1, CURRENT_TIMESTAMP());
+  WHERE TIMESTAMP >= DATEADD('day', -1, SYSDATE());
 
   SELECT COUNT(*)
     INTO :v_sched_cnt_window
@@ -3789,13 +4302,13 @@ BEGIN
   MERGE INTO {database}.{schema}.HELPER_MONITOR_LAST_REFRESH t
   USING (
     SELECT 'ADSB_DATA_LOCAL' AS table_name,
-           CURRENT_TIMESTAMP() AS ts,
+           SYSDATE() AS ts,
            :v_adsb_cnt_24h AS row_count_24h,
            :v_adsb_max_ts AS max_ts,
-           IFF(:v_adsb_max_ts IS NOT NULL AND :v_adsb_max_ts >= DATEADD('hour', -2, CURRENT_TIMESTAMP()), 'OK', 'STALE') AS status,
+           IFF(:v_adsb_max_ts IS NOT NULL AND :v_adsb_max_ts >= DATEADD('hour', -2, SYSDATE()), 'OK', 'STALE') AS status,
            IFF(:v_adsb_max_ts IS NULL, 'No relevant ADS-B data yet', NULL) AS details
     UNION ALL
-    SELECT 'FLIGHT_SCHEDULE', CURRENT_TIMESTAMP(), :v_sched_cnt_window, NULL,
+    SELECT 'FLIGHT_SCHEDULE', SYSDATE(), :v_sched_cnt_window, NULL,
            IFF(:v_sched_cnt_window > 0, 'OK', 'EMPTY'),
            IFF(:v_sched_cnt_window = 0, 'No schedule rows in current +/-2 day window', NULL)
   ) s
@@ -3826,7 +4339,7 @@ BEGIN
         COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) AS nn_matched,
         COUNT(DISTINCT ICAO_HEX) AS unique_aircraft
       FROM {database}.{schema}.ADSB_DATA_LOCAL
-      WHERE TIMESTAMP >= DATEADD('day', -1, CURRENT_TIMESTAMP())
+      WHERE TIMESTAMP >= DATEADD('day', -1, SYSDATE())
     ),
     legs AS (
       SELECT COUNT(*) AS leg_cnt
@@ -3916,7 +4429,7 @@ if (maxTs === null) {{
   }}
   throw `Smoke check failed: ADSB_DATA_LOCAL is empty (MAX(TIMESTAMP) is NULL)`;
 }}
-var fresh = scalar(`SELECT IFF(MAX(TIMESTAMP) >= DATEADD('hour', -2, CURRENT_TIMESTAMP()), 1, 0) FROM {database}.{schema}.ADSB_DATA_LOCAL`);
+var fresh = scalar(`SELECT IFF(MAX(TIMESTAMP) >= DATEADD('hour', -2, SYSDATE()), 1, 0) FROM {database}.{schema}.ADSB_DATA_LOCAL`);
 if (fresh !== 1) {{
   if (minsSince <= grace) {{
     return `WAITING_FOR_ADSB_DATA (stale during grace window; installed ${{minsSince}} min ago; grace=${{grace}}m; max_ts=${{maxTs}})`;
@@ -3924,17 +4437,24 @@ if (fresh !== 1) {{
   throw `Smoke check failed: ADSB_DATA_LOCAL appears stale (no points in last 2 hours). max_ts=${{maxTs}}`;
 }}
 
-// Flight schedule: should have rows in the current install window (+/-2 days)
+// Flight schedule: check if data exists (optional, may be empty if no API key provided)
 var schedCnt = scalar(`SELECT COUNT(*) FROM {database}.{schema}.FLIGHT_SCHEDULE WHERE FLIGHT_DATE BETWEEN DATEADD('day', -2, CURRENT_DATE()) AND DATEADD('day', 2, CURRENT_DATE())`);
-if (schedCnt === 0) {{
-  throw `Smoke check failed: FLIGHT_SCHEDULE has 0 rows in +/-2 day window`;
+// Note: schedule may be empty if API key was not provided during install
+
+// Tasks should be STARTED (check for flight schedule task separately)
+snowflake.createStatement({{sqlText: `SHOW TASKS IN SCHEMA {database}.{schema}`}}).execute();
+var schedTaskExists = scalar(`SELECT COUNT_IF(\"name\"='TASK_FLIGHT_SCHEDULE_DAILY') FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`);
+var requiredTasksRunning = scalar(`SELECT COUNT_IF(LOWER(\"state\")='started' AND \"name\" IN ('TASK_INGEST_ADSB','TASK_ENRICH_ADSB_HOURLY','TASK_REFRESH_DERIVED_15MIN')) FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`);
+var schedTaskRunning = scalar(`SELECT COUNT_IF(LOWER(\"state\")='started' AND \"name\"='TASK_FLIGHT_SCHEDULE_DAILY') FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`);
+
+// Core tasks (ADS-B ingestion, enrichment, derived refresh) must be running
+if (requiredTasksRunning < 3) {{
+  throw `Smoke check failed: not all core ADS-B tasks are STARTED (started=${{requiredTasksRunning}}/3)`;
 }}
 
-// Tasks should be STARTED
-snowflake.createStatement({{sqlText: `SHOW TASKS IN SCHEMA {database}.{schema}`}}).execute();
-var startedCnt = scalar(`SELECT COUNT_IF(LOWER(\"state\")='started' AND \"name\" IN ('TASK_INGEST_ADSB','TASK_ENRICH_ADSB_HOURLY','TASK_FLIGHT_SCHEDULE_HOURLY','TASK_REFRESH_DERIVED_15MIN')) FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`);
-if (startedCnt < 4) {{
-  throw `Smoke check failed: not all core tasks are STARTED (started=${{startedCnt}}/4)`; 
+// Flight schedule task is optional (only exists if API key was provided)
+if (schedTaskExists > 0 && schedTaskRunning === 0) {{
+  throw `Smoke check failed: TASK_FLIGHT_SCHEDULE_DAILY exists but is not STARTED`; 
 }}
 
 return 'OK';
@@ -3953,6 +4473,7 @@ UNION ALL SELECT 'GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS', COUNT(*) FROM {databa
 UNION ALL SELECT 'GATE_ANALYSIS_FLIGHT_GATE_TIME', COUNT(*) FROM {database}.{schema}.GATE_ANALYSIS_FLIGHT_GATE_TIME
 UNION ALL SELECT 'GATE_ANALYSIS_GATE_UTIL_DAILY', COUNT(*) FROM {database}.{schema}.GATE_ANALYSIS_GATE_UTIL_DAILY
 UNION ALL SELECT 'GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY', COUNT(*) FROM {database}.{schema}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY
+UNION ALL SELECT 'GATE_ANALYSIS_FLIGHT_DWELL_WITH_AIRLINE', COUNT(*) FROM {database}.{schema}.GATE_ANALYSIS_FLIGHT_DWELL_WITH_AIRLINE
 UNION ALL SELECT 'ADSB_DATA_LOCAL', COUNT(*) FROM {database}.{schema}.ADSB_DATA_LOCAL
 UNION ALL SELECT 'HELPER_FLIGHT_LEG', COUNT(*) FROM {database}.{schema}.HELPER_FLIGHT_LEG
 UNION ALL SELECT 'HELPER_FLIGHT_MATCH_CANDIDATES', COUNT(*) FROM {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES
@@ -3963,20 +4484,22 @@ UNION ALL SELECT 'FLIGHT_TRAFFIC_FACT_ADSB_HOURLY', COUNT(*) FROM {database}.{sc
 UNION ALL SELECT 'FLIGHT_TRACKER_FLIGHT_LIST', COUNT(*) FROM {database}.{schema}.FLIGHT_TRACKER_FLIGHT_LIST
 UNION ALL SELECT 'FLIGHT_TRAFFIC_FACT_AIRLINE_TRAFFIC_DAILY', COUNT(*) FROM {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_TRAFFIC_DAILY
 UNION ALL SELECT 'FLIGHT_TRAFFIC_FACT_AIRLINE_DELAY_DAILY', COUNT(*) FROM {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_DELAY_DAILY
-UNION ALL SELECT 'RUNWAY_CROSSINGS_DETAILED', COUNT(*) FROM {database}.{schema}.RUNWAY_CROSSINGS_DETAILED;
+UNION ALL SELECT 'RUNWAY_CROSSINGS_DETAILED', COUNT(*) FROM {database}.{schema}.RUNWAY_CROSSINGS_DETAILED
+UNION ALL SELECT 'FLIGHT_SCHEDULE', COUNT(*) FROM {database}.{schema}.FLIGHT_SCHEDULE
+UNION ALL SELECT 'HELPER_FLIGHT_SCHEDULE_RAW', COUNT(*) FROM {database}.{schema}.HELPER_FLIGHT_SCHEDULE_RAW;
 
 -- =============================================================================
 -- START AUTOMATED TASKS
 -- =============================================================================
 
--- Start the ADS-B ingestion task (real-time data every minute)
+-- Start the ADS-B ingestion task (real-time data every 5 seconds)
 ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
 
 -- Start ADS-B enrichment task (adds schedule flight number/key to points)
 ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB_HOURLY RESUME;
 
--- Start the flight schedule task (hourly updates)
-ALTER TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE_HOURLY RESUME;
+-- Note: TASK_FLIGHT_SCHEDULE_DAILY is resumed in 04_flight_schedule_v5.sql
+-- (only exists if API key was provided during install)
 
 -- Start derived refresh (15 min)
 ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED_15MIN RESUME;
@@ -3990,6 +4513,7 @@ ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS RESUME;
 ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_GATE_TIME RESUME;
 ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_GATE_UTIL_DAILY RESUME;
 ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY RESUME;
+ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_DWELL_WITH_AIRLINE RESUME;
 ALTER DYNAMIC TABLE {database}.{schema}.ADSB_DATA_LOCAL RESUME;
 ALTER DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY RESUME;
 ALTER DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY RESUME;
@@ -4056,76 +4580,11 @@ CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {eai_aviationstack}
   ENABLED = TRUE;
 
 -- -----------------------------------------------------------------------------
--- Raw table (Bronze layer)
+-- Note: HELPER_FLIGHT_SCHEDULE_RAW and FLIGHT_SCHEDULE tables are created
+-- in 01_base_v5.sql to ensure they exist even if API key is not provided.
+-- This allows the installer to complete successfully without an API key.
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE TABLE {database}.{schema}.HELPER_FLIGHT_SCHEDULE_RAW (
-    flight_date DATE,
-    flight_status VARCHAR(32),
-    departure_airport VARCHAR(8),
-    departure_scheduled TIMESTAMP_NTZ,
-    departure_estimated TIMESTAMP_NTZ,
-    departure_actual TIMESTAMP_NTZ,
-    departure_delay INT,
-    departure_terminal VARCHAR(8),
-    departure_gate VARCHAR(8),
-    arrival_airport VARCHAR(8),
-    arrival_scheduled TIMESTAMP_NTZ,
-    arrival_estimated TIMESTAMP_NTZ,
-    arrival_actual TIMESTAMP_NTZ,
-    arrival_delay INT,
-    arrival_terminal VARCHAR(8),
-    arrival_gate VARCHAR(8),
-    airline_name VARCHAR(128),
-    airline_iata VARCHAR(8),
-    airline_icao VARCHAR(8),
-    flight_number VARCHAR(16),
-    flight_iata VARCHAR(16),
-    flight_icao VARCHAR(16),
-    aircraft_registration VARCHAR(16),
-    aircraft_iata VARCHAR(8),
-    aircraft_icao VARCHAR(8),
-    codeshared_airline VARCHAR(128),
-    codeshared_flight_iata VARCHAR(16),
-    raw_json VARIANT,
-    ingested_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
 
--- -----------------------------------------------------------------------------
--- Silver table (cleaned)
--- -----------------------------------------------------------------------------
-CREATE OR REPLACE TABLE {database}.{schema}.FLIGHT_SCHEDULE (
-    FLIGHT_KEY VARCHAR(128),
-    FLIGHT_DATE DATE,
-    FLIGHT_STATUS VARCHAR(32),
-    DEPARTURE_AIRPORT VARCHAR(8),
-    ARRIVAL_AIRPORT VARCHAR(8),
-    DEPARTURE_SCHEDULED TIMESTAMP_NTZ,
-    DEPARTURE_ESTIMATED TIMESTAMP_NTZ,
-    DEPARTURE_ACTUAL TIMESTAMP_NTZ,
-    DEPARTURE_DELAY INT,
-    DEPARTURE_TERMINAL VARCHAR(8),
-    DEPARTURE_GATE VARCHAR(8),
-    ARRIVAL_SCHEDULED TIMESTAMP_NTZ,
-    ARRIVAL_ESTIMATED TIMESTAMP_NTZ,
-    ARRIVAL_ACTUAL TIMESTAMP_NTZ,
-    ARRIVAL_DELAY INT,
-    ARRIVAL_TERMINAL VARCHAR(8),
-    ARRIVAL_GATE VARCHAR(8),
-    AIRLINE_NAME VARCHAR(128),
-    AIRLINE_IATA VARCHAR(8),
-    AIRLINE_ICAO VARCHAR(8),
-    FLIGHT_NUMBER VARCHAR(16),
-    FLIGHT_IATA VARCHAR(16),
-    FLIGHT_ICAO VARCHAR(16),
-    AIRCRAFT_REGISTRATION VARCHAR(16),
-    IS_CODESHARE BOOLEAN,
-    UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
-
--- Compatibility view
--- FLIGHT_SCHEDULE is the canonical schedule source of truth (table).
-
--- (Removed) FLIGHT_SCHEDULE_COMPAT: dashboards now use FLIGHT_SCHEDULE directly.
 -- -----------------------------------------------------------------------------
 -- Ingestion Procedure
 -- -----------------------------------------------------------------------------
@@ -4141,12 +4600,39 @@ AS
 $$
 import requests
 import _snowflake
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
-def parse_ts(ts_str):
-    if not ts_str: return None
-    try: return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-    except: return None
+PROPERTIES_AIRPORT_FQN = "{database}.{schema}.PROPERTIES_AIRPORT"
+
+def _get_airport_tzid(session):
+    try:
+        rows = session.sql("SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS tzid FROM " + PROPERTIES_AIRPORT_FQN + " LIMIT 1").collect()
+        if rows and rows[0] and rows[0][0]:
+            return str(rows[0][0])
+    except Exception:
+        pass
+    return "UTC"
+
+def parse_ts(ts_str, airport_tzid: str):
+    # Parse aviationstack ISO timestamp into UTC-naive datetime for TIMESTAMP_NTZ storage.
+    # - If string includes 'Z' or an offset, treat it as timezone-aware and convert to UTC.
+    # - If string is naive, interpret it in airport local timezone (airport_tzid) and convert to UTC.
+    if not ts_str:
+        return None
+    try:
+        s = str(ts_str).strip()
+        if not s:
+            return None
+        # Normalize Zulu suffix for fromisoformat
+        dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            # Interpret naive timestamps in airport local time
+            dt = dt.replace(tzinfo=ZoneInfo(airport_tzid))
+        dt_utc = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt_utc
+    except Exception:
+        return None
 
 def fetch_flights(api_key, airport, date, direction):
     # Fetch flights with pagination support
@@ -4179,6 +4665,7 @@ def fetch_flights(api_key, airport, date, direction):
 
 def ingest(session, p_airport, p_date):
     api_key = _snowflake.get_generic_secret_string('api_key')
+    airport_tzid = _get_airport_tzid(session)
     departures = fetch_flights(api_key, p_airport, p_date, 'dep')
     arrivals = fetch_flights(api_key, p_airport, p_date, 'arr')
     
@@ -4221,16 +4708,16 @@ def ingest(session, p_airport, p_date):
             datetime.strptime(p_date, '%Y-%m-%d').date(),
             f.get('flight_status'),
             dep.get('iata'),
-            parse_ts(dep.get('scheduled')),
-            parse_ts(dep.get('estimated')),
-            parse_ts(dep.get('actual')),
+            parse_ts(dep.get('scheduled'), airport_tzid),
+            parse_ts(dep.get('estimated'), airport_tzid),
+            parse_ts(dep.get('actual'), airport_tzid),
             dep.get('delay'),
             dep.get('terminal'),
             dep.get('gate'),
             arr.get('iata'),
-            parse_ts(arr.get('scheduled')),
-            parse_ts(arr.get('estimated')),
-            parse_ts(arr.get('actual')),
+            parse_ts(arr.get('scheduled'), airport_tzid),
+            parse_ts(arr.get('estimated'), airport_tzid),
+            parse_ts(arr.get('actual'), airport_tzid),
             arr.get('delay'),
             arr.get('terminal'),
             arr.get('gate'),
@@ -4415,32 +4902,35 @@ LANGUAGE SQL
 AS
 $$
 BEGIN
+    -- Sync today only (2 API calls: 1 departure + 1 arrival)
     CALL {database}.{schema}.PROC_INGEST_FLIGHT_SCHEDULE('{airport['iata_code']}', CURRENT_DATE()::VARCHAR);
     CALL {database}.{schema}.PROC_ETL_SCHEDULE_TO_FLIGHT_SCHEDULE();
-    RETURN 'Flight schedule ingest and ETL complete';
+    RETURN 'Flight schedule ingest and ETL complete: synced today only';
 END;
 $$;
 
 -- -----------------------------------------------------------------------------
--- Scheduled Task (hourly updates)
+-- Scheduled Task (daily at 2 AM UTC)
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE_HOURLY
+CREATE OR REPLACE TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE_DAILY
   WAREHOUSE = {warehouse}
-  SCHEDULE = 'USING CRON 0 * * * * UTC'
+  SCHEDULE = 'USING CRON 0 2 * * * UTC'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
 AS
   CALL {database}.{schema}.PROC_FLIGHT_SCHEDULE_INGEST_AND_ETL();
 
--- Task is created SUSPENDED. To start:
--- ALTER TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE_HOURLY RESUME;
+-- -----------------------------------------------------------------------------
+-- RUN INITIAL BACKFILL (window: user-defined history, no forward days)
+-- -----------------------------------------------------------------------------
+CALL {database}.{schema}.PROC_BACKFILL_FLIGHT_SCHEDULE_WINDOW({backfill_days}, 0);
 
 -- -----------------------------------------------------------------------------
--- RUN INITIAL BACKFILL (window: last 2 days + next 2 days)
+-- START THE TASK
 -- -----------------------------------------------------------------------------
-CALL {database}.{schema}.PROC_BACKFILL_FLIGHT_SCHEDULE_WINDOW({backfill_days}, 2);
+ALTER TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE_DAILY RESUME;
 
 -- Verify
-SELECT 'Setup complete' AS status;
+SELECT 'Flight schedule setup complete. Task is now running.' AS status;
 """
 
 
@@ -4450,7 +4940,7 @@ def generate_all_sql(
     schema: str,
     warehouse: str,
     api_key: str = None,
-    git_repo_stage_base: str = "@AVIA_INSTALLER.PUBLIC.AVIA_FLEET_REPO/branches/poc-v5-adsb-tar-sql",
+    git_repo_stage_base: str = "@AVIA_INSTALLER.PUBLIC.AVIA_FLEET_REPO/branches/main",
     adsb_history_backfill_days: int = 5,
 ) -> dict:
     """Generate all SQL files.
@@ -4579,7 +5069,7 @@ def render_task_monitor(database: str, schema: str):
         tasks_df.columns = [_norm_col(c) for c in tasks_df.columns]
         if not tasks_df.empty:
             # Focus on relevant tasks (backfill + core ingestion tasks)
-            interesting = {"TASK_ADSB_BACKFILL_ONCE", "TASK_INGEST_ADSB", "TASK_FLIGHT_SCHEDULE_HOURLY"}
+            interesting = {"TASK_ADSB_BACKFILL_ONCE", "TASK_INGEST_ADSB", "TASK_FLIGHT_SCHEDULE_DAILY"}
             if "name" not in tasks_df.columns:
                 st.warning(f"Could not fetch task status: missing column 'name'. Columns: {list(tasks_df.columns)[:20]}")
                 tasks_df = None
@@ -4730,7 +5220,7 @@ def main():
         try:
             warehouse_result = session.sql("SELECT CURRENT_WAREHOUSE()").collect()
             warehouse = warehouse_result[0][0] if warehouse_result else "COMPUTE_WH"
-        except:
+        except Exception:
             warehouse = "COMPUTE_WH"
     else:
         warehouse = "COMPUTE_WH"
@@ -4777,8 +5267,8 @@ def main():
     with st.expander("Advanced: Git repo stage path", expanded=False):
         git_repo_stage_base_input = st.text_input(
             "Git repo stage base",
-            value="@AVIA_INSTALLER.PUBLIC.AVIA_FLEET_REPO/branches/poc-v5-adsb-tar-sql",
-            help="Example: @REPO_NAME/branches/poc-v5-adsb-tar-sql (or fully-qualified @DB.SCHEMA.REPO_NAME/branches/poc-v5-adsb-tar-sql). Do not include a trailing slash.",
+            value="@AVIA_INSTALLER.PUBLIC.AVIA_FLEET_REPO/branches/main",
+            help="Example: @REPO_NAME/branches/main (or fully-qualified @DB.SCHEMA.REPO_NAME/branches/main). Do not include a trailing slash.",
         )
         git_repo_stage_base = _normalize_git_repo_stage_base(git_repo_stage_base_input)
         st.caption(f"Normalized: `{git_repo_stage_base}`")
@@ -4944,7 +5434,7 @@ def main():
         2. **Everything runs automatically:**
            - Flight Schedule window: last 2 days + next 2 days
            - ADS-B historical backfill: configurable (UTC days ending yesterday)
-           - Tasks started (real-time ADS-B every minute, Flight Schedule hourly)
+           - Tasks started (real-time ADS-B every minute, Flight Schedule every 15 minutes)
            - Derived tables refreshed
         3. Monitor the database: `{database}.V5`
         """)

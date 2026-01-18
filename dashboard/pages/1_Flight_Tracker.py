@@ -203,10 +203,11 @@ with st.sidebar:
 # Query functions
 @st.cache_data(ttl=300)
 def get_flight_data(_session, flight, date, _db_prefix):
-    """Get flight tracking data"""
+    """Get flight tracking data (airport-local day)"""
     f = str(flight or "").strip().upper()
     is_hex = bool(re.fullmatch(r"[0-9A-F]{6}", f))
     where = f"ICAO_HEX = '{f}'" if is_hex else f"FLIGHT = '{flight}'"
+    local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
     query = f"""
     SELECT 
         ICAO_HEX,
@@ -221,7 +222,7 @@ def get_flight_data(_session, flight, date, _db_prefix):
         SOURCE
     FROM {_db_prefix}.ADSB_DATA_LOCAL
     WHERE {where}
-        AND TIMESTAMP::DATE = '{date}'::DATE
+        AND {local_date_expr} = '{date}'::DATE
         AND LOCATION IS NOT NULL
     ORDER BY TIMESTAMP ASC
     """
@@ -229,14 +230,15 @@ def get_flight_data(_session, flight, date, _db_prefix):
 
 @st.cache_data(ttl=300)
 def get_flight_gate_dwell(_session, flight, date, _db_prefix, radius_meters: int = 120):
-    """Approximate dwell time near the most-likely gate for the selected flight/date.
+    """Approximate dwell time near the most-likely gate for the selected flight/date (airport-local day).
     Returns a single-row DataFrame with GATE_NAME, DWELL_MINUTES, START_TS, END_TS, POINTS or empty if none."""
+    local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
     query = f"""
     WITH ads AS (
         SELECT TIMESTAMP, ST_X(LOCATION) AS LON, ST_Y(LOCATION) AS LAT
     FROM {_db_prefix}.ADSB_DATA_LOCAL
         WHERE FLIGHT = '{flight}'
-          AND TIMESTAMP::DATE = '{date}'::DATE
+          AND {local_date_expr} = '{date}'::DATE
           AND LOCATION IS NOT NULL
     ),
     gates AS (
@@ -545,7 +547,7 @@ r = pdk.Deck(
 )
 
 try:
-    st.pydeck_chart(r, use_container_width=True, height=600)
+    st.pydeck_chart(r, use_container_width=True, height=600, key="flight_tracker")
 except Exception as e:
     st.error("Map rendering failed (pydeck). This usually happens due to overly large/invalid geometries.")
     st.exception(e)

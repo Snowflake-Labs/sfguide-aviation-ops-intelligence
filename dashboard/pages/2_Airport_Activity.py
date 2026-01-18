@@ -591,7 +591,7 @@ if has_data:
     )
     
     try:
-        st.pydeck_chart(r, use_container_width=True, height=700)
+        st.pydeck_chart(r, use_container_width=True, height=700, key="airport_activity")
     except Exception as e:
         if 'MessageSizeError' in str(e):
             # Reduce sampling by 20% and rerun

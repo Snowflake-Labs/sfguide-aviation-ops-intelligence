@@ -57,15 +57,16 @@ def get_health_summary(_session, _db_prefix):
                 COUNT(*) AS total_points,
                 COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) AS matched_points
             FROM {_db_prefix}.ADSB_DATA_LOCAL
-            WHERE TIMESTAMP >= DATEADD('day', -1, CURRENT_TIMESTAMP())
+            -- ADSB timestamps are stored as TIMESTAMP_NTZ in UTC; use SYSDATE() for consistent UTC comparisons.
+            WHERE TIMESTAMP >= DATEADD('day', -1, SYSDATE())
         ),
         yesterday_stats AS (
             SELECT 
                 COUNT(*) AS total_points,
                 COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) AS matched_points
             FROM {_db_prefix}.ADSB_DATA_LOCAL
-            WHERE TIMESTAMP >= DATEADD('day', -2, CURRENT_TIMESTAMP())
-              AND TIMESTAMP < DATEADD('day', -1, CURRENT_TIMESTAMP())
+            WHERE TIMESTAMP >= DATEADD('day', -2, SYSDATE())
+              AND TIMESTAMP < DATEADD('day', -1, SYSDATE())
         )
         SELECT 
             t.total_points,
@@ -82,18 +83,19 @@ def get_health_summary(_session, _db_prefix):
     except Exception:
         pass
     
-    # Unique aircraft today vs yesterday
+    # Unique aircraft today vs yesterday (airport-local day)
     try:
+        local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
         q = f"""
         WITH today AS (
             SELECT COUNT(DISTINCT ICAO_HEX) AS cnt
             FROM {_db_prefix}.ADSB_DATA_LOCAL
-            WHERE TIMESTAMP::DATE = CURRENT_DATE()
+            WHERE {local_date_expr} = {utils.get_airport_local_date_sql(_db_prefix)}
         ),
         yesterday AS (
             SELECT COUNT(DISTINCT ICAO_HEX) AS cnt
             FROM {_db_prefix}.ADSB_DATA_LOCAL
-            WHERE TIMESTAMP::DATE = DATEADD('day', -1, CURRENT_DATE())
+            WHERE {local_date_expr} = DATEADD('day', -1, {utils.get_airport_local_date_sql(_db_prefix)})
         )
         SELECT t.cnt AS today_cnt, y.cnt AS yesterday_cnt
         FROM today t, yesterday y
@@ -129,7 +131,7 @@ def get_health_summary(_session, _db_prefix):
             COUNT(*) AS total_cnt
         FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
         WHERE "name" IN ('TASK_INGEST_ADSB', 'TASK_ENRICH_ADSB_HOURLY', 
-                         'TASK_FLIGHT_SCHEDULE_HOURLY', 'TASK_REFRESH_DERIVED_15MIN')
+                         'TASK_FLIGHT_SCHEDULE_DAILY', 'TASK_REFRESH_DERIVED_15MIN')
         """
         r = _session.sql(q2).collect()
         if r:
@@ -210,16 +212,18 @@ st.subheader("✈️ Flight Matching Health")
 
 @st.cache_data(ttl=300)
 def get_match_rate_trend(_session, _db_prefix, days=14):
-    """Get daily match rate trend."""
+    """Get daily match rate trend (airport-local day)."""
     try:
+        local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
+        local_today_expr = utils.get_airport_local_date_sql(_db_prefix)
         q = f"""
         SELECT 
-            TIMESTAMP::DATE AS service_date,
+            {local_date_expr} AS service_date,
             COUNT(*) AS total_points,
             COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) AS matched_points,
             ROUND(100.0 * COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) / NULLIF(COUNT(*), 0), 1) AS match_rate_pct
         FROM {_db_prefix}.ADSB_DATA_LOCAL
-        WHERE TIMESTAMP >= DATEADD('day', -{days}, CURRENT_DATE())
+        WHERE {local_date_expr} >= DATEADD('day', -{days}, {local_today_expr})
         GROUP BY 1
         ORDER BY 1
         """
@@ -237,7 +241,7 @@ def get_match_method_distribution(_session, _db_prefix):
             COALESCE(MATCH_METHOD, 'unmatched') AS match_method,
             COUNT(*) AS point_count
         FROM {_db_prefix}.ADSB_DATA_LOCAL
-        WHERE TIMESTAMP >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+        WHERE TIMESTAMP >= DATEADD('day', -7, SYSDATE())
         GROUP BY 1
         ORDER BY 2 DESC
         """
@@ -248,8 +252,9 @@ def get_match_method_distribution(_session, _db_prefix):
 
 @st.cache_data(ttl=300)
 def get_unmatched_legs(_session, _db_prefix, days=7):
-    """Get count of unmatched flight legs."""
+    """Get count of unmatched flight legs (airport-local day)."""
     try:
+        local_today_expr = utils.get_airport_local_date_sql(_db_prefix)
         q = f"""
         SELECT 
             l.SERVICE_DATE,
@@ -261,7 +266,7 @@ def get_unmatched_legs(_session, _db_prefix, days=7):
           ON l.SERVICE_DATE = r.SERVICE_DATE
          AND l.ICAO_HEX = r.ICAO_HEX
          AND l.SEG_ID = r.SEG_ID
-        WHERE l.SERVICE_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
+        WHERE l.SERVICE_DATE >= DATEADD('day', -{days}, {local_today_expr})
         GROUP BY 1
         ORDER BY 1
         """
@@ -328,15 +333,17 @@ st.subheader("📈 Data Volume")
 
 @st.cache_data(ttl=300)
 def get_daily_volume(_session, _db_prefix, days=14):
-    """Get daily ADS-B point counts and aircraft counts."""
+    """Get daily ADS-B point counts and aircraft counts (airport-local day)."""
     try:
+        local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
+        local_today_expr = utils.get_airport_local_date_sql(_db_prefix)
         q = f"""
         SELECT 
-            TIMESTAMP::DATE AS service_date,
+            {local_date_expr} AS service_date,
             COUNT(*) AS point_count,
             COUNT(DISTINCT ICAO_HEX) AS aircraft_count
         FROM {_db_prefix}.ADSB_DATA_LOCAL
-        WHERE TIMESTAMP >= DATEADD('day', -{days}, CURRENT_DATE())
+        WHERE {local_date_expr} >= DATEADD('day', -{days}, {local_today_expr})
         GROUP BY 1
         ORDER BY 1
         """
@@ -355,7 +362,7 @@ def get_hourly_ingestion(_session, _db_prefix, hours=48):
             COUNT(*) AS point_count,
             COUNT(DISTINCT ICAO_HEX) AS aircraft_count
         FROM {_db_prefix}.ADSB_DATA_LOCAL
-        WHERE TIMESTAMP >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+        WHERE TIMESTAMP >= DATEADD('hour', -{hours}, SYSDATE())
         GROUP BY 1
         ORDER BY 1
         """
@@ -366,16 +373,17 @@ def get_hourly_ingestion(_session, _db_prefix, hours=48):
 
 @st.cache_data(ttl=300)
 def get_schedule_volume(_session, _db_prefix, days=14):
-    """Get daily scheduled flight counts."""
+    """Get daily scheduled flight counts (airport-local day)."""
     try:
+        local_today_expr = utils.get_airport_local_date_sql(_db_prefix)
         q = f"""
         SELECT 
             FLIGHT_DATE AS service_date,
             COUNT(*) AS scheduled_flights,
             COUNT_IF(IS_CODESHARE = FALSE) AS operating_flights
         FROM {_db_prefix}.FLIGHT_SCHEDULE
-        WHERE FLIGHT_DATE >= DATEADD('day', -{days}, CURRENT_DATE())
-          AND FLIGHT_DATE <= CURRENT_DATE()
+        WHERE FLIGHT_DATE >= DATEADD('day', -{days}, {local_today_expr})
+          AND FLIGHT_DATE <= {local_today_expr}
         GROUP BY 1
         ORDER BY 1
         """
@@ -783,7 +791,7 @@ def get_audit(_session, _db_prefix, code, days):
       created_at
     FROM {_db_prefix}.HELPER_INGEST_AUDIT
     WHERE airport_code = '{code}'
-      AND created_at >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+      AND created_at >= DATEADD('day', -{int(days)}, SYSDATE())
     ORDER BY created_at DESC
     """
     try:
