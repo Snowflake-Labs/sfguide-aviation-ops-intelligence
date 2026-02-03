@@ -16,7 +16,7 @@ utils.apply_custom_css()
 session = get_active_session()
 
 db = utils.get_selected_database()
-schema = utils.get_schema()
+schema = 'PUBLIC'
 db_prefix = f"{db}.{schema}"
 
 with st.sidebar:

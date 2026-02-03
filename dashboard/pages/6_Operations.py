@@ -23,7 +23,7 @@ st.set_page_config(
 utils.apply_custom_css()
 session = get_active_session()
 
-schema = utils.get_schema()
+schema = 'PUBLIC'
 
 st.title("🧭 Operations Overview")
 
