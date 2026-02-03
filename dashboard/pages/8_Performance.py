@@ -14,7 +14,7 @@ st.set_page_config(page_title="Performance", page_icon="📊", layout="wide")
 utils.apply_custom_css()
 session = get_active_session()
 
-schema = utils.get_schema()
+schema = 'PUBLIC'
 
 # Helpers
 @st.cache_data(ttl=3600)

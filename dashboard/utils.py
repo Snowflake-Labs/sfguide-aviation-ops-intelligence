@@ -110,9 +110,7 @@ def get_selected_database():
     return st.session_state.get('selected_database')
 
 
-def get_schema():
-    """Get the schema name."""
-    return 'PUBLIC'
+SCHEMA = "PUBLIC"
 
 
 def get_full_table_name(table_name):
@@ -120,7 +118,7 @@ def get_full_table_name(table_name):
     Get the fully qualified table name using selected database.
     Example: get_full_table_name('ADSB_DATA') -> 'AIRPORT_SAN.PUBLIC.ADSB_DATA'
     """
-    return f"{get_selected_database()}.{get_schema()}.{table_name}"
+    return f"{get_selected_database()}.{SCHEMA}.{table_name}"
 
 
 def render_airport_selector(sidebar=True):
@@ -395,7 +393,7 @@ def get_airport_default_view(session, padding: float = 0.05):
     """
     try:
         db = get_selected_database()
-        schema = get_schema()
+        schema = SCHEMA
         q = """
         SELECT 
             min_lat,
@@ -426,7 +424,7 @@ def get_airport_bbox(_session):
     Used by pages to avoid hardcoded lat/lon bounds."""
     set_query_tag(_session)
     db = get_selected_database()
-    schema = get_schema()
+    schema = SCHEMA
     try:
         q = f"""
         SELECT
@@ -522,7 +520,7 @@ def get_date_range(session):
     Get the min and max dates available in the dataset
     """
     db = get_selected_database()
-    schema = get_schema()
+    schema = SCHEMA
     query = f"""
     SELECT 
         MIN(TIMESTAMP)::DATE as min_date,
@@ -647,7 +645,7 @@ def get_airline_name_map(_session, start_date=None, end_date=None):
     """
     set_query_tag(_session)
     db = get_selected_database()
-    schema = get_schema()
+    schema = SCHEMA
     # Optional date filtering: helps performance on large schedules
     where_parts = ["AIRLINE_ICAO IS NOT NULL", "AIRLINE_NAME IS NOT NULL"]
     if start_date and end_date:
@@ -737,7 +735,7 @@ def get_flight_headers_from_schedule(_session, service_date, flight_ids, db_pref
 
         if db_prefix is None:
             db = get_selected_database()
-            schema = get_schema()
+            schema = SCHEMA
             db_prefix = f"{db}.{schema}"
 
         # Build a VALUES list safely (these values originate from our DB, but still escape quotes).

@@ -24,7 +24,7 @@ utils.apply_custom_css()
 
 session = get_active_session()
 
-schema = utils.get_schema()
+schema = 'PUBLIC'
 
 with st.sidebar:
     selected_db = utils.render_airport_selector(sidebar=True)
