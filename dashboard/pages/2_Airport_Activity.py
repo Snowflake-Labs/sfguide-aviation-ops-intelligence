@@ -34,7 +34,7 @@ db_prefix = f"{db}.{schema}"
 with st.sidebar:
     selected_db = utils.render_airport_selector(sidebar=True)
 if not selected_db:
-    st.warning("No V5 airport databases found yet. Run the installer first.")
+    st.warning("No airport databases found yet. Run the installer first.")
     st.stop()
 st.title("🗺️ Airport Activity & Geographic Analysis")
 st.markdown("Visualize air traffic density, airport zones, and geographic patterns")

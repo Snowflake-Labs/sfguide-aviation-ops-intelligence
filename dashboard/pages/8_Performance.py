@@ -35,7 +35,7 @@ with st.sidebar:
     selected_db = utils.render_airport_selector(sidebar=True)
 
 if not selected_db:
-    st.warning("No V5 airport databases found yet. Run the installer first.")
+    st.warning("No airport databases found yet. Run the installer first.")
     st.stop()
 
 db_prefix = f"{selected_db}.{schema}"
