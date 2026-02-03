@@ -4498,7 +4498,7 @@ ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
 -- Start ADS-B enrichment task (adds schedule flight number/key to points)
 ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB_HOURLY RESUME;
 
--- Note: TASK_FLIGHT_SCHEDULE_DAILY is resumed in 04_flight_schedule_v5.sql
+-- Note: TASK_FLIGHT_SCHEDULE_DAILY is resumed in 04_flight_schedule.sql
 -- (only exists if API key was provided during install)
 
 -- Start derived refresh (15 min)
@@ -4581,7 +4581,7 @@ CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {eai_aviationstack}
 
 -- -----------------------------------------------------------------------------
 -- Note: HELPER_FLIGHT_SCHEDULE_RAW and FLIGHT_SCHEDULE tables are created
--- in 01_base_v5.sql to ensure they exist even if API key is not provided.
+-- in 01_base.sql to ensure they exist even if API key is not provided.
 -- This allows the installer to complete successfully without an API key.
 -- -----------------------------------------------------------------------------
 
@@ -4955,11 +4955,11 @@ def generate_all_sql(
     ADS-B data is loaded first (real-time + history) before schedule.
     """
     files = {
-        '01_base_v5.sql': generate_base_sql(airport, database, schema, warehouse, git_repo_stage_base),
+        '01_base.sql': generate_base_sql(airport, database, schema, warehouse, git_repo_stage_base),
     }
     
     # ADS-B setup runs SECOND (starts real-time ingestion immediately)
-    files['02_adsb_v5.sql'] = generate_adsb_sql(
+    files['02_adsb.sql'] = generate_adsb_sql(
         airport,
         database,
         schema,
@@ -5005,7 +5005,7 @@ SHOW TASKS LIKE 'TASK_ADSB_BACKFILL_ONCE' IN SCHEMA {database}.{schema};
     if api_key:
         # Flight schedule: last 2 days + next 2 days (window)
         # Align schedule backfill coverage with ADS-B history backfill window (best effort for matching).
-        files['04_flight_schedule_v5.sql'] = generate_flight_schedule_sql(
+        files['04_flight_schedule.sql'] = generate_flight_schedule_sql(
             airport,
             database,
             schema,
@@ -5015,7 +5015,7 @@ SHOW TASKS LIKE 'TASK_ADSB_BACKFILL_ONCE' IN SCHEMA {database}.{schema};
         )
     
     # Derived analytics runs LAST (needs both Flight Schedule and ADS-B data)
-    files['05_derived_v5.sql'] = generate_derived_sql(airport, database, schema, warehouse, adsb_history_backfill_days)
+    files['05_derived.sql'] = generate_derived_sql(airport, database, schema, warehouse, adsb_history_backfill_days)
     
     return files
 
@@ -5253,7 +5253,7 @@ def main():
     # Prefer IATA for naming, but allow ICAO fallback if IATA is missing.
     db_suffix = (airport.get('iata_code') or '').strip().upper() or (airport.get('icao_code') or '').strip().upper()
     database = f"AIRPORT_{db_suffix}"
-    schema = "V5"
+    schema = "PUBLIC"
     
     with col1:
         st.subheader("📍 Selected Airport")
@@ -5436,14 +5436,14 @@ def main():
            - ADS-B historical backfill: configurable (UTC days ending yesterday)
            - Tasks started (real-time ADS-B every minute, Flight Schedule every 15 minutes)
            - Derived tables refreshed
-        3. Monitor the database: `{database}.V5`
+        3. Monitor the database: `{database}.PUBLIC`
         """)
     else:
         st.markdown(f"""
         1. Download the SQL files
         2. Run them in Snowflake worksheets in order (01_, 02_, 03_, 04_, 05_)
         3. **Everything runs automatically** - no manual steps needed!
-        4. Deploy the dashboard Streamlit app pointing to `{database}.V5`
+        4. Deploy the dashboard Streamlit app pointing to `{database}.PUBLIC`
         """)
 
     # Task monitor for the selected airport (Snowflake only)

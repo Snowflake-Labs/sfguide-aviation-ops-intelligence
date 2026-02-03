@@ -33,13 +33,13 @@ def get_available_airports():
     session = get_active_session()
     set_query_tag(session)
     
-    def _has_v5_airport_geometry(db_name: str) -> bool:
-        """Return True if db has V5.PROPERTIES_AIRPORT (our installer baseline object)."""
+    def _has_airport_geometry(db_name: str) -> bool:
+        """Return True if db has PUBLIC.PROPERTIES_AIRPORT (our installer baseline object)."""
         try:
             df = session.sql(f"""
                 SELECT 1
                 FROM {db_name}.INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_SCHEMA = 'V5'
+                WHERE TABLE_SCHEMA = 'PUBLIC'
                   AND TABLE_NAME = 'PROPERTIES_AIRPORT'
                 LIMIT 1
             """).to_pandas()
@@ -61,8 +61,8 @@ def get_available_airports():
         for _, row in databases_df.iterrows():
             db_name = row['DATABASE_NAME']
 
-            # Only treat databases as "airports" if they look installed (have V5.PROPERTIES_AIRPORT)
-            if not _has_v5_airport_geometry(db_name):
+            # Only treat databases as "airports" if they look installed (have PUBLIC.PROPERTIES_AIRPORT)
+            if not _has_airport_geometry(db_name):
                 continue
 
             # Extract IATA code from database name (AIRPORT_SAN -> SAN)
@@ -72,7 +72,7 @@ def get_available_airports():
             try:
                 geom_df = session.sql(f"""
                     SELECT airport_name
-                    FROM {db_name}.V5.PROPERTIES_AIRPORT
+                    FROM {db_name}.PUBLIC.PROPERTIES_AIRPORT
                     LIMIT 1
                 """).to_pandas()
                 airport_name = str(geom_df['AIRPORT_NAME'].iloc[0]) if geom_df is not None and len(geom_df) > 0 else iata_code
@@ -101,7 +101,7 @@ def get_selected_database():
     valid_dbs = {a["database"] for a in airports} if airports else set()
 
     if ('selected_database' not in st.session_state) or (st.session_state.get('selected_database') not in valid_dbs):
-        # V5-only dashboard: if no valid airports, return None and let pages stop with guidance.
+        # If no valid airports, return None and let pages stop with guidance.
         if airports:
             st.session_state['selected_database'] = airports[0]['database']
         else:
@@ -111,14 +111,14 @@ def get_selected_database():
 
 
 def get_schema():
-    """Get the schema name (V5)."""
-    return 'V5'
+    """Get the schema name."""
+    return 'PUBLIC'
 
 
 def get_full_table_name(table_name):
     """
     Get the fully qualified table name using selected database.
-    Example: get_full_table_name('ADSB_DATA') -> 'AIRPORT_SAN.V5.ADSB_DATA'
+    Example: get_full_table_name('ADSB_DATA') -> 'AIRPORT_SAN.PUBLIC.ADSB_DATA'
     """
     return f"{get_selected_database()}.{get_schema()}.{table_name}"
 
@@ -422,7 +422,7 @@ def get_airport_default_view(session, padding: float = 0.05):
 
 @st.cache_data(ttl=3600)
 def get_airport_bbox(_session):
-    """Return bounding box + center for the selected airport from <db>.V5.PROPERTIES_AIRPORT.
+    """Return bounding box + center for the selected airport from <db>.PUBLIC.PROPERTIES_AIRPORT.
     Used by pages to avoid hardcoded lat/lon bounds."""
     set_query_tag(_session)
     db = get_selected_database()
@@ -544,7 +544,7 @@ def get_table_date_bounds(_session, table_fqn: str, ts_col: str) -> tuple:
     """Return (min_date, max_date) for a table timestamp column.
 
     Args:
-        table_fqn: Fully qualified table name, e.g. AIRPORT_YVR.V5.ADSB_DATA_LOCAL
+        table_fqn: Fully qualified table name, e.g. AIRPORT_YVR.PUBLIC.ADSB_DATA_LOCAL
         ts_col: Timestamp column name/expression, e.g. TIMESTAMP or t_entry
     """
     set_query_tag(_session)
@@ -857,7 +857,7 @@ def get_airport_tzid(_session, db_prefix: str) -> str:
 
 @st.cache_data(ttl=3600)
 def _check_airport_tzid_exists(_session, db_prefix: str) -> bool:
-    """Check if PROPERTIES_AIRPORT has AIRPORT_TZID column (V5 feature)."""
+    """Check if PROPERTIES_AIRPORT has AIRPORT_TZID column."""
     try:
         _session.sql(f"SELECT AIRPORT_TZID FROM {db_prefix}.PROPERTIES_AIRPORT LIMIT 0").collect()
         return True
@@ -879,11 +879,11 @@ def get_airport_local_date_sql(db_prefix: str, ts_expr: str = "SYSDATE()") -> st
     Example:
         WHERE service_date = {get_airport_local_date_sql(db_prefix)}
     
-    Note: Requires PROPERTIES_AIRPORT.AIRPORT_TZID column (V5 update).
+    Note: Requires PROPERTIES_AIRPORT.AIRPORT_TZID column.
           If not present, falls back to UTC date for backward compatibility.
     """
     # Backward compatibility: if AIRPORT_TZID doesn't exist, just use UTC date
-    # This allows dashboards to work with older V5 deployments
+    # This allows dashboards to work with older deployments
     try:
         # Try to get session from Streamlit context
         from snowflake.snowpark.context import get_active_session
@@ -1432,7 +1432,7 @@ def get_infrastructure_layers(_session, db_prefix: str, layer_types: list, inclu
     
     Args:
         _session: Snowflake session
-        db_prefix: Database prefix (e.g., 'AIRPORT_YVR.V5')
+        db_prefix: Database prefix (e.g., 'AIRPORT_YVR.PUBLIC')
         layer_types: List of layer types to fetch
         include_tags: If True, include source_tags_json column for tooltip display
     """
@@ -1473,7 +1473,7 @@ def render_infrastructure_selector(session, db_prefix: str, sidebar: bool = True
     
     Args:
         session: Snowflake session
-        db_prefix: Database prefix (e.g., 'AIRPORT_YVR.V5')
+        db_prefix: Database prefix (e.g., 'AIRPORT_YVR.PUBLIC')
         sidebar: If True, render in sidebar
         default_preset: One of 'none', 'airport_ops', 'all', 'custom'
         key_prefix: Prefix for widget keys to avoid conflicts between pages

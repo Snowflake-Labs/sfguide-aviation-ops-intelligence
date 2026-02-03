@@ -25,7 +25,7 @@ with st.sidebar:
 
 with st.sidebar:
     if not selected_db:
-        st.warning("No V5 airport databases found yet. Run the installer first.")
+        st.warning("No airport databases found yet. Run the installer first.")
         st.stop()
 
     st.header("Filters")
@@ -357,7 +357,7 @@ else:
     # Infrastructure layers (componentized rendering)
     layers.extend(utils.create_infrastructure_pydeck_layers(infra_df, show_tags=show_infra_tags))
     
-    # Runway base layer from V5.PROPERTIES_RUNWAYS
+    # Runway base layer from PUBLIC.PROPERTIES_RUNWAYS
     if not runway_df.empty and runway_df.iloc[0]['GEOM_JSON']:
         geom_json = json.loads(runway_df.iloc[0]['GEOM_JSON'])
         layers.append(

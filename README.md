@@ -166,7 +166,7 @@ SHOW GIT REPOSITORIES;
 LS @AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/main;
 ```
 
-**Note**: Replace `<your-org>` and repository name as appropriate. Use branch name `poc-stable-v5` or your preferred branch. Replace `AVIA_INSTALLER.PUBLIC` with your chosen database and schema.
+**Note**: Replace `<your-org>` and repository name as appropriate. Use branch name `main` or your preferred branch. Replace `AVIA_INSTALLER.PUBLIC` with your chosen database and schema.
 
 #### Step 5: Create Installer Streamlit App from Git
 
@@ -230,7 +230,7 @@ SELECT SYSTEM$GET_STREAMLIT_URL('AVIA_INSTALLER.PUBLIC.airport_analytics_dashboa
 5. Click **Execute in Snowflake** to deploy the infrastructure
 
 **What the Installer Creates:**
-- Database: `AIRPORT_XXX` with schema `V5`
+- Database: `AIRPORT_XXX`
 - Tables: Airport properties, ADS-B data, flight schedules, analytics tables
 - Procedures: Data ingestion, enrichment, backfill
 - Tasks: Automated pipelines (1-min ADS-B ingestion, hourly schedule/enrichment)
@@ -306,7 +306,7 @@ sd_poc/
 
 #### 1. "No airport databases found" in Dashboard
 
-**Cause**: No `AIRPORT_XXX` databases with `V5.PROPERTIES_AIRPORT` table exist.
+**Cause**: No `AIRPORT_XXX` databases with `PUBLIC.PROPERTIES_AIRPORT` table exist.
 
 **Fix**: Run the Installer app first to deploy at least one airport.
 
@@ -322,7 +322,7 @@ USE ROLE ACCOUNTADMIN;
 
 #### 3. "External Access Integration already exists" error
 
-**Cause**: EAI names must be unique per airport. Installer uses `AIRPORT_XXX_V5_*_EAI` pattern.
+**Cause**: EAI names must be unique per airport. Installer uses `AIRPORT_XXX_*_EAI` pattern.
 
 **Fix**: This is expected if re-running installer. The installer uses `CREATE OR REPLACE` to handle this.
 
@@ -337,7 +337,7 @@ USE ROLE ACCOUNTADMIN;
 ```sql
 -- Check task status
 USE DATABASE AIRPORT_<XXX>;
-USE SCHEMA V5;
+USE SCHEMA PUBLIC;
 SHOW TASKS;
 
 -- Resume suspended tasks
@@ -359,16 +359,16 @@ CALL PROC_ENRICH_ADSB_WITH_SCHEDULE(24);  -- Enrich last 24 hours
 ```sql
 -- Check if ADSB_DATA has recent data
 SELECT COUNT(*), MAX(TIMESTAMP) 
-FROM AIRPORT_<XXX>.V5.ADSB_DATA;
+FROM AIRPORT_<XXX>.PUBLIC.ADSB_DATA;
 
 -- Check task state
-SHOW TASKS IN SCHEMA AIRPORT_<XXX>.V5;
+SHOW TASKS IN SCHEMA AIRPORT_<XXX>.PUBLIC;
 
 -- Check dynamic table state
-SHOW DYNAMIC TABLES IN SCHEMA AIRPORT_<XXX>.V5;
+SHOW DYNAMIC TABLES IN SCHEMA AIRPORT_<XXX>.PUBLIC;
 
 -- Manually trigger ingestion
-CALL AIRPORT_<XXX>.V5.PROC_INGEST_ADSB();
+CALL AIRPORT_<XXX>.PUBLIC.PROC_INGEST_ADSB();
 ```
 
 #### 6. GitHub integration fails with "Repository not found"
@@ -406,9 +406,9 @@ ALTER STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_dashboard
   SET QUERY_WAREHOUSE = <larger_warehouse>;
 
 -- Update task warehouse (fully qualified)
-ALTER TASK AIRPORT_<XXX>.V5.TASK_INGEST_ADSB 
+ALTER TASK AIRPORT_<XXX>.PUBLIC.TASK_INGEST_ADSB 
   SET WAREHOUSE = <your_warehouse>;
-ALTER TASK AIRPORT_<XXX>.V5.TASK_INGEST_ADSB RESUME;
+ALTER TASK AIRPORT_<XXX>.PUBLIC.TASK_INGEST_ADSB RESUME;
 ```
 
 ---
@@ -429,6 +429,3 @@ ALTER TASK AIRPORT_<XXX>.V5.TASK_INGEST_ADSB RESUME;
 - **[ADSB.lol API](https://api.adsb.lol/)**: Real-time ADS-B data source
 
 - **[Overture Maps](https://overturemaps.org/)**: Open-source geospatial data for airport infrastructure
-
-**Built with Snowflake Native Architecture**  
-Version: V5 | Last Updated: January 2026
