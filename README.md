@@ -1,12 +1,12 @@
 # Airport Analytics Platform - Deployment Guide
 
-A Snowflake-native solution for real-time aviation analytics using ADS-B flight tracking, flight schedules, and airport infrastructure data. Deploy complete per-airport analytics databases with automated pipelines and interactive dashboards.
+A Snowflake-native solution for batch aviation analytics using ADS-B flight tracking, flight schedules, and airport infrastructure data. Deploy complete per-airport analytics databases with automated pipelines and interactive dashboards.
 
 ## ✈️ Key Features
 
-- **Real-time Flight Tracking**: Live ADS-B ingestion every minute
+- **Batch Flight Tracking**: Daily ADS-B ingestion (previous day)
 - **Historical Backfill**: Automated download of historical ADS-B data from GitHub releases
-- **Flight Schedule Integration**: Hourly ingestion from Aviationstack API with automated matching
+- **Flight Schedule Integration**: Daily ingestion from Aviationstack API with automated matching
 - **Gate Analytics**: Aircraft-to-gate proximity analysis with dwell time calculations
 - **Runway Crossing Detection**: Identifies taxiing aircraft crossing runways
 - **Infrastructure Visualization**: Dynamic rendering of runways, taxiways, gates, and terminals
@@ -233,7 +233,7 @@ SELECT SYSTEM$GET_STREAMLIT_URL('AVIA_INSTALLER.PUBLIC.airport_analytics_dashboa
 - Database: `AIRPORT_XXX`
 - Tables: Airport properties, ADS-B data, flight schedules, analytics tables
 - Procedures: Data ingestion, enrichment, backfill
-- Tasks: Automated pipelines (1-min ADS-B ingestion, hourly schedule/enrichment)
+- Tasks: Automated pipelines (daily ADS-B batch, daily schedule/enrichment)
 - Dynamic Tables: Incremental analytics (gate analysis, runway crossings, traffic facts)
 - External Access Integrations: API access for ADSB.lol, GitHub, Aviationstack
 
@@ -241,8 +241,8 @@ SELECT SYSTEM$GET_STREAMLIT_URL('AVIA_INSTALLER.PUBLIC.airport_analytics_dashboa
 
 After execution completes (~5-10 minutes):
 - Check task status in the Installer app
-- Wait for initial data ingestion (1-2 minutes for first ADS-B points)
-- Historical backfill runs daily at 2 AM UTC (or on-demand via procedures)
+- Wait for the first daily batch to complete (after the next scheduled ingest)
+- Historical backfill runs on-demand (or via the retry task if enabled)
 
 ### 3. Open the Dashboard
 
@@ -341,8 +341,8 @@ USE SCHEMA PUBLIC;
 SHOW TASKS;
 
 -- Resume suspended tasks
-ALTER TASK TASK_FLIGHT_SCHEDULE_HOURLY RESUME;
-ALTER TASK TASK_ENRICH_ADSB_HOURLY RESUME;
+ALTER TASK TASK_FLIGHT_SCHEDULE RESUME;
+ALTER TASK TASK_ENRICH_ADSB RESUME;
 
 -- Manually trigger enrichment
 CALL PROC_ENRICH_ADSB_WITH_SCHEDULE(24);  -- Enrich last 24 hours
@@ -351,7 +351,7 @@ CALL PROC_ENRICH_ADSB_WITH_SCHEDULE(24);  -- Enrich last 24 hours
 #### 5. No data appearing in Dashboard
 
 **Possible causes**:
-- Real-time ingestion task not running
+- Daily ingestion task not running
 - Dynamic tables not refreshing
 - Warehouse suspended
 
@@ -426,6 +426,6 @@ ALTER TASK AIRPORT_<XXX>.PUBLIC.TASK_INGEST_ADSB RESUME;
 
 - **[Aviationstack API Docs](https://aviationstack.com/documentation)**: Flight schedule API reference
 
-- **[ADSB.lol API](https://api.adsb.lol/)**: Real-time ADS-B data source
+- **[ADSB.lol API](https://api.adsb.lol/)**: ADS-B data source
 
 - **[Overture Maps](https://overturemaps.org/)**: Open-source geospatial data for airport infrastructure

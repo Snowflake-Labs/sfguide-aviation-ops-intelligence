@@ -1663,10 +1663,10 @@ BEGIN
 END;
 $$;
 
--- Enrichment task (every 15 minutes - keeps schedule association current without slowing the 5-second ingest task)
-CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB_HOURLY
+-- Enrichment task (daily - aligns with batch ADS-B ingest cadence)
+CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
   WAREHOUSE = {warehouse}
-  SCHEDULE = '15 MINUTE'
+  SCHEDULE = 'USING CRON 15 2 * * * UTC'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
 AS
   CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
@@ -1838,9 +1838,9 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META_HOURLY
+CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META
   WAREHOUSE = {warehouse}
-  SCHEDULE = '60 MINUTE'
+  SCHEDULE = 'USING CRON 15 3 * * * UTC'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
 AS
   CALL {database}.{schema}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL();
@@ -2076,11 +2076,11 @@ END;
 $$;
 
 -- -----------------------------------------------------------------------------
--- Scheduled Task (every 1 minute for real-time updates)
+-- Scheduled Task (daily batch cadence)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE TASK {database}.{schema}.TASK_INGEST_ADSB
   WAREHOUSE = {warehouse}
-  SCHEDULE = '1 MINUTE'
+  SCHEDULE = 'USING CRON 30 1 * * * UTC'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
 AS
   CALL {database}.{schema}.PROC_ADSB_INGEST_AND_ETL();
@@ -3165,7 +3165,7 @@ AS
 $$
 BEGIN
   EXECUTE IMMEDIATE '
-    CREATE OR REPLACE TASK {database}.{schema}.TASK_ADSB_BACKFILL_RETRY_HOURLY
+    CREATE OR REPLACE TASK {database}.{schema}.TASK_ADSB_BACKFILL_RETRY
       WAREHOUSE = {warehouse}
       SCHEDULE = ''60 MINUTE''
       USER_TASK_TIMEOUT_MS = 21600000
@@ -3174,8 +3174,8 @@ BEGIN
       CALL {database}.{schema}.PROC_RUN_BACKFILL_RETRY_UTC();
   ';
 
-  EXECUTE IMMEDIATE 'ALTER TASK {database}.{schema}.TASK_ADSB_BACKFILL_RETRY_HOURLY RESUME';
-  RETURN 'Started TASK_ADSB_BACKFILL_RETRY_HOURLY (yesterday+today UTC retry + enrich). Monitor HELPER_ADSB_BACKFILL_STATUS.';
+  EXECUTE IMMEDIATE 'ALTER TASK {database}.{schema}.TASK_ADSB_BACKFILL_RETRY RESUME';
+  RETURN 'Started TASK_ADSB_BACKFILL_RETRY (yesterday+today UTC retry + enrich). Monitor HELPER_ADSB_BACKFILL_STATUS.';
 END;
 $$;
 
@@ -3270,7 +3270,7 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.PROPERTIES_RUNWAYS (
 -- This is a derived convenience layer for dashboards; ADSB_DATA remains the raw point truth.
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.ADSB_DATA_LOCAL
-  TARGET_LAG = '1 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH airport AS (
@@ -3334,7 +3334,7 @@ DROP VIEW IF EXISTS {database}.{schema}.ADSB_DATA_LOVAL;
 -- These keys avoid reliance on callsign/flight_key for historical data.
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS
-  TARGET_LAG = '1 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH ap AS (
@@ -3390,7 +3390,7 @@ agg AS (
 SELECT * FROM agg;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
-  TARGET_LAG = '1 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH ap AS (
@@ -3455,7 +3455,7 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY w.ICAO_HEX, w.service_date, w.ts ORDER B
 -- 2. Gate Analysis summaries
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_GATE_TIME
-  TARGET_LAG = '1 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH per_gate AS (
@@ -3488,7 +3488,7 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY ground_session_id ORDER BY dwell_seconds
 -- 2b. GATE_UTIL_DAILY (used by Gate Analysis)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_GATE_UTIL_DAILY
-  TARGET_LAG = '15 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 SELECT
@@ -3504,7 +3504,7 @@ GROUP BY date, gate_name;
 -- 2c. GATE_AIRLINE_DWELL_DAILY (used by Gate Analysis)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY
-  TARGET_LAG = '60 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH dim_icao AS (
@@ -3576,7 +3576,7 @@ GROUP BY 1,2,3;
 -- 2d. Gate dwell with airline (pre-joined for dashboard performance)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_DWELL_WITH_AIRLINE
-  TARGET_LAG = '15 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH dim_icao AS (
@@ -3855,7 +3855,7 @@ LEFT JOIN gate_actual ga
 -- 3. Flight Traffic derived tables (used by Traffic Analysis)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
-  TARGET_LAG = '15 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH ap AS (
@@ -3875,7 +3875,7 @@ CROSS JOIN ap
 GROUP BY date;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
-  TARGET_LAG = '15 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 SELECT
@@ -3890,7 +3890,7 @@ GROUP BY hour;
 -- Precompute per-flight-per-day header fields for fast UI: Airline + Origin/Destination
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRACKER_FLIGHT_LIST
-  TARGET_LAG = '1 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH airport AS (
@@ -3984,7 +3984,7 @@ LEFT JOIN best b
 WHERE a.is_local_od_any = 1 OR a.touched_airport_any = 1;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_TRAFFIC_DAILY
-  TARGET_LAG = '60 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH ap AS (
@@ -4005,7 +4005,7 @@ GROUP BY date, airline_code;
 
 -- Schedule-vs-actual delay rollup (used by Traffic Analysis)
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_DELAY_DAILY
-  TARGET_LAG = '60 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH ap AS (
@@ -4085,7 +4085,7 @@ GROUP BY date, airline;
 -- 4. Runway Crossings derived tables
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.RUNWAY_CROSSINGS_DETAILED
-  TARGET_LAG = '60 MINUTE'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH runway_union AS (
@@ -4443,9 +4443,9 @@ var schedCnt = scalar(`SELECT COUNT(*) FROM {database}.{schema}.FLIGHT_SCHEDULE 
 
 // Tasks should be STARTED (check for flight schedule task separately)
 snowflake.createStatement({{sqlText: `SHOW TASKS IN SCHEMA {database}.{schema}`}}).execute();
-var schedTaskExists = scalar(`SELECT COUNT_IF(\"name\"='TASK_FLIGHT_SCHEDULE_DAILY') FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`);
-var requiredTasksRunning = scalar(`SELECT COUNT_IF(LOWER(\"state\")='started' AND \"name\" IN ('TASK_INGEST_ADSB','TASK_ENRICH_ADSB_HOURLY','TASK_REFRESH_DERIVED_15MIN')) FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`);
-var schedTaskRunning = scalar(`SELECT COUNT_IF(LOWER(\"state\")='started' AND \"name\"='TASK_FLIGHT_SCHEDULE_DAILY') FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`);
+var schedTaskExists = scalar(`SELECT COUNT_IF(\"name\"='TASK_FLIGHT_SCHEDULE') FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`);
+var requiredTasksRunning = scalar(`SELECT COUNT_IF(LOWER(\"state\")='started' AND \"name\" IN ('TASK_INGEST_ADSB','TASK_ENRICH_ADSB','TASK_REFRESH_DERIVED')) FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`);
+var schedTaskRunning = scalar(`SELECT COUNT_IF(LOWER(\"state\")='started' AND \"name\"='TASK_FLIGHT_SCHEDULE') FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`);
 
 // Core tasks (ADS-B ingestion, enrichment, derived refresh) must be running
 if (requiredTasksRunning < 3) {{
@@ -4454,15 +4454,15 @@ if (requiredTasksRunning < 3) {{
 
 // Flight schedule task is optional (only exists if API key was provided)
 if (schedTaskExists > 0 && schedTaskRunning === 0) {{
-  throw `Smoke check failed: TASK_FLIGHT_SCHEDULE_DAILY exists but is not STARTED`; 
+  throw `Smoke check failed: TASK_FLIGHT_SCHEDULE exists but is not STARTED`; 
 }}
 
 return 'OK';
 $$;
 
-CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_DERIVED_15MIN
+CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_DERIVED
   WAREHOUSE = {warehouse}
-  SCHEDULE = '15 MINUTE'
+  SCHEDULE = 'USING CRON 45 2 * * * UTC'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
 AS
   CALL {database}.{schema}.PROC_REFRESH_DERIVED();
@@ -4492,20 +4492,20 @@ UNION ALL SELECT 'HELPER_FLIGHT_SCHEDULE_RAW', COUNT(*) FROM {database}.{schema}
 -- START AUTOMATED TASKS
 -- =============================================================================
 
--- Start the ADS-B ingestion task (real-time data every 5 seconds)
+-- Start the ADS-B ingestion task (daily batch cadence)
 ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
 
 -- Start ADS-B enrichment task (adds schedule flight number/key to points)
-ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB_HOURLY RESUME;
+ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB RESUME;
 
--- Note: TASK_FLIGHT_SCHEDULE_DAILY is resumed in 04_flight_schedule.sql
+-- Note: TASK_FLIGHT_SCHEDULE is resumed in 04_flight_schedule.sql
 -- (only exists if API key was provided during install)
 
--- Start derived refresh (15 min)
-ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED_15MIN RESUME;
+-- Start derived refresh (daily)
+ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED RESUME;
 
--- Start aircraft meta enrichment (hourly) - keeps ADSB_DATA.AIRCRAFT_DESC populated
-ALTER TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META_HOURLY RESUME;
+-- Start aircraft meta enrichment (daily) - keeps ADSB_DATA.AIRCRAFT_DESC populated
+ALTER TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META RESUME;
 
 -- Resume dynamic tables (incremental refresh)
 ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS RESUME;
@@ -4912,7 +4912,7 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Scheduled Task (daily at 2 AM UTC)
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE_DAILY
+CREATE OR REPLACE TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE
   WAREHOUSE = {warehouse}
   SCHEDULE = 'USING CRON 0 2 * * * UTC'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
@@ -4927,7 +4927,7 @@ CALL {database}.{schema}.PROC_BACKFILL_FLIGHT_SCHEDULE_WINDOW({backfill_days}, 0
 -- -----------------------------------------------------------------------------
 -- START THE TASK
 -- -----------------------------------------------------------------------------
-ALTER TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE_DAILY RESUME;
+ALTER TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE RESUME;
 
 -- Verify
 SELECT 'Flight schedule setup complete. Task is now running.' AS status;
@@ -4947,18 +4947,18 @@ def generate_all_sql(
     
     Execution order:
     1. Base infrastructure (database, schema, geometry tables)
-    2. ADS-B setup (tables, procedures, real-time ingestion)
+    2. ADS-B setup (tables, procedures, daily batch ingestion)
     3. ADS-B History backfill (downloads TAR files, processes with ST_DWITHIN filtering)
     4. Flight Schedule (loads schedule data with aircraft registrations) 
     5. Derived analytics tables
     
-    ADS-B data is loaded first (real-time + history) before schedule.
+    ADS-B data is loaded first (daily batch + history) before schedule.
     """
     files = {
         '01_base.sql': generate_base_sql(airport, database, schema, warehouse, git_repo_stage_base),
     }
     
-    # ADS-B setup runs SECOND (starts real-time ingestion immediately)
+    # ADS-B setup runs SECOND (starts daily ingestion on schedule)
     files['02_adsb.sql'] = generate_adsb_sql(
         airport,
         database,
@@ -5069,7 +5069,7 @@ def render_task_monitor(database: str, schema: str):
         tasks_df.columns = [_norm_col(c) for c in tasks_df.columns]
         if not tasks_df.empty:
             # Focus on relevant tasks (backfill + core ingestion tasks)
-            interesting = {"TASK_ADSB_BACKFILL_ONCE", "TASK_INGEST_ADSB", "TASK_FLIGHT_SCHEDULE_DAILY"}
+            interesting = {"TASK_ADSB_BACKFILL_ONCE", "TASK_INGEST_ADSB", "TASK_FLIGHT_SCHEDULE"}
             if "name" not in tasks_df.columns:
                 st.warning(f"Could not fetch task status: missing column 'name'. Columns: {list(tasks_df.columns)[:20]}")
                 tasks_df = None
@@ -5434,7 +5434,7 @@ def main():
         2. **Everything runs automatically:**
            - Flight Schedule window: last 2 days + next 2 days
            - ADS-B historical backfill: configurable (UTC days ending yesterday)
-           - Tasks started (real-time ADS-B every minute, Flight Schedule every 15 minutes)
+           - Tasks started (daily ADS-B batch, Flight Schedule daily)
            - Derived tables refreshed
         3. Monitor the database: `{database}.PUBLIC`
         """)
