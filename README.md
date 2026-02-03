@@ -151,19 +151,19 @@ CREATE OR REPLACE API INTEGRATION github_api_integration
 
 ```sql
 -- Create Git repository reference (fully qualified)
-CREATE OR REPLACE GIT REPOSITORY AVIA_INSTALLER.PUBLIC.avia_fleet_repo
+CREATE OR REPLACE GIT REPOSITORY AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO
   API_INTEGRATION = github_api_integration
   ORIGIN = 'https://github.com/<your-org>/sd_poc'
   GIT_CREDENTIALS = github_pat;
 
 -- Fetch latest files from repository
-ALTER GIT REPOSITORY AVIA_INSTALLER.PUBLIC.avia_fleet_repo FETCH;
+ALTER GIT REPOSITORY AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO FETCH;
 
 -- Verify repository is accessible
 SHOW GIT REPOSITORIES;
 
 -- List files in repository (optional verification)
-LS @AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/main;
+LS @AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main;
 ```
 
 **Note**: Replace `<your-org>` and repository name as appropriate. Use branch name `main` or your preferred branch. Replace `AVIA_INSTALLER.PUBLIC` with your chosen database and schema.
@@ -173,7 +173,7 @@ LS @AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/main;
 ```sql
 -- Create Installer app (fully qualified)
 CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_installer
-  ROOT_LOCATION = '@AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/main/installer'
+  ROOT_LOCATION = '@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main/installer'
   MAIN_FILE = 'streamlit_app.py'
   QUERY_WAREHOUSE = <your_warehouse_name>
   TITLE = 'Airport Analytics Installer';
@@ -189,7 +189,7 @@ GRANT USAGE ON STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_installer TO RO
 ```sql
 -- Create Dashboard app (fully qualified)
 CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_dashboard
-  ROOT_LOCATION = '@AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/main/dashboard'
+  ROOT_LOCATION = '@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main/dashboard'
   MAIN_FILE = 'streamlit_app.py'
   QUERY_WAREHOUSE = <your_warehouse_name>
   TITLE = 'Airport Analytics Dashboard';
@@ -384,7 +384,7 @@ SHOW API INTEGRATIONS LIKE 'github_api_integration';
 SHOW GIT REPOSITORIES;
 
 -- Test repository access (fully qualified)
-LS @AVIA_INSTALLER.PUBLIC.avia_fleet_repo/branches/main;
+LS @AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main;
 ```
 
 If listing fails, regenerate your GitHub PAT with correct permissions and recreate the secret.
