@@ -35,7 +35,7 @@ if not selected_db:
     st.stop()
 
 db = utils.get_selected_database()
-schema = utils.get_schema()
+schema = 'PUBLIC'
 db_prefix = f"{db}.{schema}"
 
 # Render something early so reruns don't look like a "blank page" while queries run
