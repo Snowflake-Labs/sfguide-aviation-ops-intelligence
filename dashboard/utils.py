@@ -797,7 +797,6 @@ def render_navigation(current_page_label: str = "Flight Tracker") -> None:
         "Traffic Analysis": "pages/2_Traffic_Analysis.py",
         "Gate Analysis": "pages/4_Gate_Analysis.py",
         "Runway Crossings": "pages/9_Runway_Crossings.py",
-        "Operations": "pages/5_Operations.py",
         "Monitoring": "pages/6_Monitoring.py",
         "Performance": "pages/7_Performance.py",
     }
