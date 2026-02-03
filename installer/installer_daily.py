@@ -2926,7 +2926,7 @@ $$;
 -- Procedure: Backfill last {adsb_history_backfill_days} UTC days (download + process), ending yesterday
 -- Configurable via installer UI.
 -- =============================================================================
-CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_BACKFILL_ADSB_WEEK()
+CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_BACKFILL_ADSB_HISTORY()
 RETURNS STRING
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
@@ -3010,7 +3010,7 @@ $$;
 -- Procedure: Kick off historical backfill as a one-time background task
 -- Runs server-side, so Streamlit can be closed; task self-suspends when done.
 -- =============================================================================
-CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_START_BACKFILL_LAST_WEEK()
+CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_START_BACKFILL_HISTORY()
 RETURNS STRING
 LANGUAGE SQL
 AS
@@ -3090,27 +3090,33 @@ def _wait_for_backfill_complete(session, backfill_days):
 def run_once(session):
     msg = ""
     try:
-        res = session.sql("CALL {database}.{schema}.PROC_BACKFILL_ADSB_WEEK()").collect()
+        res = session.sql("CALL {database}.{schema}.PROC_BACKFILL_ADSB_HISTORY()").collect()
         msg = (res[0][0] if res else None) or ""
 
         # After backfill completes, wait for expected days to be fully processed before enrich/refresh.
         config_days = _get_config_backfill_days(session, {adsb_history_backfill_days})
         complete, processed, expected = _wait_for_backfill_complete(session, config_days)
-        if complete:
-            try:
-                enrich_res = session.sql(
-                    "CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(%d)" % (int(config_days),)
-                ).collect()
-                enrich_msg = (enrich_res[0][0] if enrich_res else None) or ""
-                msg += " | " + enrich_msg
-                refresh_res = session.sql("CALL {database}.{schema}.PROC_REFRESH_DERIVED()").collect()
-                refresh_msg = (refresh_res[0][0] if refresh_res else None) or ""
-                if refresh_msg:
-                    msg += " | " + refresh_msg
-            except Exception as e:
-                msg += " | Enrich/refresh failed: " + str(e)[:200]
-        else:
-            msg += " | Backfill not complete (processed %d/%d days); enrich/refresh skipped" % (processed, expected)
+        if not complete:
+            msg += " | Backfill not complete (processed %d/%d days); continuing with enrichment" % (processed, expected)
+
+        # Enrichment should still run even if today's history isn't available yet.
+        try:
+            enrich_res = session.sql(
+                "CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(%d)" % (int(config_days),)
+            ).collect()
+            enrich_msg = (enrich_res[0][0] if enrich_res else None) or ""
+            msg += " | " + enrich_msg
+        except Exception as e:
+            msg += " | Enrichment failed: " + str(e)[:200]
+
+        # Always attempt a derived refresh after the backfill task completes.
+        try:
+            refresh_res = session.sql("CALL {database}.{schema}.PROC_REFRESH_DERIVED()").collect()
+            refresh_msg = (refresh_res[0][0] if refresh_res else None) or ""
+            if refresh_msg:
+                msg += " | " + refresh_msg
+        except Exception as e:
+            msg += " | Derived refresh failed: " + str(e)[:200]
     except Exception as e:
         msg = "Backfill failed: " + str(e)[:200]
     # Always try to self-suspend the one-time task, even on errors.
@@ -3288,7 +3294,7 @@ $$;
 --   CALL {database}.{schema}.PROC_PROCESS_FROM_STAGE('2025-12-15');
 --
 -- Backfill full week (download + process):
---   CALL {database}.{schema}.PROC_BACKFILL_ADSB_WEEK();
+--   CALL {database}.{schema}.PROC_BACKFILL_ADSB_HISTORY();
 --
 -- Check status:
 --   SELECT * FROM {database}.{schema}.HELPER_ADSB_BACKFILL_STATUS;
@@ -5063,7 +5069,7 @@ def generate_all_sql(
 
 -- Backfill recent history as a one-time background task (last {int(adsb_history_backfill_days)} UTC days ending yesterday).
 -- Safe to close Streamlit after this starts; progress is tracked in HELPER_ADSB_BACKFILL_STATUS.
-CALL {database}.{schema}.PROC_START_BACKFILL_LAST_WEEK();
+CALL {database}.{schema}.PROC_START_BACKFILL_HISTORY();
 
 -- Start continuous retry for yesterday+today UTC, and trigger enrichment+derived refresh
 -- after a day completes. This closes the "start-day gap" as soon as today's history
