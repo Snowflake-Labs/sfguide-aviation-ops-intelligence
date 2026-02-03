@@ -11,7 +11,7 @@ session = get_active_session()
 
 # Get the selected database
 db = utils.get_selected_database()
-schema = utils.get_schema()
+schema = 'PUBLIC'
 db_prefix = f"{db}.{schema}"
 
 st.title("🛤️ Runway Crossings Analysis")
