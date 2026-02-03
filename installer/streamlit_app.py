@@ -693,8 +693,8 @@ def generate_adsb_sql(airport: dict, database: str, schema: str, warehouse: str,
     # when multiple airport DBs are installed in the same Snowflake account.
     eai_adsb_lol = re.sub(r"[^A-Za-z0-9_]", "_", f"{database}_{schema}_ADSB_LOL_EAI").upper()
     eai_github = re.sub(r"[^A-Za-z0-9_]", "_", f"{database}_{schema}_GITHUB_EAI").upper()
-    # Convert 50km to Nautical Miles (50 / 1.852 = 27) - larger radius to catch aircraft on approach
-    radius_nm = 27
+    # 10 nautical miles (~18.5km) - tighter radius near airport
+    radius_nm = 10
     api_url = f"https://api.adsb.lol/v2/point/{airport['lat']}/{airport['lon']}/{radius_nm}"
     
     return f"""-- =============================================================================
