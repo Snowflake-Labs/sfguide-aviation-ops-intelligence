@@ -103,164 +103,49 @@ your_aviationstack_api_key_here
 
 ### Option 2: GitHub Integration
 
-**Best for**: Production deployments, version control, automated updates.
-
-#### Step 1: Prepare Your Repository
-
-1. Fork or clone this repository to your GitHub account/organization
-2. Ensure the repository structure has:
-   - `/installer` folder with Streamlit app
-   - `/dashboard` folder with Streamlit app
-3. Note your repository URL (e.g., `https://github.com/your-org/sd_poc`)
-
-#### Step 2: Set Up Secrets in Snowflake
+#### Step 1: Set Up Secrets in Snowflake
 
 Execute these queries in a Snowflake worksheet (replace placeholders):
 
 ```sql
--- Use the database where you'll store secrets
+CREATE OR REPLACE DATABASE AVIA_INSTALLER;
+USE ROLE ACCOUNTADMIN;
 USE DATABASE AVIA_INSTALLER;
 USE SCHEMA PUBLIC;
 
--- Create GitHub PAT secret
-CREATE OR REPLACE SECRET github_pat
-  TYPE = PASSWORD
-  USERNAME = 'github'
-  PASSWORD = '<your_github_personal_access_token>';
-
--- Create Aviationstack API key secret (optional - can also be in file)
-CREATE OR REPLACE SECRET aviationstack_key
-  TYPE = PASSWORD
-  USERNAME = 'aviationstack'
-  PASSWORD = '<your_aviationstack_api_key>';
 ```
 
-#### Step 3: Create API Integration for GitHub
+#### Step 2: Create API Integration for GitHub (if not exists)
 
 ```sql
--- Create API integration (requires ACCOUNTADMIN or CREATE INTEGRATION privilege)
-CREATE OR REPLACE API INTEGRATION github_api_integration
+CREATE API INTEGRATION IF NOT EXISTS github_api_integration
   API_PROVIDER = git_https_api
-  API_ALLOWED_PREFIXES = ('https://github.com/<your-org>/')
+  API_ALLOWED_PREFIXES = ('https://github.com/Snowflake-Labs/')
   ENABLED = TRUE;
 ```
-
-**Note**: Replace `<your-org>` with your GitHub organization or username.
-
-#### Step 4: Create Git Repository Object
+#### Step 3: Create Git Repository Object (NO credentials needed for public repos)
 
 ```sql
--- Create Git repository reference (fully qualified)
 CREATE OR REPLACE GIT REPOSITORY AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO
   API_INTEGRATION = github_api_integration
-  ORIGIN = 'https://github.com/<your-org>/sd_poc'
-  GIT_CREDENTIALS = github_pat;
-
+  ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-aviation-ops-intelligence/';
 -- Fetch latest files from repository
-ALTER GIT REPOSITORY AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO FETCH;
-
--- Verify repository is accessible
-SHOW GIT REPOSITORIES;
-
--- List files in repository (optional verification)
-LS @AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main;
+  ALTER GIT REPOSITORY avia_ops_repo FETCH;
 ```
 
-**Note**: Replace `<your-org>` and repository name as appropriate. Use branch name `main` or your preferred branch. Replace `AVIA_INSTALLER.PUBLIC` with your chosen database and schema.
-
-#### Step 5: Create Installer Streamlit App from Git
+#### Step 4: Create Installer Streamlit App from Git
 
 ```sql
--- Create Installer app (fully qualified)
-CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_installer
-  ROOT_LOCATION = '@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main/installer'
-  MAIN_FILE = 'streamlit_app.py'
-  QUERY_WAREHOUSE = <your_warehouse_name>
-  TITLE = 'Airport Analytics Installer';
+CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_INSTALLER
+  ROOT_LOCATION = '@avia_ops_repo/branches/main/installer'
+  MAIN_FILE = 'installer_daily.py'
+  QUERY_WAREHOUSE = MY_WH  -- Replace with your warehouse
+  TITLE = 'Airport Analytics Installer'
+  COMMENT = 'Installer for Airport Analytics Platform - generates and deploys airport infrastructure';
 
 -- Grant usage if needed (for non-ACCOUNTADMIN users)
 GRANT USAGE ON STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_installer TO ROLE <your_role>;
 ```
-
-**Note**: Replace `<your_warehouse_name>` with your warehouse (e.g., `COMPUTE_WH`). Replace `AVIA_INSTALLER.PUBLIC` with your chosen database and schema. Replace `<your_role>` with the role that needs access.
-
-#### Step 6: Create Dashboard Streamlit App from Git
-
-```sql
--- Create Dashboard app (fully qualified)
-CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_dashboard
-  ROOT_LOCATION = '@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main/dashboard'
-  MAIN_FILE = 'streamlit_app.py'
-  QUERY_WAREHOUSE = <your_warehouse_name>
-  TITLE = 'Airport Analytics Dashboard';
-
--- Grant usage if needed
-GRANT USAGE ON STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_dashboard TO ROLE <your_role>;
-```
-
-#### Step 7: Verify Deployment
-
-```sql
--- List all Streamlit apps
-SHOW STREAMLITS;
-
--- Check app details (fully qualified)
-DESCRIBE STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_installer;
-DESCRIBE STREAMLIT AVIA_INSTALLER.PUBLIC.airport_analytics_dashboard;
-
--- Get app URL (use fully qualified name)
-SELECT SYSTEM$GET_STREAMLIT_URL('AVIA_INSTALLER.PUBLIC.airport_analytics_installer');
-SELECT SYSTEM$GET_STREAMLIT_URL('AVIA_INSTALLER.PUBLIC.airport_analytics_dashboard');
-```
-
----
-
-## 📖 Usage Workflow
-
-### 1. Run the Installer
-
-1. Open the **Installer** Streamlit app
-2. Select an airport from the dropdown (searches Overture Maps international airports)
-3. Configure settings:
-   - **Database Name**: Auto-generated as `AIRPORT_XXX` (e.g., `AIRPORT_SAN` for San Diego)
-   - **Warehouse**: Select warehouse for data pipelines
-   - **API Keys**: Provide Aviationstack API key and GitHub PAT
-   - **Backfill Days**: Choose 0-30 days of historical data to load
-4. Click **Generate SQL** to review the deployment scripts
-5. Click **Execute in Snowflake** to deploy the infrastructure
-
-**What the Installer Creates:**
-- Database: `AIRPORT_XXX`
-- Tables: Airport properties, ADS-B data, flight schedules, analytics tables
-- Procedures: Data ingestion, enrichment, backfill
-- Tasks: Automated pipelines (daily ADS-B batch, daily schedule/enrichment)
-- Dynamic Tables: Incremental analytics (gate analysis, runway crossings, traffic facts)
-- External Access Integrations: API access for ADSB.lol, GitHub, Aviationstack
-
-### 2. Monitor Installation
-
-After execution completes (~5-10 minutes):
-- Check task status in the Installer app
-- Wait for the first daily batch to complete (after the next scheduled ingest)
-- Historical backfill runs on-demand (or via the retry task if enabled)
-
-### 3. Open the Dashboard
-
-1. Open the **Dashboard** Streamlit app
-2. Select your airport from the dropdown (e.g., "San Diego International Airport (SAN)")
-3. Explore the 8 dashboard pages:
-   - **Flight Tracker**: Individual flight paths with altitude profiles
-   - **Airport Activity**: Geographic heatmaps and traffic density
-   - **Runway Crossings**: Taxiing aircraft crossing runway detection
-   - **Traffic Analysis**: Temporal patterns and airline rankings
-   - **Gate Analysis**: Gate utilization and dwell time metrics
-   - **Operations**: Curated operational views
-   - **Monitoring**: Data pipeline health and quality metrics
-   - **Performance**: Query performance and warehouse utilization
-
-### 4. Deploy Additional Airports
-
-Repeat the installer workflow for each airport. Each airport gets its own database (`AIRPORT_XXX`) to avoid data collisions.
 
 ---
 
@@ -282,7 +167,6 @@ sd_poc/
 │   │   ├── 3_Runway_Crossings.py
 │   │   ├── 4_Traffic_Analysis.py
 │   │   ├── 5_Gate_Analysis.py
-│   │   ├── 6_Operations.py
 │   │   ├── 7_Monitoring.py
 │   │   └── 8_Performance.py
 │   └── images/                  # Dashboard assets
