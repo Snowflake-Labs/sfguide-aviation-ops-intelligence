@@ -38,6 +38,7 @@ if not selected_db:
     st.stop()
 st.title("🗺️ Airport Activity & Geographic Analysis")
 st.markdown("Visualize air traffic density, airport zones, and geographic patterns")
+utils.render_timezone_caption(session, db_prefix)
 
 # Sidebar controls
 sample_size = None
@@ -133,10 +134,11 @@ with st.sidebar:
 
         @st.cache_data(ttl=300)
         def get_flights_count(_session, start_dt, end_dt, _min_lat, _max_lat, _min_lon, _max_lon):
+            local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
             q = f"""
             SELECT COUNT(DISTINCT FLIGHT) AS cnt
             FROM {db_prefix}.ADSB_DATA_LOCAL
-            WHERE TIMESTAMP BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+            WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
                 AND LOCATION IS NOT NULL AND FLIGHT IS NOT NULL
                 AND ST_Y(LOCATION) BETWEEN {_min_lat} AND {_max_lat}
                 AND ST_X(LOCATION) BETWEEN {_min_lon} AND {_max_lon}
@@ -171,6 +173,7 @@ def get_geographic_data(_session, start_dt, end_dt, _min_lat, _max_lat, _min_lon
     Get all geographic data for heatmap visualization
     Returns all datapoints for the selected time interval - no limits
     """
+    local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
     query = f"""
     SELECT 
         ST_Y(LOCATION) AS LAT,
@@ -181,7 +184,7 @@ def get_geographic_data(_session, start_dt, end_dt, _min_lat, _max_lat, _min_lon
         ALTITUDE_BARO,
         VELOCITY
     FROM {db_prefix}.ADSB_DATA_LOCAL
-    WHERE TIMESTAMP BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+    WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
         AND LOCATION IS NOT NULL
         AND FLIGHT IS NOT NULL
         AND ST_Y(LOCATION) BETWEEN {_min_lat} AND {_max_lat}
@@ -196,13 +199,14 @@ def get_time_spent_heatmap_bins(_session, start_dt, end_dt, _min_lat, _max_lat, 
     Aggregate points for Time Spent heatmap to reduce payload size.
     Bins coordinates to ~100-150m using ROUND to 3 decimals and computes COUNT(*) as WEIGHT.
     """
+    local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
     query = f"""
     SELECT 
         ROUND(ST_Y(LOCATION), 3) AS lat_bin,
         ROUND(ST_X(LOCATION), 3) AS lon_bin,
         COUNT(*) AS weight
     FROM {db_prefix}.ADSB_DATA_LOCAL
-    WHERE TIMESTAMP BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+    WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
         AND LOCATION IS NOT NULL
         AND FLIGHT IS NOT NULL
         AND ST_Y(LOCATION) BETWEEN {_min_lat} AND {_max_lat}
@@ -219,12 +223,13 @@ def get_time_spent_sample_points(_session, start_dt, end_dt, sample_percent: int
     """
     # Clamp percent to sane bounds
     pct = max(1, min(int(sample_percent), 50))
+    local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
     query = f"""
     SELECT 
         ST_Y(LOCATION) AS LAT,
         ST_X(LOCATION) AS LON
     FROM {db_prefix}.ADSB_DATA_LOCAL SAMPLE BERNOULLI ({pct})
-    WHERE TIMESTAMP BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+    WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
         AND LOCATION IS NOT NULL
         AND FLIGHT IS NOT NULL
         AND ST_Y(LOCATION) BETWEEN {_min_lat} AND {_max_lat}
@@ -238,6 +243,7 @@ def get_all_flight_points(_session, start_dt, end_dt, max_flights=200):
     Return decimated points for a random subset of flights for point cloud rendering.
     Limits: up to max_flights; ~100 points per flight (keeps endpoints).
     """
+    local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
     q = f"""
     WITH bbox AS (
         SELECT {utils.get_airport_bbox(session)["min_lat"]}::FLOAT AS min_lat,
@@ -256,7 +262,7 @@ def get_all_flight_points(_session, start_dt, end_dt, max_flights=200):
             COUNT(*) OVER (PARTITION BY FLIGHT) AS n
         FROM {db_prefix}.ADSB_DATA_LOCAL
         CROSS JOIN bbox b
-        WHERE TIMESTAMP BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+        WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
             AND LOCATION IS NOT NULL AND FLIGHT IS NOT NULL
             AND ST_Y(LOCATION) BETWEEN b.min_lat AND b.max_lat
             AND ST_X(LOCATION) BETWEEN b.min_lon AND b.max_lon
@@ -321,6 +327,7 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
         count_expr = "COUNT(*) as metric_value"
     
     bbox = utils.get_airport_bbox(session)
+    local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
     query = f"""
     WITH bbox AS (
         SELECT {float(bbox["min_lat"])}::FLOAT AS min_lat,
@@ -337,7 +344,7 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
             H3_POINT_TO_CELL_STRING(LOCATION, {h3_resolution}) as h3_cell
         FROM {db_prefix}.ADSB_DATA_LOCAL SAMPLE BERNOULLI ({int(sample_percent)})
         CROSS JOIN bbox b
-        WHERE TIMESTAMP BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+        WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
             AND LOCATION IS NOT NULL
             AND FLIGHT IS NOT NULL
             AND ST_Y(LOCATION) BETWEEN b.min_lat AND b.max_lat

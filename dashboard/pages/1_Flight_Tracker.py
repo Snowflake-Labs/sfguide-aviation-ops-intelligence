@@ -40,6 +40,21 @@ db_prefix = f"{db}.{schema}"
 
 # Render something early so reruns don't look like a "blank page" while queries run
 st.title("✈️ Flight Tracker")
+utils.render_timezone_caption(session, db_prefix)
+
+tzid = utils.get_airport_tzid(session, db_prefix)
+
+try:
+    local_today = datetime.fromisoformat(utils.get_airport_local_today(session, db_prefix)).date()
+except Exception:
+    local_today = datetime.now().date()
+
+def _format_local_time(value, fmt: str = "%H:%M:%S") -> str:
+    try:
+        local_dt = utils.to_airport_local_time(pd.Series([value]), tzid).iloc[0]
+        return local_dt.strftime(fmt) if pd.notna(local_dt) else "N/A"
+    except Exception:
+        return "N/A"
 
 # Get date range (depends on selected db)
 min_date, max_date = utils.get_date_range(session)
@@ -57,9 +72,9 @@ with st.sidebar:
     # Date picker
     selected_date = st.date_input(
         "Select Date of the Flight",
-        value=max_date if max_date else datetime.now().date(),
-        min_value=min_date if min_date else datetime.now().date() - timedelta(days=365),
-        max_value=max_date if max_date else datetime.now().date()
+        value=max_date if max_date else local_today,
+        min_value=min_date if min_date else local_today - timedelta(days=365),
+        max_value=max_date if max_date else local_today
     )
     
     # Load available flights
@@ -568,6 +583,7 @@ if selected_flight and not flight_data.empty:
         lambda x: float(x) if pd.notna(x) and str(x).replace('.','').replace('-','').isdigit() else None
     )
     profile_data = profile_data.dropna(subset=['ALTITUDE', 'SPEED'])
+    profile_data['LOCAL_TIMESTAMP'] = utils.to_airport_local_time(profile_data['TIMESTAMP'], tzid)
     
     if not profile_data.empty:
         # Create dual-axis chart
@@ -575,7 +591,7 @@ if selected_flight and not flight_data.empty:
         
         # Altitude trace
         fig.add_trace(go.Scatter(
-            x=profile_data['TIMESTAMP'],
+            x=profile_data['LOCAL_TIMESTAMP'],
             y=profile_data['ALTITUDE'],
             name='Altitude',
             line=dict(color='blue', width=2),
@@ -584,7 +600,7 @@ if selected_flight and not flight_data.empty:
         
         # Speed trace
         fig.add_trace(go.Scatter(
-            x=profile_data['TIMESTAMP'],
+            x=profile_data['LOCAL_TIMESTAMP'],
             y=profile_data['SPEED'],
             name='Speed',
             line=dict(color='red', width=2),
@@ -656,7 +672,7 @@ if selected_flight and not flight_data.empty:
             st.metric("Terminal", sched.get('TERMINAL', 'N/A') if pd.notna(sched.get('TERMINAL', None)) else 'N/A')
         
         with col3:
-            st.metric("Scheduled Time", str(sched.get('SCHEDULED_TIME', 'N/A')))
+            st.metric("Scheduled Time", _format_local_time(sched.get('SCHEDULED_TIME', None), "%H:%M"))
         
         with col4:
             st.metric("Status", sched.get('STATUS', 'N/A'))
@@ -675,8 +691,9 @@ if selected_flight and not flight_data.empty:
             dwell_val = None
         # Compute first/last seen
         try:
-            start_time = flight_data['TIMESTAMP'].min()
-            end_time = flight_data['TIMESTAMP'].max()
+            local_times = utils.to_airport_local_time(flight_data['TIMESTAMP'], tzid)
+            start_time = local_times.min()
+            end_time = local_times.max()
             start_str = start_time.strftime('%H:%M:%S') if pd.notna(start_time) else 'N/A'
             end_str = end_time.strftime('%H:%M:%S') if pd.notna(end_time) else 'N/A'
         except Exception:
@@ -722,8 +739,9 @@ if selected_flight and not flight_data.empty:
             gate_name = 'N/A'
             dwell_val = None
         try:
-            start_time = flight_data['TIMESTAMP'].min()
-            end_time = flight_data['TIMESTAMP'].max()
+            local_times = utils.to_airport_local_time(flight_data['TIMESTAMP'], tzid)
+            start_time = local_times.min()
+            end_time = local_times.max()
             start_str = start_time.strftime('%H:%M:%S') if pd.notna(start_time) else 'N/A'
             end_str = end_time.strftime('%H:%M:%S') if pd.notna(end_time) else 'N/A'
         except Exception:

@@ -45,10 +45,14 @@ with st.sidebar:
     st.divider()
     st.header("Filters")
 
-    default_end = (max_date if max_date else datetime.now().date())
+    try:
+        local_today = datetime.fromisoformat(utils.get_airport_local_today(session, db_prefix)).date()
+    except Exception:
+        local_today = datetime.now().date()
+    default_end = (max_date if max_date else local_today)
     default_start = default_end - timedelta(days=7)
-    min_bound = (min_date if min_date else datetime.now().date() - timedelta(days=365))
-    max_bound = (max_date if max_date else datetime.now().date())
+    min_bound = (min_date if min_date else local_today - timedelta(days=365))
+    max_bound = (max_date if max_date else local_today)
 
     # Clamp defaults into the allowed bounds (avoids StreamlitAPIException)
     if default_start < min_bound:
@@ -115,6 +119,7 @@ def get_daily_kpis(_session, start_d, end_d, airline: str | None):
 df = get_daily_kpis(session, start_date, end_date, selected_airline)
 
 st.title("📊 Performance KPIs")
+utils.render_timezone_caption(session, db_prefix)
 
 if df is None or df.empty:
     st.info("No data available for the selected filters.")
