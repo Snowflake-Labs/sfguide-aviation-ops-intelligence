@@ -12,6 +12,7 @@ import pandas as pd
 import pydeck as pdk
 from snowflake.snowpark.context import get_active_session
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import sys
 import re
 
@@ -36,6 +37,9 @@ if not selected_db:
 db_prefix = f"{selected_db}.{schema}"
 
 st.title("🛫 Live View")
+utils.render_timezone_caption(session, db_prefix)
+
+tzid = utils.get_airport_tzid(session, db_prefix)
 
 # Controls
 with st.sidebar:
@@ -64,7 +68,8 @@ with st.spinner("Loading live flights..."):
     live_df = utils.get_live_timetable(session, db_prefix, lookback_minutes=lookback_min, max_flights=None)
 
 now_utc = datetime.utcnow()
-now_utc_str = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+now_local = datetime.now(ZoneInfo(tzid))
+now_local_str = now_local.strftime("%Y-%m-%d %H:%M:%S")
 
 # Airline name fallback: when schedule match is missing, infer airline from callsign prefix via HELPER_AIRLINE_DIM.
 # (We do this in-page as a last-mile guardrail in case the installer helper view isn't regenerated yet.)
@@ -131,9 +136,9 @@ c2.metric("Arrivals (matched)", f"{arrivals:,}")
 c3.metric("Departures (matched)", f"{departures:,}")
 c4.metric("With actual gate", f"{with_gate:,}")
 if freshness_min is None:
-    c5.metric("Last data", "N/A", delta=f"Now (UTC): {now_utc_str}", delta_color="off")
+    c5.metric("Last data", "N/A", delta=f"Now (local): {now_local_str}", delta_color="off")
 else:
-    c5.metric("Last data", f"{freshness_min} min ago", delta=f"Now (UTC): {now_utc_str}", delta_color="off")
+    c5.metric("Last data", f"{freshness_min} min ago", delta=f"Now (local): {now_local_str}", delta_color="off")
 
 
 # Map
@@ -581,10 +586,10 @@ else:
             pass
 
     def _fmt_time_col(df_in: pd.DataFrame, col: str) -> None:
-        """Format timestamp column as HH:MM (UTC) without date."""
+        """Format timestamp column as HH:MM (airport local) without date."""
         try:
-            dt = pd.to_datetime(df_in[col], errors="coerce")
-            df_in[col] = dt.dt.strftime("%H:%M").fillna("")
+            local_dt = utils.to_airport_local_time(df_in[col], tzid)
+            df_in[col] = local_dt.dt.strftime("%H:%M").fillna("")
         except Exception:
             # If parsing fails, leave as-is
             pass

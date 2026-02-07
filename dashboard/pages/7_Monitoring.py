@@ -31,6 +31,15 @@ db = utils.get_selected_database()
 db_prefix = f"{db}.{schema}"
 
 st.title("🛡️ Monitoring & Health")
+utils.render_timezone_caption(session, db_prefix)
+tzid = utils.get_airport_tzid(session, db_prefix)
+
+def _format_local_ts(value) -> str:
+    try:
+        local_dt = utils.to_airport_local_time(pd.Series([value]), tzid).iloc[0]
+        return local_dt.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(local_dt) else "N/A"
+    except Exception:
+        return "N/A"
 
 # =============================================================================
 # HEALTH SUMMARY QUERIES
@@ -51,22 +60,22 @@ def get_health_summary(_session, _db_prefix):
     
     # Match rate (% of local ADS-B points with schedule match)
     try:
+        local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
+        local_today_expr = utils.get_airport_local_date_sql(_db_prefix)
         q = f"""
         WITH today_stats AS (
             SELECT 
                 COUNT(*) AS total_points,
                 COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) AS matched_points
             FROM {_db_prefix}.ADSB_DATA_LOCAL
-            -- ADSB timestamps are stored as TIMESTAMP_NTZ in UTC; use SYSDATE() for consistent UTC comparisons.
-            WHERE TIMESTAMP >= DATEADD('day', -1, SYSDATE())
+            WHERE {local_date_expr} = {local_today_expr}
         ),
         yesterday_stats AS (
             SELECT 
                 COUNT(*) AS total_points,
                 COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) AS matched_points
             FROM {_db_prefix}.ADSB_DATA_LOCAL
-            WHERE TIMESTAMP >= DATEADD('day', -2, SYSDATE())
-              AND TIMESTAMP < DATEADD('day', -1, SYSDATE())
+            WHERE {local_date_expr} = DATEADD('day', -1, {local_today_expr})
         )
         SELECT 
             t.total_points,
@@ -236,12 +245,14 @@ def get_match_rate_trend(_session, _db_prefix, days=14):
 def get_match_method_distribution(_session, _db_prefix):
     """Get distribution of match methods."""
     try:
+        local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
+        local_today_expr = utils.get_airport_local_date_sql(_db_prefix)
         q = f"""
         SELECT 
             COALESCE(MATCH_METHOD, 'unmatched') AS match_method,
             COUNT(*) AS point_count
         FROM {_db_prefix}.ADSB_DATA_LOCAL
-        WHERE TIMESTAMP >= DATEADD('day', -7, SYSDATE())
+        WHERE {local_date_expr} >= DATEADD('day', -7, {local_today_expr})
         GROUP BY 1
         ORDER BY 2 DESC
         """
@@ -356,13 +367,15 @@ def get_daily_volume(_session, _db_prefix, days=14):
 def get_hourly_ingestion(_session, _db_prefix, hours=48):
     """Get hourly ADS-B ingestion counts to monitor data loading."""
     try:
+        local_ts_expr = utils.get_airport_local_ts_sql(_db_prefix, "TIMESTAMP")
+        local_now_expr = utils.get_airport_local_ts_sql(_db_prefix)
         q = f"""
         SELECT 
-            DATE_TRUNC('hour', TIMESTAMP) AS hour_ts,
+            DATE_TRUNC('hour', {local_ts_expr}) AS hour_ts,
             COUNT(*) AS point_count,
             COUNT(DISTINCT ICAO_HEX) AS aircraft_count
         FROM {_db_prefix}.ADSB_DATA_LOCAL
-        WHERE TIMESTAMP >= DATEADD('hour', -{hours}, SYSDATE())
+        WHERE {local_ts_expr} >= DATEADD('hour', -{hours}, {local_now_expr})
         GROUP BY 1
         ORDER BY 1
         """
@@ -579,6 +592,9 @@ with task_col1:
                 return f'⚪ {status}'
         
         task_status['STATUS'] = task_status['STATUS'].apply(status_indicator)
+        if "LAST_MODIFIED" in task_status.columns:
+            local_dt = utils.to_airport_local_time(task_status["LAST_MODIFIED"], tzid)
+            task_status["LAST_MODIFIED"] = local_dt.dt.strftime("%Y-%m-%d %H:%M").fillna("")
         st.dataframe(task_status, use_container_width=True, hide_index=True)
     else:
         st.info("Could not retrieve task status.")
@@ -602,6 +618,10 @@ with task_col2:
                     return f'⏳ {state}'
             
             task_hist['RUN_STATE'] = task_hist['RUN_STATE'].apply(run_indicator)
+            for c in ["SCHEDULED_TIME", "COMPLETED_TIME"]:
+                if c in task_hist.columns:
+                    local_dt = utils.to_airport_local_time(task_hist[c], tzid)
+                    task_hist[c] = local_dt.dt.strftime("%Y-%m-%d %H:%M").fillna("")
             st.dataframe(
                 task_hist[['TASK_NAME', 'RUN_STATE', 'SCHEDULED_TIME', 'DURATION_SEC']],
                 use_container_width=True, 
@@ -690,7 +710,7 @@ with fresh_col1:
     adsb_age = freshness.get('adsb_age_min')
     st.metric(
         "Last ADS-B Point",
-        str(adsb_ts)[:19] if adsb_ts else "N/A",
+        _format_local_ts(adsb_ts),
         delta=f"{adsb_age} min ago" if adsb_age is not None else None,
         delta_color="off"
     )
@@ -700,7 +720,7 @@ with fresh_col2:
     sched_age = freshness.get('schedule_age_hours')
     st.metric(
         "Last Schedule Update",
-        str(sched_ts)[:19] if sched_ts else "N/A",
+        _format_local_ts(sched_ts),
         delta=f"{sched_age} hours ago" if sched_age is not None else None,
         delta_color="off"
     )
@@ -710,7 +730,7 @@ with fresh_col3:
     enrich_age = freshness.get('enrichment_age_min')
     st.metric(
         "Last Enrichment Run",
-        str(enrich_ts)[:19] if enrich_ts else "N/A",
+        _format_local_ts(enrich_ts),
         delta=f"{enrich_age} min ago" if enrich_age is not None else None,
         delta_color="off"
     )
@@ -745,6 +765,9 @@ with col1:
         if df is None or df.empty:
             st.info("No refresh metadata yet.")
         else:
+            if "LAST_REFRESHED_AT" in df.columns:
+                local_refresh = utils.to_airport_local_time(df["LAST_REFRESHED_AT"], tzid)
+                df["LAST_REFRESHED_AT"] = local_refresh.dt.strftime("%Y-%m-%d %H:%M").fillna("")
             st.dataframe(df, use_container_width=True, hide_index=True)
     except Exception:
         st.info("Refresh table not available yet.")
@@ -752,10 +775,11 @@ with col1:
 with col2:
     st.caption("Daily QA Metrics (Last 14 Days)")
     try:
+        local_today_expr = utils.get_airport_local_date_sql(db_prefix)
         q2 = f"""
         SELECT metric_date, metric_name, metric_value
         FROM {db_prefix}.HELPER_QA_COUNTS_DAILY
-        WHERE metric_date >= DATEADD('day', -14, CURRENT_DATE)
+        WHERE metric_date >= DATEADD('day', -14, {local_today_expr})
         ORDER BY metric_date DESC, metric_name
         """
         qa = session.sql(q2).to_pandas()
@@ -777,6 +801,8 @@ st.subheader("📥 Ingestion Audit")
 
 @st.cache_data(ttl=60)
 def get_audit(_session, _db_prefix, code, days):
+    local_ts_expr = utils.get_airport_local_ts_sql(_db_prefix, "created_at")
+    local_now_expr = utils.get_airport_local_ts_sql(_db_prefix)
     q = f"""
     SELECT 
       run_id,
@@ -791,7 +817,7 @@ def get_audit(_session, _db_prefix, code, days):
       created_at
     FROM {_db_prefix}.HELPER_INGEST_AUDIT
     WHERE airport_code = '{code}'
-      AND created_at >= DATEADD('day', -{int(days)}, SYSDATE())
+      AND {local_ts_expr} >= DATEADD('day', -{int(days)}, {local_now_expr})
     ORDER BY created_at DESC
     """
     try:
@@ -805,6 +831,10 @@ with st.spinner("Loading audit events..."):
 if audit is None or audit.empty:
     st.info("No recent audit records.")
 else:
+    for c in ["WINDOW_START", "WINDOW_END", "CREATED_AT"]:
+        if c in audit.columns:
+            local_dt = utils.to_airport_local_time(audit[c], tzid)
+            audit[c] = local_dt.dt.strftime("%Y-%m-%d %H:%M").fillna("")
     st.dataframe(audit, use_container_width=True, hide_index=True)
 
     st.caption("Latest Ingestion Summary")

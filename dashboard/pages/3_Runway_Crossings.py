@@ -17,8 +17,17 @@ db_prefix = f"{db}.{schema}"
 st.title("🛤️ Runway Crossings Analysis")
 st.caption("Detects aircraft crossing the runway while taxiing on the ground (S→N or N→S). Filters out takeoffs and landings using: max speed ≤45 kts, time on runway ≤120 sec, and straight-line distance ≤220m.")
 
+utils.render_timezone_caption(session, db_prefix)
+tzid = utils.get_airport_tzid(session, db_prefix)
+
 table_fqn = f"{db_prefix}.RUNWAY_CROSSINGS_DETAILED"
-min_date, max_date = utils.get_table_date_bounds(session, table_fqn, "t_entry")
+min_date, max_date = utils.get_table_date_bounds(
+    session,
+    table_fqn,
+    "t_entry",
+    db_prefix=db_prefix,
+    use_airport_tz=True,
+)
 
 with st.sidebar:
     selected_db = utils.render_airport_selector(sidebar=True)
@@ -100,6 +109,7 @@ if not directions:
 def get_crossing_summary(_session, start_d, end_d, dirs):
     """Get overall crossing counts and stats"""
     dir_filter = "','".join(dirs)
+    local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
     q = f"""
     SELECT
       COUNT(DISTINCT flight_key) AS total_flights,
@@ -107,7 +117,7 @@ def get_crossing_summary(_session, start_d, end_d, dirs):
       AVG(duration_s) AS avg_duration_s,
       SUM(duration_s)/60.0 AS total_duration_min
     FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
-    WHERE DATE(t_entry) BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+    WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
       AND direction IN ('{dir_filter}')
     """
     try:
@@ -122,6 +132,7 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric):
     metric: 'flight_count' or 'total_duration'
     """
     dir_filter = "','".join(dirs)
+    local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
     
     if metric == 'flight_count':
         agg_expr = 'COUNT(DISTINCT flight_key) AS metric_value'
@@ -140,7 +151,7 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric):
         midpoint_geom,
         H3_POINT_TO_CELL_STRING(midpoint_geom, 12) AS h3_cell
       FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
-      WHERE DATE(t_entry) BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+      WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
         AND direction IN ('{dir_filter}')
     )
     SELECT
@@ -165,6 +176,7 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric):
 def get_crossing_analytics(_session, start_d, end_d, dirs):
     """Get ALL crossing events with flight/airline data for analytics (no limit)"""
     dir_filter = "','".join(dirs)
+    local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
     q = f"""
     SELECT
       flight_key,
@@ -174,7 +186,7 @@ def get_crossing_analytics(_session, start_d, end_d, dirs):
       flight_number,
       airline_code
     FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
-    WHERE DATE(t_entry) BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+    WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
       AND direction IN ('{dir_filter}')
     """
     try:
@@ -186,6 +198,7 @@ def get_crossing_analytics(_session, start_d, end_d, dirs):
 def get_crossing_details(_session, start_d, end_d, dirs, limit=100):
     """Get recent crossing events for table display (limited)"""
     dir_filter = "','".join(dirs)
+    local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
     q = f"""
     SELECT
       flight_key,
@@ -201,7 +214,7 @@ def get_crossing_details(_session, start_d, end_d, dirs, limit=100):
       flight_number,
       airline_code
     FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
-    WHERE DATE(t_entry) BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+    WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
       AND direction IN ('{dir_filter}')
     ORDER BY t_entry DESC
     LIMIT {limit}
@@ -229,6 +242,7 @@ def get_runway_geometry(_session):
 def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
     """Get flight trajectories for aircraft that performed crossings with schedule info"""
     dir_filter = "','".join(dirs)
+    local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
     q = f"""
     WITH crossing_flights AS (
       -- Pick a single representative crossing direction per flight/day
@@ -236,15 +250,15 @@ def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
       FROM (
         SELECT
           flight_key,
-          DATE(t_entry) AS crossing_date,
+          {local_date_expr} AS crossing_date,
           direction,
           COUNT(*) AS crossings,
           ROW_NUMBER() OVER (
-            PARTITION BY flight_key, DATE(t_entry)
+            PARTITION BY flight_key, {local_date_expr}
             ORDER BY COUNT(*) DESC, direction ASC
           ) AS rn
         FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
-        WHERE DATE(t_entry) BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+        WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
           AND direction IN ('{dir_filter}')
         GROUP BY 1,2,3
       )
@@ -542,8 +556,9 @@ if not analytics_df.empty:
     st.subheader("📅 Crossing Heatmap (Day of Week × Hour)")
     
     heat_df = analytics_df.copy()
-    heat_df['dow'] = pd.to_datetime(heat_df['T_ENTRY']).dt.dayofweek
-    heat_df['hour'] = pd.to_datetime(heat_df['T_ENTRY']).dt.hour
+    local_t_entry = utils.to_airport_local_time(heat_df['T_ENTRY'], tzid)
+    heat_df['dow'] = local_t_entry.dt.dayofweek
+    heat_df['hour'] = local_t_entry.dt.hour
     
     # Pivot to create heatmap
     pivot = heat_df.pivot_table(index='dow', columns='hour', aggfunc='size', fill_value=0)
@@ -975,6 +990,10 @@ else:
     # Use only columns that exist
     display_cols = [c for c in cols if c in details_df.columns]
     display_df = details_df[display_cols].copy()
+    for c in ["T_ENTRY", "T_EXIT"]:
+        if c in display_df.columns:
+            local_dt = utils.to_airport_local_time(display_df[c], tzid)
+            display_df[c] = local_dt.dt.strftime("%Y-%m-%d %H:%M").fillna("")
     
     # Rename columns for display
     col_rename = {

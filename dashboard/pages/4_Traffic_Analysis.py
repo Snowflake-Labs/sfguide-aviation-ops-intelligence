@@ -39,6 +39,7 @@ if not selected_db:
     st.stop()
 st.title("📊 Air Traffic Analysis")
 st.markdown("Explore temporal patterns, peak hours, and traffic trends over time for the selected airport")
+utils.render_timezone_caption(session, db_prefix)
 
 # Sidebar controls
 with st.sidebar:
@@ -79,12 +80,13 @@ with st.sidebar:
 @st.cache_data(ttl=300)
 def get_hourly_traffic(_session, start_dt, end_dt):
     """Get hourly flight counts"""
+    local_hour_expr = utils.get_airport_local_ts_sql(db_prefix, "hour")
     query = f"""
-    SELECT hour,
+    SELECT {local_hour_expr} AS hour,
            aircraft_count,
            data_points
     FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
-    WHERE hour BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+    WHERE {local_hour_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
     ORDER BY hour
     """
     return _session.sql(query).to_pandas()
@@ -108,13 +110,14 @@ def get_daily_traffic(_session, start_dt, end_dt):
 @st.cache_data(ttl=300)
 def get_hourly_patterns(_session, start_dt, end_dt):
     """Get average traffic by hour of day"""
+    local_hour_expr = utils.get_airport_local_ts_sql(db_prefix, "hour")
     query = f"""
     SELECT 
-        HOUR(hour) as hour_of_day,
+        HOUR({local_hour_expr}) as hour_of_day,
         SUM(aircraft_count) as avg_aircraft,
         SUM(data_points) as total_points
     FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
-    WHERE hour BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+    WHERE {local_hour_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
     GROUP BY hour_of_day
     ORDER BY hour_of_day
     """
@@ -325,13 +328,14 @@ if show_heatmap and not traffic_data.empty:
     # Get data for heatmap
     @st.cache_data(ttl=300)
     def get_heatmap_data(_session, start_dt, end_dt):
+        local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
         query = f"""
         SELECT 
-            HOUR(TIMESTAMP) as hour,
-            DAYOFWEEK(TIMESTAMP) as day_of_week,
+            HOUR({local_ts_expr}) as hour,
+            DAYOFWEEK({local_ts_expr}) as day_of_week,
             COUNT(DISTINCT ICAO_HEX) as aircraft_count
     FROM {db_prefix}.ADSB_DATA_LOCAL
-        WHERE TIMESTAMP BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+        WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
         GROUP BY hour, day_of_week
         ORDER BY day_of_week, hour
         """

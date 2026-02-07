@@ -517,15 +517,17 @@ def apply_custom_css():
 
 def get_date_range(session):
     """
-    Get the min and max dates available in the dataset
+    Get the min and max dates available in the dataset (airport-local dates).
     """
     db = get_selected_database()
     schema = SCHEMA
+    db_prefix = f"{db}.{schema}"
+    local_date_expr = get_airport_local_date_sql(db_prefix, "TIMESTAMP")
     query = f"""
     SELECT 
-        MIN(TIMESTAMP)::DATE as min_date,
-        MAX(TIMESTAMP)::DATE as max_date
-    FROM {db}.{schema}.ADSB_DATA_LOCAL
+        MIN({local_date_expr}) as min_date,
+        MAX({local_date_expr}) as max_date
+    FROM {db_prefix}.ADSB_DATA_LOCAL
     """
     result = session.sql(query).collect()
     if result:
@@ -538,12 +540,21 @@ def get_date_range(session):
 # =============================================================================
 
 @st.cache_data(ttl=300)
-def get_table_date_bounds(_session, table_fqn: str, ts_col: str) -> tuple:
+def get_table_date_bounds(
+    _session,
+    table_fqn: str,
+    ts_col: str,
+    *,
+    db_prefix: str | None = None,
+    use_airport_tz: bool = False,
+) -> tuple:
     """Return (min_date, max_date) for a table timestamp column.
 
     Args:
         table_fqn: Fully qualified table name, e.g. AIRPORT_YVR.PUBLIC.ADSB_DATA_LOCAL
         ts_col: Timestamp column name/expression, e.g. TIMESTAMP or t_entry
+        db_prefix: Fully-qualified db.schema prefix (required when use_airport_tz=True)
+        use_airport_tz: If True, interpret ts_col as UTC and return airport-local dates
     """
     set_query_tag(_session)
     # Very small guardrail against accidental SQL injection via ts_col.
@@ -551,10 +562,16 @@ def get_table_date_bounds(_session, table_fqn: str, ts_col: str) -> tuple:
     import re as _re
     if not _re.fullmatch(r"[A-Za-z0-9_\\.]+", ts_col or ""):
         raise ValueError(f"Invalid ts_col: {ts_col}")
+    if use_airport_tz:
+        if not db_prefix:
+            raise ValueError("db_prefix is required when use_airport_tz=True")
+        date_expr = get_airport_local_date_sql(db_prefix, ts_col)
+    else:
+        date_expr = f"{ts_col}::DATE"
     q = f"""
     SELECT
-      MIN({ts_col})::DATE AS min_date,
-      MAX({ts_col})::DATE AS max_date
+      MIN({date_expr}) AS min_date,
+      MAX({date_expr}) AS max_date
     FROM {table_fqn}
     """
     r = _session.sql(q).collect()
@@ -901,6 +918,55 @@ def get_airport_local_date_sql(db_prefix: str, ts_expr: str = "SYSDATE()") -> st
     else:
         # Fallback: just use UTC date
         return f"{ts_expr}::DATE"
+
+
+def get_airport_local_ts_sql(db_prefix: str, ts_expr: str = "SYSDATE()") -> str:
+    """Return SQL expression to compute airport-local TIMESTAMP_NTZ from a UTC timestamp expression.
+
+    Args:
+        db_prefix: Fully-qualified db.schema prefix
+        ts_expr: SQL timestamp expression (default: SYSDATE() for "now")
+
+    Returns:
+        SQL expression that converts UTC timestamp to airport-local TIMESTAMP_NTZ.
+        Falls back to the original timestamp expression if AIRPORT_TZID doesn't exist.
+    """
+    try:
+        from snowflake.snowpark.context import get_active_session
+        session = get_active_session()
+        has_tzid = _check_airport_tzid_exists(session, db_prefix)
+    except Exception:
+        has_tzid = True
+
+    if has_tzid:
+        return f"""TO_TIMESTAMP_NTZ(
+            CONVERT_TIMEZONE(
+                'UTC',
+                (SELECT AIRPORT_TZID FROM {db_prefix}.PROPERTIES_AIRPORT LIMIT 1),
+                {ts_expr}
+            )
+        )"""
+    return f"TO_TIMESTAMP_NTZ({ts_expr})"
+
+
+def get_airport_timezone_label(_session, db_prefix: str) -> str:
+    """Return a human-readable timezone label for UI captions."""
+    tzid = get_airport_tzid(_session, db_prefix)
+    return f"All times shown in {tzid}"
+
+
+def render_timezone_caption(_session, db_prefix: str) -> None:
+    """Render a consistent timezone caption on dashboard pages."""
+    st.caption(get_airport_timezone_label(_session, db_prefix))
+
+
+def to_airport_local_time(series: pd.Series, tzid: str) -> pd.Series:
+    """Convert a pandas datetime-like series (UTC) to airport-local naive timestamps."""
+    dt = pd.to_datetime(series, errors="coerce", utc=True)
+    try:
+        return dt.dt.tz_convert(tzid).dt.tz_localize(None)
+    except Exception:
+        return dt.dt.tz_localize(None)
 
 
 @st.cache_data(ttl=300)

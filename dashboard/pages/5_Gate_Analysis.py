@@ -32,6 +32,7 @@ db_prefix = f"{db}.{schema}"
 
 # Header
 st.title("🛬 Gate Analysis")
+utils.render_timezone_caption(session, db_prefix)
 
 # Sidebar filters
 with st.sidebar:
@@ -43,8 +44,12 @@ with st.sidebar:
 
     st.subheader("Filters")
     min_date, max_date = utils.get_date_range(session)
+    try:
+        local_today = datetime.fromisoformat(utils.get_airport_local_today(session, db_prefix)).date()
+    except Exception:
+        local_today = datetime.now().date()
     start_date, end_date = (
-        (max_date - timedelta(days=7), max_date) if max_date else (datetime.now().date() - timedelta(days=7), datetime.now().date())
+        (max_date - timedelta(days=7), max_date) if max_date else (local_today - timedelta(days=7), local_today)
     )
     date_range = st.date_input(
         "Date Range",
@@ -137,13 +142,14 @@ def get_gate_by_airline_breakdown(_session, start_dt, end_dt):
 @st.cache_data(ttl=300)
 def get_gate_dow_heatmap(_session, start_dt, end_dt):
     """Aggregate dwell minutes by gate and day-of-week for the selected interval."""
+    local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "ts")
     q = f"""
     SELECT 
       closest_gate_name AS gate_name,
-      DAYOFWEEK(ts) AS day_of_week,
+      DAYOFWEEK({local_ts_expr}) AS day_of_week,
       SUM(lag_seconds)/60.0 AS dwell_minutes
     FROM {db_prefix}.GATE_ANALYSIS_ADSB_GROUND_POINTS
-    WHERE ts::TIMESTAMP BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+    WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
       AND closest_gate_name IS NOT NULL
     GROUP BY gate_name, day_of_week
     """
