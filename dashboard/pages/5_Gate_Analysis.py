@@ -32,6 +32,7 @@ db_prefix = f"{db}.{schema}"
 
 # Header
 st.title("🛬 Gate Analysis")
+st.info("🏷️ **Level 2 relevant** — Gate dwell time impacts slot coordination and capacity management")
 utils.render_timezone_caption(session, db_prefix)
 
 # Sidebar filters
@@ -262,7 +263,10 @@ if hide_unknown_airlines and breakdown_df is not None and not breakdown_df.empty
 st.subheader("🧭 Gate Utilization by Gate (Dwell Minutes)")
 if not breakdown_df.empty:
     dwell_pivot = breakdown_df.pivot_table(index='GATE_NAME', columns='AIRLINE_CODE', values='DWELL_MINUTES', aggfunc='sum', fill_value=0)
-    dwell_pivot = dwell_pivot.sort_index()
+    # Sort by total dwell minutes (largest to smallest)
+    dwell_pivot['_total'] = dwell_pivot.sum(axis=1)
+    dwell_pivot = dwell_pivot.sort_values('_total', ascending=False)
+    dwell_pivot = dwell_pivot.drop(columns=['_total'])
     fig_dwell = go.Figure()
     # Use consistent color set per airline code
     airlines_codes = list(dwell_pivot.columns)
@@ -275,12 +279,16 @@ if not breakdown_df.empty:
     for i, code in enumerate(airlines_codes):
         palette[code] = base_colors[i % len(base_colors)]
     for code in airlines_codes:
+        values = dwell_pivot[code]
         fig_dwell.add_trace(go.Bar(
-            x=dwell_pivot[code],
+            x=values,
             y=dwell_pivot.index,
             name=code_to_name.get(str(code), str(code)),
             orientation='h',
-            marker_color=palette.get(code, '#1f77b4')
+            marker_color=palette.get(code, '#1f77b4'),
+            text=[f'{int(v)}' if v > 50 else '' for v in values],
+            textposition='inside',
+            textfont=dict(color='white', size=10)
         ))
     n_gates = len(dwell_pivot)
     fig_dwell.update_layout(
@@ -304,17 +312,24 @@ st.divider()
 st.subheader("🧮 Gate Utilization by Gate (Number of Flights)")
 if not breakdown_df.empty:
     flights_pivot = breakdown_df.pivot_table(index='GATE_NAME', columns='AIRLINE_CODE', values='FLIGHTS', aggfunc='sum', fill_value=0)
-    flights_pivot = flights_pivot.sort_index()
+    # Sort by total flights (largest to smallest)
+    flights_pivot['_total'] = flights_pivot.sum(axis=1)
+    flights_pivot = flights_pivot.sort_values('_total', ascending=False)
+    flights_pivot = flights_pivot.drop(columns=['_total'])
     fig_flights = go.Figure()
     airline_codes = list(flights_pivot.columns)
     # reuse palette
     for code in airline_codes:
+        values = flights_pivot[code]
         fig_flights.add_trace(go.Bar(
-            x=flights_pivot[code],
+            x=values,
             y=flights_pivot.index,
             name=code_to_name.get(str(code), str(code)),
             orientation='h',
-            marker_color=palette.get(code, '#1f77b4')
+            marker_color=palette.get(code, '#1f77b4'),
+            text=[f'{int(v)}' if v > 2 else '' for v in values],
+            textposition='inside',
+            textfont=dict(color='white', size=10)
         ))
     n_gates_f = len(flights_pivot)
     fig_flights.update_layout(
@@ -368,6 +383,7 @@ else:
 st.divider()
 
 st.subheader("📊 Gate Usage Heatmap by Day of Week")
+st.caption("Color intensity shows total dwell time in minutes: darker blue = more time spent at gate")
 hm_df = get_gate_dow_heatmap(session, start_date, end_date)
 if hm_df is not None and not hm_df.empty:
     # Map day numbers to names: 0/1.. mapping depends on DB; Snowflake DAYOFWEEK returns 0=Sunday
@@ -383,7 +399,9 @@ if hm_df is not None and not hm_df.empty:
         x=pivot.columns.tolist(),
         y=pivot.index.tolist(),
         colorscale='Blues',
-        hovertemplate='Day %{y}<br>Gate %{x}<br>Dwell %{z:.0f} min<extra></extra>'
+        hovertemplate='Day %{y}<br>Gate %{x}<br>Dwell %{z:.0f} min<extra></extra>',
+        showscale=True,
+        colorbar=dict(title="Dwell Time (min)")
     ))
     fig_hm.update_layout(
         xaxis_title='Gate',

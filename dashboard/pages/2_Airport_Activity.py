@@ -80,8 +80,8 @@ with st.sidebar:
     # Metric Type
     metric_type = st.radio(
         "What to Measure",
-        ["Distinct Flights", "Time Spent"],
-        help="Distinct Flights: Count unique aircraft | Time Spent: Number of datapoints (proxy for time in location)"
+        ["Distinct Aircraft Count", "Total Time Spent (minutes)"],
+        help="Distinct Aircraft Count: Count unique aircraft | Total Time Spent (minutes): Number of datapoints (proxy for time in location)"
     )
     
     st.divider()
@@ -318,10 +318,10 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
     Get all traffic data aggregated by H3 hexagons using Snowflake's native H3 functions
     Returns H3 cell strings with either distinct flight counts or datapoint counts
     Analyzes all datapoints for the given time interval - no limits
-    metric_type: 'Distinct Flights' or 'Time Spent'
+    metric_type: 'Distinct Aircraft Count' or 'Total Time Spent (minutes)'
     """
     # Choose aggregation based on metric type
-    if metric_type == "Distinct Flights":
+    if metric_type == "Distinct Aircraft Count":
         count_expr = "COUNT(DISTINCT FLIGHT) as metric_value"
     else:  # Time Spent
         count_expr = "COUNT(*) as metric_value"
@@ -397,7 +397,7 @@ with st.spinner("Loading geographic data..."):
         geo_data = None  # Not needed for H3 viz
     else:
         # Load heatmap data with sampling controls to avoid oversized payload
-        if metric_type == "Time Spent":
+        if metric_type == "Total Time Spent (minutes)":
             # Dynamically choose a Bernoulli sample percent to cap rows ~200k
             # Start at 10%; if over threshold, reduce percent; if under, keep
             start_pct = int(st.session_state.get('heatmap_sample_pct', 10))
@@ -413,7 +413,7 @@ with st.spinner("Loading geographic data..."):
                     break
             st.session_state['heatmap_sample_pct'] = pct
         else:
-            # For Distinct Flights, fetch only the first point per flight to shrink payload
+            # For Distinct Aircraft Count, fetch only the first point per flight to shrink payload
             df_all = get_geographic_data(
                 session,
                 start_datetime,
@@ -437,7 +437,11 @@ has_data = (geo_data is not None and not geo_data.empty) or (h3_data is not None
 
 if has_data:
     # Determine metric label
-    metric_label = "Distinct Flights" if metric_type == "Distinct Flights" else "Data Points (Time Spent)"
+    metric_label = "Distinct Aircraft Count" if metric_type == "Distinct Aircraft Count" else "Data Points (Total Time Spent)"
+    
+    # Add legend explanation
+    dual_encoding_note = " Bar height and color represent the same metric." if viz_type == "Hexagon" and hex_elevation else ""
+    st.caption(f"**Color Legend:** Teal (low) → Purple (high) {metric_label}. Color intensity represents relative concentration of activity.{dual_encoding_note}")
     
     if viz_type == "Hexagon" and h3_data is not None:
         # No title for Hexagon view
@@ -455,7 +459,7 @@ if has_data:
     
     if viz_type == "Heatmap":
         # For heatmap, handle data based on metric type
-        if metric_type == "Distinct Flights":
+        if metric_type == "Distinct Aircraft Count":
             heatmap_data = geo_data.drop_duplicates(subset=['FLIGHT'], keep='first') if (geo_data is not None and not geo_data.empty and 'FLIGHT' in geo_data.columns) else geo_data
         else:
             # Use sample points
@@ -621,7 +625,7 @@ if has_data:
                 if new_n != curr_n:
                     st.session_state['all_flights_sample_size'] = new_n
                     changed = True
-            if viz_type == "Heatmap" and metric_type == "Time Spent":
+            if viz_type == "Heatmap" and metric_type == "Total Time Spent (minutes)":
                 curr_hp = int(st.session_state.get('heatmap_sample_pct', 10))
                 new_hp = max(1, int(curr_hp * 0.8))
                 if new_hp != curr_hp:

@@ -262,7 +262,8 @@ st.divider()
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("🕐 Traffic by Hour of Day")
+    st.subheader("🕐 Aircraft on Ground by Hour")
+    st.caption("Shows the sum of aircraft present during each hour")
     
     if not hourly_patterns.empty:
         # Create bar chart
@@ -324,6 +325,7 @@ with col2:
 if show_heatmap and not traffic_data.empty:
     st.divider()
     st.subheader("🔥 Activity Heatmap")
+    st.caption("Color intensity shows aircraft count: darker blue = more aircraft")
     
     # Get data for heatmap
     @st.cache_data(ttl=300)
@@ -363,7 +365,9 @@ if show_heatmap and not traffic_data.empty:
             x=[f"{h:02d}:00" for h in heatmap_pivot.columns],
             y=heatmap_pivot.index,
             colorscale='Blues',
-            hovertemplate='%{y}<br>%{x}<br>Aircraft: %{z}<extra></extra>'
+            hovertemplate='%{y}<br>%{x}<br>Aircraft: %{z}<extra></extra>',
+            showscale=True,
+            colorbar=dict(title="Aircraft Count")
         ))
         
         fig.update_layout(

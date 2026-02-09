@@ -14,8 +14,9 @@ db = utils.get_selected_database()
 schema = 'PUBLIC'
 db_prefix = f"{db}.{schema}"
 
-st.title("🛤️ Runway Crossings Analysis")
-st.caption("Detects aircraft crossing the runway while taxiing on the ground (S→N or N→S). Filters out takeoffs and landings using: max speed ≤45 kts, time on runway ≤120 sec, and straight-line distance ≤220m.")
+st.title("🛤️ On-Ground Runway Crossings")
+st.caption("Detects aircraft crossing the runway while taxiing on the ground (wheels-on-ground only). Filters out takeoffs, landings, and airborne traffic using: max speed ≤45 kts, time on runway ≤120 sec, and straight-line distance ≤220m.")
+st.info("🏷️ **Level 2 relevant** — This metric is operationally sensitive for slot-controlled airports")
 
 utils.render_timezone_caption(session, db_prefix)
 tzid = utils.get_airport_tzid(session, db_prefix)
@@ -554,6 +555,7 @@ st.divider()
 if not analytics_df.empty:
     # Heatmap: Day of Week x Hour of Day
     st.subheader("📅 Crossing Heatmap (Day of Week × Hour)")
+    st.caption("Color intensity shows crossing count: darker blue = more crossings")
     
     heat_df = analytics_df.copy()
     local_t_entry = utils.to_airport_local_time(heat_df['T_ENTRY'], tzid)
@@ -574,7 +576,9 @@ if not analytics_df.empty:
         x=[f"{h:02d}:00" for h in pivot.columns],
         y=pivot.index.tolist(),
         colorscale='Blues',
-        hovertemplate='%{y}<br>Hour: %{x}<br>Crossings: %{z}<extra></extra>'
+        hovertemplate='%{y}<br>Hour: %{x}<br>Crossings: %{z}<extra></extra>',
+        showscale=True,
+        colorbar=dict(title="Crossings")
     ))
     fig_heat.update_layout(
         xaxis_title='Hour of Day',
