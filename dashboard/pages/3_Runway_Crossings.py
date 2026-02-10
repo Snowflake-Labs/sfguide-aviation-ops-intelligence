@@ -582,7 +582,7 @@ if not analytics_df.empty:
         tooltip=[
             alt.Tooltip('DAY_NAME:O', title='Day'),
             alt.Tooltip('HOUR_LABEL:O', title='Hour'),
-            alt.Tooltip('CROSSINGS:Q', title='Crossings', format=',')
+            alt.Tooltip('CROSSINGS:Q', title='Crossings', format=',.0f')
         ]
     ).properties(
         height=400
@@ -803,7 +803,7 @@ if not analytics_df.empty:
                             order=alt.Order('count:Q', sort='descending'),
                             tooltip=[
                                 alt.Tooltip('DIRECTION:N', title='Direction'),
-                                alt.Tooltip('sum(count):Q', title='Crossings', format=',')
+                                alt.Tooltip('sum(count):Q', title='Crossings', format=',.0f')
                             ]
                         ).properties(
                             height=450
@@ -856,7 +856,7 @@ if not analytics_df.empty:
                 y=alt.Y('airline_name:N', sort='-x', title=''),
                 tooltip=[
                     alt.Tooltip('airline_name:N', title='Airline'),
-                    alt.Tooltip('crossing_count:Q', title='Crossings', format=',')
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
                 ]
             ).properties(height=350)
             
@@ -871,7 +871,7 @@ if not analytics_df.empty:
                 y=alt.Y('airline_name:N', sort='-x', title=''),
                 tooltip=[
                     alt.Tooltip('airline_name:N', title='Airline'),
-                    alt.Tooltip('total_duration_min:Q', title='Minutes', format='.2f')
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
                 ]
             ).properties(height=350)
             

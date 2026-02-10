@@ -233,7 +233,7 @@ if breakdown_all is not None and not breakdown_all.empty:
         order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
         tooltip=[
             alt.Tooltip('GATE_NAME:N', title='Gate'),
-            alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=',')
+            alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=',.0f')
         ]
     ).properties(
         height=min(max(500, 40 * len(air_gate_pivot)), 1200)
@@ -338,7 +338,7 @@ if not breakdown_df.empty:
         order=alt.Order('FLIGHTS:Q', sort='descending'),
         tooltip=[
             alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
-            alt.Tooltip('sum(FLIGHTS):Q', title='Flights', format=',')
+            alt.Tooltip('sum(FLIGHTS):Q', title='Flights', format=',.0f')
         ]
     ).properties(
         height=min(max(800, 28 * len(flights_pivot)), 2400)

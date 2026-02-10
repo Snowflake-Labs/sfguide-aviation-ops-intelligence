@@ -366,7 +366,7 @@ if show_heatmap and not traffic_data.empty:
             tooltip=[
                 alt.Tooltip('DAY_NAME:O', title='Day'),
                 alt.Tooltip('HOUR_LABEL:O', title='Hour'),
-                alt.Tooltip('AIRCRAFT_COUNT:Q', title='Aircraft', format=',')
+                alt.Tooltip('AIRCRAFT_COUNT:Q', title='Aircraft', format=',.0f')
             ]
         ).properties(
             height=400
@@ -396,7 +396,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             y=alt.Y('AIRLINE_NAME:N', sort='-x', title=''),
             tooltip=[
                 alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
-                alt.Tooltip('FLIGHT_COUNT:Q', title='Flights', format=',')
+                alt.Tooltip('FLIGHT_COUNT:Q', title='Flights', format=',.0f')
             ]
         ).properties(
             title='Flights by Airline',
@@ -442,7 +442,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
                 tooltip=[
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
-                    alt.Tooltip('TOTAL_DELAY_MINUTES:Q', title='Delay Minutes', format=',')
+                    alt.Tooltip('TOTAL_DELAY_MINUTES:Q', title='Delay Minutes', format=',.0f')
                 ]
             ).properties(height=450)
             
@@ -456,7 +456,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
                 tooltip=[
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
-                    alt.Tooltip('EARLY_FLIGHTS:Q', title='Early Flights', format=',')
+                    alt.Tooltip('EARLY_FLIGHTS:Q', title='Early Flights', format=',.0f')
                 ]
             ).properties(height=450)
             
@@ -473,7 +473,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
                 tooltip=[
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
-                    alt.Tooltip('DELAYED_FLIGHTS:Q', title='Delayed Flights', format=',')
+                    alt.Tooltip('DELAYED_FLIGHTS:Q', title='Delayed Flights', format=',.0f')
                 ]
             ).properties(height=450)
             
@@ -487,7 +487,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
                 tooltip=[
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
-                    alt.Tooltip('TOTAL_EARLY_MINUTES:Q', title='Early Minutes', format=',')
+                    alt.Tooltip('TOTAL_EARLY_MINUTES:Q', title='Early Minutes', format=',.0f')
                 ]
             ).properties(height=450)
             
