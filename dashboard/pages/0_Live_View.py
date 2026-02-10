@@ -18,7 +18,7 @@ import re
 
 sys.path.append("..")
 import utils
-import colors
+from config.colors import get_intensity_color_3point
 import ui_components
 
 
@@ -390,7 +390,7 @@ if not points_df.empty:
             def interp_color(t: float):
                 """Interpolate between teal (low), yellow (medium), and red (high) based on normalized altitude."""
                 t = 0.0 if t is None else max(0.0, min(1.0, t))
-                return colors.get_intensity_color_3point(t)
+                return get_intensity_color_3point(t)
             
             # Build complete paths per flight (not segments) with average altitude for coloring
             trajectories = []

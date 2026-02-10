@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import json
 import plotly.graph_objects as go
 import utils
-import colors
+from config.colors import get_intensity_color_3point
 import re
 import ui_components
 
@@ -448,7 +448,7 @@ if not flight_data.empty:
 
     def interp_color(t: float):
         t = 0.0 if t is None else max(0.0, min(1.0, t))
-        color = colors.get_intensity_color_3point(t)
+        color = get_intensity_color_3point(t)
         color[3] = 255
         return color
 

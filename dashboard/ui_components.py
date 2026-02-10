@@ -5,7 +5,7 @@ Reusable UI components for the Aviation Operations Dashboard
 import streamlit as st
 from datetime import datetime, timedelta
 import utils
-import constants
+from config import core, ui, Metrics, Aggregation, Labels, Defaults
 
 
 def render_date_range_picker(min_date, max_date, key_prefix="", default_days_back=7):
@@ -212,8 +212,8 @@ def render_aggregation_selector(key_prefix="", sidebar=True):
     container = st.sidebar if sidebar else st
     return container.radio(
         "Aggregation:",
-        options=[constants.AGG_SUM, constants.AGG_DAILY_AVG],
-        format_func=lambda x: constants.AGG_LABELS[x],
+        options=[Aggregation.SUM, Aggregation.DAILY_AVG],
+        format_func=lambda x: Labels.AGG_SUM if x == Aggregation.SUM else Labels.AGG_DAILY_AVG,
         index=0,
         key=f"{key_prefix}_aggregation"
     )
@@ -233,8 +233,8 @@ def render_metric_selector(key_prefix="", sidebar=True):
     container = st.sidebar if sidebar else st
     return container.radio(
         "Display metric:",
-        options=[constants.METRIC_FLIGHT_COUNT, constants.METRIC_DURATION],
-        format_func=lambda x: constants.METRIC_LABELS[x],
+        options=[Metrics.FLIGHT_COUNT, Metrics.DURATION],
+        format_func=lambda x: Labels.METRIC_FLIGHT_COUNT if x == Metrics.FLIGHT_COUNT else Labels.METRIC_DURATION,
         index=0,
         key=f"{key_prefix}_metric_selector"
     )
@@ -254,12 +254,12 @@ def render_hexagon_size_selector(key_prefix="", sidebar=True):
     container = st.sidebar if sidebar else st
     size_label = container.selectbox(
         "Hexagon size",
-        options=list(constants.HEXAGON_SIZES.keys()),
-        index=list(constants.HEXAGON_SIZES.keys()).index(constants.DEFAULT_HEXAGON_SIZE),
+        options=list(core.HEXAGON_SIZES.keys()),
+        index=list(core.HEXAGON_SIZES.keys()).index(Defaults.HEXAGON_SIZE),
         key=f"{key_prefix}_hexagon_size",
-        help="Size of hexagons for aggregation. Small = fine detail, Large = broader overview"
+        help=ui.Content.HELP_TEXT['hexagon_size']
     )
-    return constants.HEXAGON_SIZES[size_label]
+    return core.HEXAGON_SIZES[size_label]
 
 
 def render_percentile_filter(key_prefix="", sidebar=True):
@@ -276,12 +276,12 @@ def render_percentile_filter(key_prefix="", sidebar=True):
     container = st.sidebar if sidebar else st
     return container.slider(
         "Percentile threshold:",
-        min_value=0,
-        max_value=99,
-        value=constants.DEFAULT_PERCENTILE,
-        step=5,
+        min_value=core.Thresholds.PERCENTILE_MIN,
+        max_value=core.Thresholds.PERCENTILE_MAX,
+        value=Defaults.PERCENTILE,
+        step=core.Thresholds.PERCENTILE_STEP,
         key=f"{key_prefix}_percentile",
-        help="Show only hexagons above this percentile (0 = show all)"
+        help=ui.Content.HELP_TEXT['percentile_threshold']
     )
 
 

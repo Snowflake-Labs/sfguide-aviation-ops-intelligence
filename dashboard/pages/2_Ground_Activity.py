@@ -12,9 +12,9 @@ import sys
 import json
 sys.path.append('..')
 import utils
-import colors
+from config import core, Metrics
+from config.colors import get_intensity_color_3point
 import ui_components
-import constants
 
 # Page configuration
 st.set_page_config(
@@ -99,13 +99,13 @@ with st.sidebar:
     )
     
     # Map the selection to the format expected by the rest of the code
-    metric_type = "Distinct Aircraft Count" if metric_type_selection == constants.METRIC_FLIGHT_COUNT else "Total Time Spent (minutes)"
+    metric_type = "Distinct Aircraft Count" if metric_type_selection == Metrics.FLIGHT_COUNT else "Total Time Spent (minutes)"
 
 # Altitude filter removed; analyze all data
 alt_min, alt_max = 0, 100000
 
 # Query function
-@st.cache_data(ttl=constants.CACHE_TTL_SECONDS)
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
 def get_schedule_for_flights(_session, date, flight_numbers):
     """
     Fetch origin, destination, and seats for a set of flight numbers on the given date.
@@ -131,7 +131,7 @@ def get_schedule_for_flights(_session, date, flight_numbers):
     except Exception:
         return pd.DataFrame(columns=['FLIGHT_NUMBER','ORIGIN_AIRPORT','DESTINATION_AIRPORT','SEATS'])
 
-@st.cache_data(ttl=constants.CACHE_TTL_SECONDS)
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
 def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, aggregation_type, sample_percent: int = 10, max_cells: int = 4000):
     """
     Get all traffic data aggregated by H3 hexagons using Snowflake's native H3 functions
@@ -291,7 +291,7 @@ if has_data:
     def to_color(val):
         t = float(val) / float(max_color)
         t = 0.0 if pd.isna(t) else max(0.0, min(1.0, t))
-        return colors.get_intensity_color_3point(t)
+        return get_intensity_color_3point(t)
     
     h3_data['color'] = h3_data['COLOR_METRIC'].apply(to_color)
     

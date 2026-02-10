@@ -14,8 +14,8 @@ import altair as alt
 import sys
 sys.path.append('..')
 import utils
-import colors
-from chart_config import BAR_CONFIG, COLORS, TOOLTIP_FORMAT
+from config import BAR_CONFIG, TOOLTIP_FORMAT
+from config.colors import Hex as COLORS
 import ui_components
 
 # Page configuration
@@ -272,7 +272,7 @@ with col1:
     
     if not hourly_patterns.empty:
         # Create bar chart with Altair
-        chart_hourly = alt.Chart(hourly_patterns).mark_bar(color=COLORS['blue'], size=BAR_CONFIG['vertical']['size']).encode(
+        chart_hourly = alt.Chart(hourly_patterns).mark_bar(color=COLORS.BLUE, size=BAR_CONFIG['vertical']['size']).encode(
             x=alt.X('HOUR_OF_DAY:Q', title='Hour of Day (24h)', scale=alt.Scale(domain=[0, 23])),
             y=alt.Y('AVG_AIRCRAFT:Q', title='Average Aircraft Count'),
             tooltip=[
@@ -296,7 +296,7 @@ with col2:
         dow_patterns['DAY_NAME'] = dow_patterns['DAY_OF_WEEK'].apply(lambda x: day_names[int(x)])
         
         # Create categorical order for proper weekday sequence
-        chart_dow = alt.Chart(dow_patterns).mark_bar(color=COLORS['light_green'], size=BAR_CONFIG['vertical']['size']).encode(
+        chart_dow = alt.Chart(dow_patterns).mark_bar(color=COLORS.LIGHT_GREEN, size=BAR_CONFIG['vertical']['size']).encode(
             x=alt.X('DAY_NAME:N', title='Day of Week', sort=day_names),
             y=alt.Y('AIRCRAFT_COUNT:Q', title='Aircraft Count'),
             tooltip=[
@@ -379,7 +379,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
         # Flights by airline
         airline_sorted = airline_data.sort_values('FLIGHT_COUNT', ascending=False)
         
-        chart_flights = alt.Chart(airline_sorted).mark_bar(color=COLORS['flight'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
+        chart_flights = alt.Chart(airline_sorted).mark_bar(color=COLORS.FLIGHT, size=BAR_CONFIG['horizontal_compact']['size']).encode(
             x=alt.X('FLIGHT_COUNT:Q', title='Number of Flights'),
             y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
             tooltip=[
@@ -425,7 +425,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             d1 = delay_stats[['AIRLINE_NAME','TOTAL_DELAY_MINUTES']].copy()
             d1 = d1.sort_values('TOTAL_DELAY_MINUTES', ascending=False).head(15)
             
-            chart_d1 = alt.Chart(d1).mark_bar(color=COLORS['delay'], size=BAR_CONFIG['horizontal']['size']).encode(
+            chart_d1 = alt.Chart(d1).mark_bar(color=COLORS.DELAY, size=BAR_CONFIG['horizontal']['size']).encode(
                 x=alt.X('TOTAL_DELAY_MINUTES:Q', title='Total Delay Minutes'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
                         axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
@@ -440,7 +440,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             st.subheader("🛬 Early Flights by Airline")
             e2 = delay_stats[['AIRLINE_NAME','EARLY_FLIGHTS']].copy().sort_values('EARLY_FLIGHTS', ascending=False).head(15)
             
-            chart_e2 = alt.Chart(e2).mark_bar(color=COLORS['early'], size=BAR_CONFIG['horizontal']['size']).encode(
+            chart_e2 = alt.Chart(e2).mark_bar(color=COLORS.EARLY, size=BAR_CONFIG['horizontal']['size']).encode(
                 x=alt.X('EARLY_FLIGHTS:Q', title='Early Flights'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
                         axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
@@ -458,7 +458,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             st.subheader("✈️ Delayed Flights by Airline")
             d2 = delay_stats[['AIRLINE_NAME','DELAYED_FLIGHTS']].copy().sort_values('DELAYED_FLIGHTS', ascending=False).head(15)
             
-            chart_d2 = alt.Chart(d2).mark_bar(color=COLORS['delayed_flights'], size=BAR_CONFIG['horizontal']['size']).encode(
+            chart_d2 = alt.Chart(d2).mark_bar(color=COLORS.DELAYED_FLIGHTS, size=BAR_CONFIG['horizontal']['size']).encode(
                 x=alt.X('DELAYED_FLIGHTS:Q', title='Delayed Flights'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
                         axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
@@ -473,7 +473,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             st.subheader("⏰ Early Arrivals by Airline (Minutes)")
             e1 = delay_stats[['AIRLINE_NAME','TOTAL_EARLY_MINUTES']].copy().sort_values('TOTAL_EARLY_MINUTES', ascending=False).head(15)
             
-            chart_e1 = alt.Chart(e1).mark_bar(color=COLORS['early_minutes'], size=BAR_CONFIG['horizontal']['size']).encode(
+            chart_e1 = alt.Chart(e1).mark_bar(color=COLORS.EARLY_MINUTES, size=BAR_CONFIG['horizontal']['size']).encode(
                 x=alt.X('TOTAL_EARLY_MINUTES:Q', title='Early Minutes'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
                         axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),

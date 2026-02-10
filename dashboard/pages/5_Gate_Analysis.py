@@ -13,8 +13,8 @@ import plotly.graph_objects as go
 import altair as alt
 sys.path.append('..')
 import utils
-import colors
-from chart_config import BAR_CONFIG, COLORS, AXIS_CONFIG, TOOLTIP_FORMAT
+from config import BAR_CONFIG, AXIS_CONFIG, TOOLTIP_FORMAT
+from config.colors import Hex as COLORS
 import ui_components
 
 # Page configuration
@@ -36,7 +36,7 @@ db_prefix = f"{db}.{schema}"
 
 # Header
 st.title("🛬 Gate Analysis")
-st.info("🏷️ **Level 2 relevant** — Gate dwell time impacts slot coordination and capacity management")
+st.info("🏷️ **IATA Level 2 relevant** — Gate dwell time impacts slot coordination and capacity management")
 utils.render_timezone_caption(session, db_prefix)
 
 # Sidebar filters
@@ -362,7 +362,7 @@ if top_df is not None and not top_df.empty:
     )
     display_df['LABEL'] = display_df.apply(lambda r: f"{str(r.get('FLIGHT_NUMBER',''))} — {r.get('AIRLINE_NAME','')} — {r.get('DAY','')} ({r.get('GATE_NAME','N/A')})", axis=1)
     
-    chart_top = alt.Chart(display_df).mark_bar(color=COLORS['utilization'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
+    chart_top = alt.Chart(display_df).mark_bar(color=COLORS.UTILIZATION, size=BAR_CONFIG['horizontal_compact']['size']).encode(
         x=alt.X('DWELL_MINUTES:Q', title='Dwell Minutes'),
         y=alt.Y('LABEL:N', sort='-x', title='Flight (Gate)',
                 axis=alt.Axis(labelLimit=AXIS_CONFIG['label_limit_long'])),

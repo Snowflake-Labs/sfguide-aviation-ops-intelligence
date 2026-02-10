@@ -4,12 +4,11 @@ from snowflake.snowpark.context import get_active_session
 import pydeck as pdk
 from datetime import datetime, timedelta
 import utils
-import colors
 import plotly.graph_objects as go
 import altair as alt
-from chart_config import BAR_CONFIG, COLORS, TOOLTIP_FORMAT
+from config import BAR_CONFIG, TOOLTIP_FORMAT, core, Metrics
+from config.colors import Hex as COLORS, get_intensity_color_3point
 import ui_components
-import constants
 
 st.set_page_config(page_title="Runway Crossings", page_icon="🛤️", layout="wide")
 utils.apply_custom_css()
@@ -22,7 +21,7 @@ db_prefix = f"{db}.{schema}"
 
 st.title("🛤️ On-Ground Runway Crossings")
 st.caption("Detects aircraft crossing the runway while taxiing on the ground (wheels-on-ground only). Filters out takeoffs, landings, and airborne traffic using: max speed ≤45 kts, time on runway ≤120 sec, and straight-line distance ≤220m.")
-st.info("🏷️ **Level 2 relevant** — This metric is operationally sensitive for slot-controlled airports")
+st.info("🏷️ **IATA Level 2 relevant** — This metric is operationally sensitive for slot-controlled airports")
 
 utils.render_timezone_caption(session, db_prefix)
 tzid = utils.get_airport_tzid(session, db_prefix)
@@ -98,7 +97,7 @@ if not directions:
     st.warning("⚠️ Please select at least one direction filter.")
     st.stop()
 
-@st.cache_data(ttl=constants.CACHE_TTL_SECONDS)
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
 def get_crossing_summary(_session, start_d, end_d, dirs, aggregation_type):
     """Get overall crossing counts and stats"""
     dir_filter = "','".join(dirs)
@@ -123,7 +122,7 @@ def get_crossing_summary(_session, start_d, end_d, dirs, aggregation_type):
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=constants.CACHE_TTL_SECONDS)
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
 def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_type):
     """
     Aggregate crossings by H3 cell for heatmap visualization.
@@ -137,7 +136,7 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_
     agg_params = utils.calculate_aggregation_params(start_d, end_d, aggregation_type)
     divisor = agg_params['divisor']
     
-    if metric == constants.METRIC_FLIGHT_COUNT:
+    if metric == Metrics.FLIGHT_COUNT:
         agg_expr = f'ROUND(COUNT(DISTINCT flight_key) / {divisor}) AS metric_value'
         metric_label = 'flights'
     else:
@@ -175,7 +174,7 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=constants.CACHE_TTL_SECONDS)
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
 def get_crossing_analytics(_session, start_d, end_d, dirs):
     """Get ALL crossing events with flight/airline data for analytics (no limit)"""
     dir_filter = "','".join(dirs)
@@ -197,7 +196,7 @@ def get_crossing_analytics(_session, start_d, end_d, dirs):
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=constants.CACHE_TTL_SECONDS)
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
 def get_crossing_details(_session, start_d, end_d, dirs, limit=100):
     """Get recent crossing events for table display (limited)"""
     dir_filter = "','".join(dirs)
@@ -241,7 +240,7 @@ def get_runway_geometry(_session):
 
 # Infrastructure layers now use utils.get_infrastructure_layers()
 
-@st.cache_data(ttl=constants.CACHE_TTL_SECONDS)
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
 def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
     """Get flight trajectories for aircraft that performed crossings with schedule info"""
     dir_filter = "','".join(dirs)
@@ -464,7 +463,7 @@ else:
             else:
                 t = (alt - min_alt) / (max_alt - min_alt)
                 t = max(0.0, min(1.0, t))
-            color = colors.get_intensity_color_3point(t)
+            color = get_intensity_color_3point(t)
             color[3] = 200
             return color
         
@@ -610,7 +609,7 @@ if not analytics_df.empty:
         col_d1, col_d2, col_d3 = st.columns(3)
         with col_d1:
             st.markdown("**By Flight Count**")
-            chart_d1 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS['blue']).encode(
+            chart_d1 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS.BLUE).encode(
                 x=alt.X('crossing_count:Q', title='Number of Crossings'),
                 y=alt.Y('DIRECTION:N', title='Direction'),
                 tooltip=[
@@ -623,7 +622,7 @@ if not analytics_df.empty:
         
         with col_d2:
             st.markdown("**By Total Time (min)**")
-            chart_d2 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS['orange']).encode(
+            chart_d2 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS.ORANGE).encode(
                 x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
                 y=alt.Y('DIRECTION:N', title='Direction'),
                 tooltip=[
@@ -636,7 +635,7 @@ if not analytics_df.empty:
         
         with col_d3:
             st.markdown("**By Avg Time Per Crossing (sec)**")
-            chart_d3 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS['pink']).encode(
+            chart_d3 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS.PINK).encode(
                 x=alt.X('avg_duration_s:Q', title='Avg Duration (sec)'),
                 y=alt.Y('DIRECTION:N', title='Direction'),
                 tooltip=[
@@ -929,7 +928,7 @@ if not analytics_df.empty:
             st.markdown("**By Crossing Count**")
             flight_count_sorted = flight_agg.sort_values('crossing_count', ascending=False)
             
-            chart_f1 = alt.Chart(flight_count_sorted).mark_bar(color=COLORS['green'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
+            chart_f1 = alt.Chart(flight_count_sorted).mark_bar(color=COLORS.GREEN, size=BAR_CONFIG['horizontal_compact']['size']).encode(
                 x=alt.X('crossing_count:Q', title='Crossings'),
                 y=alt.Y('LABEL:N', sort='-x', title='Flight',
                         axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal_compact']['label_limit'])),
@@ -945,7 +944,7 @@ if not analytics_df.empty:
             st.markdown("**By Total Time (min)**")
             flight_dur_sorted = flight_agg.sort_values('total_duration_min', ascending=False)
             
-            chart_f2 = alt.Chart(flight_dur_sorted).mark_bar(color=COLORS['purple'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
+            chart_f2 = alt.Chart(flight_dur_sorted).mark_bar(color=COLORS.PURPLE, size=BAR_CONFIG['horizontal_compact']['size']).encode(
                 x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
                 y=alt.Y('LABEL:N', sort='-x', title='Flight',
                         axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal_compact']['label_limit'])),
