@@ -268,25 +268,17 @@ with col1:
     st.caption("Shows the sum of aircraft present during each hour")
     
     if not hourly_patterns.empty:
-        # Create bar chart
-        fig = go.Figure()
+        # Create bar chart with Altair
+        chart_hourly = alt.Chart(hourly_patterns).mark_bar(color='#4FC3F7', size=15).encode(
+            x=alt.X('HOUR_OF_DAY:Q', title='Hour of Day (24h)', scale=alt.Scale(domain=[0, 23])),
+            y=alt.Y('AVG_AIRCRAFT:Q', title='Average Aircraft Count'),
+            tooltip=[
+                alt.Tooltip('HOUR_OF_DAY:Q', title='Hour', format='02d'),
+                alt.Tooltip('AVG_AIRCRAFT:Q', title='Aircraft', format=',.0f')
+            ]
+        ).properties(height=400)
         
-        fig.add_trace(go.Bar(
-            x=hourly_patterns['HOUR_OF_DAY'],
-            y=hourly_patterns['AVG_AIRCRAFT'],
-            marker_color='#4FC3F7',
-            name='Aircraft Count'
-        ))
-        
-        fig.update_layout(
-            xaxis_title="Hour of Day (24h)",
-            yaxis_title="Average Aircraft Count",
-            height=400,
-            template='plotly_white',
-            showlegend=False
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        st.altair_chart(chart_hourly, use_container_width=True)
         
         # Find peak hour
         peak_hour = hourly_patterns.loc[hourly_patterns['AVG_AIRCRAFT'].idxmax()]
@@ -300,24 +292,17 @@ with col2:
         day_names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
         dow_patterns['DAY_NAME'] = dow_patterns['DAY_OF_WEEK'].apply(lambda x: day_names[int(x)])
         
-        fig = go.Figure()
+        # Create categorical order for proper weekday sequence
+        chart_dow = alt.Chart(dow_patterns).mark_bar(color='#81C784', size=30).encode(
+            x=alt.X('DAY_NAME:N', title='Day of Week', sort=day_names),
+            y=alt.Y('AIRCRAFT_COUNT:Q', title='Aircraft Count'),
+            tooltip=[
+                alt.Tooltip('DAY_NAME:N', title='Day'),
+                alt.Tooltip('AIRCRAFT_COUNT:Q', title='Aircraft', format=',.0f')
+            ]
+        ).properties(height=400)
         
-        fig.add_trace(go.Bar(
-            x=dow_patterns['DAY_NAME'],
-            y=dow_patterns['AIRCRAFT_COUNT'],
-            marker_color='#81C784',
-            name='Aircraft Count'
-        ))
-        
-        fig.update_layout(
-            xaxis_title="Day of Week",
-            yaxis_title="Aircraft Count",
-            height=400,
-            template='plotly_white',
-            showlegend=False
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        st.altair_chart(chart_dow, use_container_width=True)
         
         # Find busiest day
         busiest_day = dow_patterns.loc[dow_patterns['AIRCRAFT_COUNT'].idxmax()]
@@ -407,20 +392,20 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
         st.altair_chart(chart_flights, use_container_width=True)
     
     with col2:
-        # Market share pie chart
-        fig = go.Figure(data=[go.Pie(
-            labels=airline_data['AIRLINE_NAME'],
-            values=airline_data['FLIGHT_COUNT'],
-            hole=.3
-        )])
-        
-        fig.update_layout(
-            title="Market Share by Flights",
-            height=500,
-            template='plotly_white'
+        # Market share pie chart with Altair
+        chart_pie = alt.Chart(airline_data).mark_arc(innerRadius=50).encode(
+            theta=alt.Theta('FLIGHT_COUNT:Q'),
+            color=alt.Color('AIRLINE_NAME:N', legend=alt.Legend(title='Airline')),
+            tooltip=[
+                alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                alt.Tooltip('FLIGHT_COUNT:Q', title='Flights', format=',.0f')
+            ]
+        ).properties(
+            title='Market Share by Flights',
+            height=500
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.altair_chart(chart_pie, use_container_width=True)
 
     # Delay analytics by airline
     if delay_stats is not None and not delay_stats.empty:
@@ -440,13 +425,12 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             
             chart_d1 = alt.Chart(d1).mark_bar(color='#EF5350', size=12).encode(
                 x=alt.X('TOTAL_DELAY_MINUTES:Q', title='Total Delay Minutes'),
-                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
-                        scale=alt.Scale(paddingInner=0, paddingOuter=0)),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
                 tooltip=[
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('TOTAL_DELAY_MINUTES:Q', title='Delay Minutes', format=',.0f')
                 ]
-            ).properties(height=450)
+            ).properties(height=alt.Step(18))
             
             st.altair_chart(chart_d1, use_container_width=True)
         with col2:
@@ -460,7 +444,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('EARLY_FLIGHTS:Q', title='Early Flights', format=',.0f')
                 ]
-            ).properties(height=450)
+            ).properties(height=alt.Step(18))
             
             st.altair_chart(chart_e2, use_container_width=True)
 
@@ -477,7 +461,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('DELAYED_FLIGHTS:Q', title='Delayed Flights', format=',.0f')
                 ]
-            ).properties(height=450)
+            ).properties(height=alt.Step(18))
             
             st.altair_chart(chart_d2, use_container_width=True)
         with colB:
@@ -491,7 +475,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('TOTAL_EARLY_MINUTES:Q', title='Early Minutes', format=',.0f')
                 ]
-            ).properties(height=450)
+            ).properties(height=alt.Step(18))
             
             st.altair_chart(chart_e1, use_container_width=True)
 

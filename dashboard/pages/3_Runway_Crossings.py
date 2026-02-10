@@ -606,57 +606,45 @@ if not analytics_df.empty:
         col_d1, col_d2, col_d3 = st.columns(3)
         with col_d1:
             st.markdown("**By Flight Count**")
-            fig_d1 = go.Figure(go.Bar(
-                x=dir_agg['DIRECTION'],
-                y=dir_agg['crossing_count'],
-                marker_color=['#4FC3F7', '#66BB6A'],
-                text=dir_agg['crossing_count'],
-                textposition='outside'
-            ))
-            fig_d1.update_layout(
-                xaxis_title='Direction',
-                yaxis_title='Number of Crossings',
-                height=300,
-                template='plotly_white',
-                showlegend=False
-            )
-            st.plotly_chart(fig_d1, use_container_width=True)
+            chart_d1 = alt.Chart(dir_agg).mark_bar(size=40).encode(
+                x=alt.X('DIRECTION:N', title='Direction'),
+                y=alt.Y('crossing_count:Q', title='Number of Crossings'),
+                color=alt.Color('DIRECTION:N', scale=alt.Scale(domain=['Arrival', 'Departure'], range=['#4FC3F7', '#66BB6A']), legend=None),
+                tooltip=[
+                    alt.Tooltip('DIRECTION:N', title='Direction'),
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
+                ]
+            ).properties(height=300)
+            
+            st.altair_chart(chart_d1, use_container_width=True)
         
         with col_d2:
             st.markdown("**By Total Time (min)**")
-            fig_d2 = go.Figure(go.Bar(
-                x=dir_agg['DIRECTION'],
-                y=dir_agg['total_duration_min'],
-                marker_color=['#FF9800', '#9C27B0'],
-                text=dir_agg['total_duration_min'].round(2),
-                textposition='outside'
-            ))
-            fig_d2.update_layout(
-                xaxis_title='Direction',
-                yaxis_title='Total Duration (min)',
-                height=300,
-                template='plotly_white',
-                showlegend=False
-            )
-            st.plotly_chart(fig_d2, use_container_width=True)
+            chart_d2 = alt.Chart(dir_agg).mark_bar(size=40).encode(
+                x=alt.X('DIRECTION:N', title='Direction'),
+                y=alt.Y('total_duration_min:Q', title='Total Duration (min)'),
+                color=alt.Color('DIRECTION:N', scale=alt.Scale(domain=['Arrival', 'Departure'], range=['#FF9800', '#9C27B0']), legend=None),
+                tooltip=[
+                    alt.Tooltip('DIRECTION:N', title='Direction'),
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
+                ]
+            ).properties(height=300)
+            
+            st.altair_chart(chart_d2, use_container_width=True)
         
         with col_d3:
             st.markdown("**By Avg Time Per Crossing (sec)**")
-            fig_d3 = go.Figure(go.Bar(
-                x=dir_agg['DIRECTION'],
-                y=dir_agg['avg_duration_s'],
-                marker_color=['#E91E63', '#00BCD4'],
-                text=dir_agg['avg_duration_s'],
-                textposition='outside'
-            ))
-            fig_d3.update_layout(
-                xaxis_title='Direction',
-                yaxis_title='Avg Duration (sec)',
-                height=300,
-                template='plotly_white',
-                showlegend=False
-            )
-            st.plotly_chart(fig_d3, use_container_width=True)
+            chart_d3 = alt.Chart(dir_agg).mark_bar(size=40).encode(
+                x=alt.X('DIRECTION:N', title='Direction'),
+                y=alt.Y('avg_duration_s:Q', title='Avg Duration (sec)'),
+                color=alt.Color('DIRECTION:N', scale=alt.Scale(domain=['Arrival', 'Departure'], range=['#E91E63', '#00BCD4']), legend=None),
+                tooltip=[
+                    alt.Tooltip('DIRECTION:N', title='Direction'),
+                    alt.Tooltip('avg_duration_s:Q', title='Seconds', format=',.0f')
+                ]
+            ).properties(height=300)
+            
+            st.altair_chart(chart_d3, use_container_width=True)
     
     st.divider()
     
@@ -687,58 +675,52 @@ if not analytics_df.empty:
             with col_t1:
                 st.markdown("**By Crossing Count**")
                 # Dynamic colors based on categories present
-                colors = []
+                color_domain = type_agg['flight_type'].tolist()
+                color_range = []
                 for ft in type_agg['flight_type']:
                     if ft == 'Arrival':
-                        colors.append('#00BCD4')
+                        color_range.append('#00BCD4')
                     elif ft == 'Departure':
-                        colors.append('#FF5722')
+                        color_range.append('#FF5722')
                     else:
-                        colors.append('#9E9E9E')  # Gray for Unknown
+                        color_range.append('#9E9E9E')  # Gray for Unknown
                 
-                fig_t1 = go.Figure(go.Bar(
-                    x=type_agg['flight_type'],
-                    y=type_agg['crossing_count'],
-                    marker_color=colors,
-                    text=type_agg['crossing_count'],
-                    textposition='outside'
-                ))
-                fig_t1.update_layout(
-                    xaxis_title='Flight Type',
-                    yaxis_title='Number of Crossings',
-                    height=300,
-                    template='plotly_white',
-                    showlegend=False
-                )
-                st.plotly_chart(fig_t1, use_container_width=True)
+                chart_t1 = alt.Chart(type_agg).mark_bar(size=50).encode(
+                    x=alt.X('flight_type:N', title='Flight Type'),
+                    y=alt.Y('crossing_count:Q', title='Number of Crossings'),
+                    color=alt.Color('flight_type:N', scale=alt.Scale(domain=color_domain, range=color_range), legend=None),
+                    tooltip=[
+                        alt.Tooltip('flight_type:N', title='Flight Type'),
+                        alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
+                    ]
+                ).properties(height=300)
+                
+                st.altair_chart(chart_t1, use_container_width=True)
             
             with col_t2:
                 st.markdown("**By Total Time (min)**")
                 # Dynamic colors for duration chart
-                colors_dur = []
+                color_domain_dur = type_agg['flight_type'].tolist()
+                color_range_dur = []
                 for ft in type_agg['flight_type']:
                     if ft == 'Arrival':
-                        colors_dur.append('#3F51B5')
+                        color_range_dur.append('#3F51B5')
                     elif ft == 'Departure':
-                        colors_dur.append('#E91E63')
+                        color_range_dur.append('#E91E63')
                     else:
-                        colors_dur.append('#757575')  # Dark gray for Unknown
+                        color_range_dur.append('#757575')  # Dark gray for Unknown
                 
-                fig_t2 = go.Figure(go.Bar(
-                    x=type_agg['flight_type'],
-                    y=type_agg['total_duration_min'],
-                    marker_color=colors_dur,
-                    text=type_agg['total_duration_min'].round(2),
-                    textposition='outside'
-                ))
-                fig_t2.update_layout(
-                    xaxis_title='Flight Type',
-                    yaxis_title='Total Duration (min)',
-                    height=300,
-                    template='plotly_white',
-                    showlegend=False
-                )
-                st.plotly_chart(fig_t2, use_container_width=True)
+                chart_t2 = alt.Chart(type_agg).mark_bar(size=50).encode(
+                    x=alt.X('flight_type:N', title='Flight Type'),
+                    y=alt.Y('total_duration_min:Q', title='Total Duration (min)'),
+                    color=alt.Color('flight_type:N', scale=alt.Scale(domain=color_domain_dur, range=color_range_dur), legend=None),
+                    tooltip=[
+                        alt.Tooltip('flight_type:N', title='Flight Type'),
+                        alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
+                    ]
+                ).properties(height=300)
+                
+                st.altair_chart(chart_t2, use_container_width=True)
         else:
             st.info("Flight type data not available")
     else:
@@ -853,13 +835,12 @@ if not analytics_df.empty:
             
             chart_a1 = alt.Chart(airline_count_sorted).mark_bar(color='#4FC3F7', size=12).encode(
                 x=alt.X('crossing_count:Q', title='Crossings'),
-                y=alt.Y('airline_name:N', sort='-x', title='',
-                        scale=alt.Scale(paddingInner=0, paddingOuter=0)),
+                y=alt.Y('airline_name:N', sort='-x', title=''),
                 tooltip=[
                     alt.Tooltip('airline_name:N', title='Airline'),
                     alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
                 ]
-            ).properties(height=350)
+            ).properties(height=alt.Step(18))
             
             st.altair_chart(chart_a1, use_container_width=True)
         
@@ -874,7 +855,7 @@ if not analytics_df.empty:
                     alt.Tooltip('airline_name:N', title='Airline'),
                     alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
                 ]
-            ).properties(height=350)
+            ).properties(height=alt.Step(18))
             
             st.altair_chart(chart_a2, use_container_width=True)
     else:
@@ -949,13 +930,12 @@ if not analytics_df.empty:
             
             chart_f1 = alt.Chart(flight_count_sorted).mark_bar(color='#66BB6A', size=12).encode(
                 x=alt.X('crossing_count:Q', title='Crossings'),
-                y=alt.Y('LABEL:N', sort='-x', title='',
-                        scale=alt.Scale(paddingInner=0.1, paddingOuter=0.05)),
+                y=alt.Y('LABEL:N', sort='-x', title=''),
                 tooltip=[
                     alt.Tooltip('LABEL:N', title='Flight'),
-                    alt.Tooltip('crossing_count:Q', title='Crossings', format=',')
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
                 ]
-            ).properties(height=350)
+            ).properties(height=alt.Step(18))
             
             st.altair_chart(chart_f1, use_container_width=True)
         
@@ -968,9 +948,9 @@ if not analytics_df.empty:
                 y=alt.Y('LABEL:N', sort='-x', title=''),
                 tooltip=[
                     alt.Tooltip('LABEL:N', title='Flight'),
-                    alt.Tooltip('total_duration_min:Q', title='Minutes', format='.2f')
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
                 ]
-            ).properties(height=350)
+            ).properties(height=alt.Step(18))
             
             st.altair_chart(chart_f2, use_container_width=True)
     else:
