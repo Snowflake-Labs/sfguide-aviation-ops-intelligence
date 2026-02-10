@@ -30,7 +30,7 @@ CHART_CAPTIONS = {
     'crossing_heatmap': 'Color intensity shows crossing count: darker blue = more crossings',
     'gate_heatmap': 'Color intensity shows total dwell time in minutes: darker blue = more time spent at gate',
     'hexagon_dual_encoding': 'Bar height and color represent the same metric.',
-    'color_legend_teal_purple': 'Teal (low) → Purple (high)',
+    'color_legend_intensity': 'Teal (low) → Yellow (medium) → Red (high)',
 }
 
 # Metric Type Labels
@@ -59,14 +59,16 @@ VOCABULARY = {
 
 # Color Scheme Documentation
 COLOR_SCHEMES = {
-    'teal_to_purple': {
-        'low_rgb': (151, 231, 239),
-        'high_rgb': (217, 102, 255),
-        'description': 'Continuous gradient from teal (low values) to purple (high values)',
+    'intensity_gradient': {
+        'low_rgb': (79, 195, 247),
+        'medium_rgb': (255, 193, 7),
+        'high_rgb': (255, 87, 34),
+        'extreme_rgb': (211, 47, 47),
+        'description': 'Aviation-standard intensity gradient: Teal (low) → Yellow (medium) → Orange (high) → Red (extreme)',
     },
-    'plotly_blues': {
-        'colorscale': 'Blues',
-        'description': 'Plotly Blues colorscale: darker blue indicates higher values',
+    'plotly_intensity': {
+        'colorscale': [[0, '#4FC3F7'], [0.5, '#FFC107'], [1, '#D32F2F']],
+        'description': 'Custom Plotly colorscale: Teal → Yellow → Red for operational intensity',
     }
 }
 

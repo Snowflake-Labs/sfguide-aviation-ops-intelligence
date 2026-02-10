@@ -18,6 +18,7 @@ import re
 
 sys.path.append("..")
 import utils
+import colors
 
 
 st.set_page_config(page_title="Live View", page_icon="🛫", layout="wide")
@@ -365,10 +366,7 @@ if not points_df.empty:
         
         # Build complete trajectories per flight with altitude-based coloring
         if not altitude_df.empty:
-            # Altitude color gradient: cyan (#97E7EF) to magenta (#D966FF)
-            low_rgb = (151, 231, 239)   # Cyan - low altitude
-            high_rgb = (217, 102, 255)  # Magenta - high altitude
-            
+            # Aviation-standard altitude gradient: Teal (low) -> Yellow -> Red (high)
             def to_float_or_none(val):
                 try:
                     return float(val) if pd.notna(val) else None
@@ -386,12 +384,9 @@ if not points_df.empty:
                 max_alt = 1.0
             
             def interp_color(t: float):
-                """Interpolate between low (cyan) and high (magenta) based on normalized altitude."""
+                """Interpolate between teal (low), yellow (medium), and red (high) based on normalized altitude."""
                 t = 0.0 if t is None else max(0.0, min(1.0, t))
-                r = int(low_rgb[0] + t * (high_rgb[0] - low_rgb[0]))
-                g = int(low_rgb[1] + t * (high_rgb[1] - low_rgb[1]))
-                b = int(low_rgb[2] + t * (high_rgb[2] - low_rgb[2]))
-                return [r, g, b, 200]  # Slightly transparent
+                return colors.get_intensity_color_3point(t)
             
             # Build complete paths per flight (not segments) with average altitude for coloring
             trajectories = []

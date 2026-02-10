@@ -4,6 +4,8 @@ from snowflake.snowpark.context import get_active_session
 import pydeck as pdk
 from datetime import datetime, timedelta
 import utils
+import colors
+import plotly.graph_objects as go
 
 st.set_page_config(page_title="Runway Crossings", page_icon="🛤️", layout="wide")
 utils.apply_custom_css()
@@ -450,21 +452,16 @@ else:
         # Group by flight and create altitude-colored segments
         flights_grouped = flight_paths_sampled.groupby('FLIGHT_KEY')
         
-        # Altitude gradient colors (same as Flight Tracker)
-        low_rgb = (151, 231, 239)  # Cyan - low altitude
-        high_rgb = (217, 102, 255)  # Purple - high altitude
-        
         def interp_color(alt, min_alt, max_alt):
-            """Interpolate color based on altitude"""
+            """Interpolate color based on altitude using aviation-standard gradient"""
             if pd.isna(alt) or min_alt == max_alt:
                 t = 0.0
             else:
                 t = (alt - min_alt) / (max_alt - min_alt)
                 t = max(0.0, min(1.0, t))
-            r = int(low_rgb[0] + t * (high_rgb[0] - low_rgb[0]))
-            g = int(low_rgb[1] + t * (high_rgb[1] - low_rgb[1]))
-            b = int(low_rgb[2] + t * (high_rgb[2] - low_rgb[2]))
-            return [r, g, b, 200]
+            color = colors.get_intensity_color_3point(t)
+            color[3] = 200
+            return color
         
         segments = []
         for flight_key, group in flights_grouped:
@@ -547,7 +544,7 @@ else:
     
     st.pydeck_chart(r, use_container_width=True, key="runway_crossings")
     
-    st.caption(f"💡 Hexagon color and height represent {metric_label}. Zoom and tilt for 3D view.")
+    st.caption(f"💡 **Hexagon visualization:** Color (Yellow→Orange→Red) and height both represent {metric_label}. Higher intensity = more crossings/longer duration. Zoom and tilt for 3D view.")
 
 st.divider()
 
@@ -555,7 +552,7 @@ st.divider()
 if not analytics_df.empty:
     # Heatmap: Day of Week x Hour of Day
     st.subheader("📅 Crossing Heatmap (Day of Week × Hour)")
-    st.caption("Color intensity shows crossing count: darker blue = more crossings")
+    st.caption("**Color Scale:** Teal (low) → Yellow (medium) → Red (high) crossing count. Shows temporal patterns of runway crossing activity.")
     
     heat_df = analytics_df.copy()
     local_t_entry = utils.to_airport_local_time(heat_df['T_ENTRY'], tzid)
@@ -570,12 +567,11 @@ if not analytics_df.empty:
     pivot = pivot.reindex([0, 1, 2, 3, 4, 5, 6])
     pivot.index = dow_names
     
-    import plotly.graph_objects as go
     fig_heat = go.Figure(data=go.Heatmap(
         z=pivot.values,
         x=[f"{h:02d}:00" for h in pivot.columns],
         y=pivot.index.tolist(),
-        colorscale='Blues',
+        colorscale=colors.PLOTLY_INTENSITY_SCALE,
         hovertemplate='%{y}<br>Hour: %{x}<br>Crossings: %{z}<extra></extra>',
         showscale=True,
         colorbar=dict(title="Crossings")

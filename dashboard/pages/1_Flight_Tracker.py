@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import json
 import plotly.graph_objects as go
 import utils
+import colors
 import re
 
 # Page configuration
@@ -445,15 +446,11 @@ if not flight_data.empty:
         min_alt = 0.0
         max_alt = 1.0
 
-    low_rgb = (151, 231, 239)
-    high_rgb = (217, 102, 255)
-
     def interp_color(t: float):
         t = 0.0 if t is None else max(0.0, min(1.0, t))
-        r = int(low_rgb[0] + t * (high_rgb[0] - low_rgb[0]))
-        g = int(low_rgb[1] + t * (high_rgb[1] - low_rgb[1]))
-        b = int(low_rgb[2] + t * (high_rgb[2] - low_rgb[2]))
-        return [r, g, b, 255]
+        color = colors.get_intensity_color_3point(t)
+        color[3] = 255
+        return color
 
     segments = []
     for i in range(len(flight_data) - 1):

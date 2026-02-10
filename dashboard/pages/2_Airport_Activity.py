@@ -12,6 +12,7 @@ import sys
 import json
 sys.path.append('..')
 import utils
+import colors
 
 # Page configuration
 st.set_page_config(
@@ -81,7 +82,7 @@ with st.sidebar:
     metric_type = st.radio(
         "What to Measure",
         ["Distinct Aircraft Count", "Total Time Spent (minutes)"],
-        help="Distinct Aircraft Count: Count unique aircraft | Total Time Spent (minutes): Number of datapoints (proxy for time in location)"
+        help="Distinct Aircraft Count: Count unique aircraft | Total Time Spent (minutes): Observation count (each ADS-B position report represents time in location)"
     )
     
     st.divider()
@@ -316,15 +317,15 @@ def get_schedule_for_flights(_session, date, flight_numbers):
 def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, sample_percent: int = 10, max_cells: int = 4000):
     """
     Get all traffic data aggregated by H3 hexagons using Snowflake's native H3 functions
-    Returns H3 cell strings with either distinct flight counts or datapoint counts
+    Returns H3 cell strings with BOTH distinct flight counts AND observation counts
     Analyzes all datapoints for the given time interval - no limits
-    metric_type: 'Distinct Aircraft Count' or 'Total Time Spent (minutes)'
+    metric_type: 'Distinct Aircraft Count' or 'Total Time Spent (minutes)' - determines which metric is used for visualization (color/height)
     """
-    # Choose aggregation based on metric type
+    # Determine which metric to use for sorting/limiting and visualization
     if metric_type == "Distinct Aircraft Count":
-        count_expr = "COUNT(DISTINCT FLIGHT) as metric_value"
+        order_by_expr = "distinct_aircraft_count"
     else:  # Time Spent
-        count_expr = "COUNT(*) as metric_value"
+        order_by_expr = "observation_count"
     
     bbox = utils.get_airport_bbox(session)
     local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
@@ -353,7 +354,8 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
     h3_with_bounds AS (
         SELECT 
             h3_cell,
-            {count_expr},
+            COUNT(DISTINCT FLIGHT) as distinct_aircraft_count,
+            COUNT(*) as observation_count,
             ST_COLLECT(point_geom) as collected_points
         FROM points_with_h3
         WHERE h3_cell IS NOT NULL
@@ -361,13 +363,14 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
     )
     SELECT 
         h3_cell,
-        metric_value,
+        distinct_aircraft_count,
+        observation_count,
         ST_XMIN(collected_points) as min_lon,
         ST_XMAX(collected_points) as max_lon,
         ST_YMIN(collected_points) as min_lat,
         ST_YMAX(collected_points) as max_lat
     FROM h3_with_bounds
-    ORDER BY metric_value DESC
+    ORDER BY {order_by_expr} DESC
     LIMIT {int(max_cells)}
     """
     return _session.sql(query).to_pandas()
@@ -436,12 +439,21 @@ with st.spinner("Loading geographic data..."):
 has_data = (geo_data is not None and not geo_data.empty) or (h3_data is not None and not h3_data.empty)
 
 if has_data:
-    # Determine metric label
-    metric_label = "Distinct Aircraft Count" if metric_type == "Distinct Aircraft Count" else "Data Points (Total Time Spent)"
+    # Determine metric labels for dual encoding
+    if metric_type == "Distinct Aircraft Count":
+        height_label = "Distinct Aircraft Count"
+        color_label = "Total dwell time (minutes)"
+    else:
+        height_label = "Total dwell time (minutes)"
+        color_label = "Distinct Aircraft Count"
     
-    # Add legend explanation
-    dual_encoding_note = " Bar height and color represent the same metric." if viz_type == "Hexagon" and hex_elevation else ""
-    st.caption(f"**Color Legend:** Teal (low) → Purple (high) {metric_label}. Color intensity represents relative concentration of activity.{dual_encoding_note}")
+    # Add legend explanation for dual encoding
+    if viz_type == "Hexagon" and hex_elevation:
+        st.caption(f"**Dual Encoding:** Height = {height_label} | Color (Teal→Yellow→Red): {color_label}. Teal=low, Yellow=medium, Red=high. Hover for exact values.")
+    elif viz_type == "Hexagon":
+        st.caption(f"**Color Scale:** Teal (low) → Yellow (medium) → Red (high) = {color_label}. Hover for exact values.")
+    else:
+        st.caption(f"**Color Scale:** Teal (low) → Yellow (medium) → Red (high) = {height_label}. Color intensity represents relative concentration of activity.")
     
     if viz_type == "Hexagon" and h3_data is not None:
         # No title for Hexagon view
@@ -465,15 +477,8 @@ if has_data:
             # Use sample points
             heatmap_data = geo_data
         
-        # Altitude-like gradient (low -> high): #97E7EF to #D966FF
-        color_range = [
-            [151, 231, 239, 0],
-            [151, 231, 239, 64],
-            [167, 205, 244, 128],
-            [186, 174, 247, 160],
-            [205, 140, 251, 200],
-            [217, 102, 255, 255]
-        ]
+        # Aviation-standard intensity gradient (low -> high): Teal -> Yellow -> Orange -> Red
+        color_range = colors.INTENSITY_COLOR_RANGE
         
         layer = pdk.Layer(
             'HeatmapLayer',
@@ -493,29 +498,43 @@ if has_data:
         pitch = 0
         
     elif viz_type == "Hexagon":
+        # Dual encoding: Height = selected metric, Color = secondary metric
+        if metric_type == "Distinct Aircraft Count":
+            # Height shows aircraft count, color shows dwell time
+            h3_data['HEIGHT_METRIC'] = h3_data['DISTINCT_AIRCRAFT_COUNT']
+            h3_data['COLOR_METRIC'] = h3_data['OBSERVATION_COUNT']
+        else:  # Total Time Spent
+            # Height shows dwell time, color shows aircraft count
+            h3_data['HEIGHT_METRIC'] = h3_data['OBSERVATION_COUNT']
+            h3_data['COLOR_METRIC'] = h3_data['DISTINCT_AIRCRAFT_COUNT']
+        
         # Use PyDeck's H3HexagonLayer with H3 string cell IDs
-        # Altitude-like gradient color based on METRIC_VALUE
-        max_count = h3_data['METRIC_VALUE'].max()
-        max_count = max_count if pd.notna(max_count) and max_count > 0 else 1
+        # Elevation based on HEIGHT_METRIC
+        max_height = h3_data['HEIGHT_METRIC'].max()
+        max_height = max_height if pd.notna(max_height) and max_height > 0 else 1
         
         # elevation for 3D if enabled
-        h3_data['elevation'] = (h3_data['METRIC_VALUE'] / max_count * 500) if hex_elevation else 0
+        h3_data['elevation'] = (h3_data['HEIGHT_METRIC'] / max_height * 500) if hex_elevation else 0
         
-        low_rgb = (151, 231, 239)
-        high_rgb = (217, 102, 255)
+        # Color gradient based on COLOR_METRIC (secondary metric)
+        max_color = h3_data['COLOR_METRIC'].max()
+        max_color = max_color if pd.notna(max_color) and max_color > 0 else 1
         
+        # Aviation-standard intensity gradient: Teal -> Yellow -> Red
         def to_color(val):
-            t = float(val) / float(max_count)
+            t = float(val) / float(max_color)
             t = 0.0 if pd.isna(t) else max(0.0, min(1.0, t))
-            r = int(low_rgb[0] + t * (high_rgb[0] - low_rgb[0]))
-            g = int(low_rgb[1] + t * (high_rgb[1] - low_rgb[1]))
-            b = int(low_rgb[2] + t * (high_rgb[2] - low_rgb[2]))
-            return [r, g, b, 220]
+            return colors.get_intensity_color_3point(t)
         
-        h3_data['color'] = h3_data['METRIC_VALUE'].apply(to_color)
+        h3_data['color'] = h3_data['COLOR_METRIC'].apply(to_color)
         
-        # Add tooltip column for consistent tooltip handling across all layers
-        h3_data['tooltip'] = h3_data['METRIC_VALUE'].apply(lambda v: f"<b>{metric_label}:</b> {int(v) if pd.notna(v) else 0}")
+        # Add tooltip showing BOTH metrics
+        def create_tooltip(row):
+            dwell_time = int(row['OBSERVATION_COUNT']) if pd.notna(row['OBSERVATION_COUNT']) else 0
+            aircraft_count = int(row['DISTINCT_AIRCRAFT_COUNT']) if pd.notna(row['DISTINCT_AIRCRAFT_COUNT']) else 0
+            return f"<b>Total dwell time (minutes):</b> {dwell_time}<br/><b>Distinct Aircraft Count:</b> {aircraft_count}"
+        
+        h3_data['tooltip'] = h3_data.apply(create_tooltip, axis=1)
         
         # Use H3HexagonLayer which works directly with H3 string cell IDs
         layer = pdk.Layer(
@@ -557,18 +576,13 @@ if has_data:
             alt_series = pts_df['ALT'].dropna()
             min_alt = float(alt_series.min()) if not alt_series.empty else 0.0
             max_alt = float(alt_series.max()) if not alt_series.empty else 1.0
-            low_rgb = (151, 231, 239)
-            high_rgb = (217, 102, 255)
             def interp_color(val):
                 if val is None:
                     t = 0.0
                 else:
                     t = (val - min_alt) / (max_alt - min_alt) if max_alt > min_alt else 0.0
                     t = max(0.0, min(1.0, t))
-                r = int(low_rgb[0] + t * (high_rgb[0] - low_rgb[0]))
-                g = int(low_rgb[1] + t * (high_rgb[1] - low_rgb[1]))
-                b = int(low_rgb[2] + t * (high_rgb[2] - low_rgb[2]))
-                return [r, g, b, 220]
+                return colors.get_intensity_color_3point(t)
             pts_df['color'] = pts_df['ALT'].apply(interp_color)
             # Build a single scatter layer with small points
             layers.append(pdk.Layer(

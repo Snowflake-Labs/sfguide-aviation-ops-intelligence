@@ -12,6 +12,7 @@ import sys
 import plotly.graph_objects as go
 sys.path.append('..')
 import utils
+import colors
 
 # Page configuration
 st.set_page_config(
@@ -383,7 +384,7 @@ else:
 st.divider()
 
 st.subheader("📊 Gate Usage Heatmap by Day of Week")
-st.caption("Color intensity shows total dwell time in minutes: darker blue = more time spent at gate")
+st.caption("**Color Scale:** Teal (low) → Yellow (medium) → Red (high) dwell time. Color intensity shows total time aircraft spent at each gate by day of week.")
 hm_df = get_gate_dow_heatmap(session, start_date, end_date)
 if hm_df is not None and not hm_df.empty:
     # Map day numbers to names: 0/1.. mapping depends on DB; Snowflake DAYOFWEEK returns 0=Sunday
@@ -398,7 +399,7 @@ if hm_df is not None and not hm_df.empty:
         z=pivot.values,
         x=pivot.columns.tolist(),
         y=pivot.index.tolist(),
-        colorscale='Blues',
+        colorscale=colors.PLOTLY_INTENSITY_SCALE,
         hovertemplate='Day %{y}<br>Gate %{x}<br>Dwell %{z:.0f} min<extra></extra>',
         showscale=True,
         colorbar=dict(title="Dwell Time (min)")

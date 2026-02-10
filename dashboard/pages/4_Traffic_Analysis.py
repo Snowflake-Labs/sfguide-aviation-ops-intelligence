@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import sys
 sys.path.append('..')
 import utils
+import colors
 
 # Page configuration
 st.set_page_config(
@@ -364,7 +365,7 @@ if show_heatmap and not traffic_data.empty:
             z=heatmap_pivot.values,
             x=[f"{h:02d}:00" for h in heatmap_pivot.columns],
             y=heatmap_pivot.index,
-            colorscale='Blues',
+            colorscale=colors.PLOTLY_INTENSITY_SCALE,
             hovertemplate='%{y}<br>%{x}<br>Aircraft: %{z}<extra></extra>',
             showscale=True,
             colorbar=dict(title="Aircraft Count")
@@ -377,6 +378,7 @@ if show_heatmap and not traffic_data.empty:
             template='plotly_white'
         )
         
+        st.caption("**Color Scale:** Teal (low) → Yellow (medium) → Red (high) aircraft count. Color intensity shows traffic concentration by day and hour.")
         st.plotly_chart(fig, use_container_width=True)
 
 # Airline breakdown
