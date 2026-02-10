@@ -74,9 +74,9 @@ with st.sidebar:
     # Map controls
     h3_resolution = st.selectbox(
         "H3 Resolution",
-        options=[12, 13, 14, 15],
+        options=[12, 13, 14],
         index=1,
-        help="Higher resolution for detailed airport activity analysis. 12 = larger hexagons, 15 = smaller hexagons"
+        help="Higher resolution for detailed airport activity analysis. 12 = larger hexagons, 14 = smaller hexagons"
     )
     
     st.divider()
