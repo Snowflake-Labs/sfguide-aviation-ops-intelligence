@@ -94,7 +94,7 @@ with st.sidebar:
     aggregation_type = st.radio(
         "Aggregation:",
         options=["sum", "daily_average"],
-        format_func=lambda x: "Sum for the selected period" if x == "sum" else "Daily Average",
+        format_func=lambda x: "Sum" if x == "sum" else "Daily Average",
         index=0,
         key="airport_activity_aggregation"
     )
