@@ -432,7 +432,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             d1 = delay_stats[['AIRLINE_NAME','TOTAL_DELAY_MINUTES']].copy()
             d1 = d1.sort_values('TOTAL_DELAY_MINUTES', ascending=False).head(15)
             
-            chart_d1 = alt.Chart(d1).mark_bar(color='#EF5350', size=12).encode(
+            chart_d1 = alt.Chart(d1).mark_bar(color='#EF5350', size=15).encode(
                 x=alt.X('TOTAL_DELAY_MINUTES:Q', title='Total Delay Minutes'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
                         axis=alt.Axis(labelLimit=200)),
@@ -440,14 +440,14 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('TOTAL_DELAY_MINUTES:Q', title='Delay Minutes', format=',.0f')
                 ]
-            ).properties(height=alt.Step(18))
+            ).properties(height=alt.Step(20))
             
             st.altair_chart(chart_d1, use_container_width=True)
         with col2:
             st.subheader("🛬 Early Flights by Airline")
             e2 = delay_stats[['AIRLINE_NAME','EARLY_FLIGHTS']].copy().sort_values('EARLY_FLIGHTS', ascending=False).head(15)
             
-            chart_e2 = alt.Chart(e2).mark_bar(color='#43A047', size=12).encode(
+            chart_e2 = alt.Chart(e2).mark_bar(color='#43A047', size=15).encode(
                 x=alt.X('EARLY_FLIGHTS:Q', title='Early Flights'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
                         axis=alt.Axis(labelLimit=200)),
@@ -455,7 +455,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('EARLY_FLIGHTS:Q', title='Early Flights', format=',.0f')
                 ]
-            ).properties(height=alt.Step(18))
+            ).properties(height=alt.Step(20))
             
             st.altair_chart(chart_e2, use_container_width=True)
 
@@ -465,7 +465,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             st.subheader("✈️ Delayed Flights by Airline")
             d2 = delay_stats[['AIRLINE_NAME','DELAYED_FLIGHTS']].copy().sort_values('DELAYED_FLIGHTS', ascending=False).head(15)
             
-            chart_d2 = alt.Chart(d2).mark_bar(color='#F57C00', size=12).encode(
+            chart_d2 = alt.Chart(d2).mark_bar(color='#F57C00', size=15).encode(
                 x=alt.X('DELAYED_FLIGHTS:Q', title='Delayed Flights'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
                         axis=alt.Axis(labelLimit=200)),
@@ -473,14 +473,14 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('DELAYED_FLIGHTS:Q', title='Delayed Flights', format=',.0f')
                 ]
-            ).properties(height=alt.Step(18))
+            ).properties(height=alt.Step(20))
             
             st.altair_chart(chart_d2, use_container_width=True)
         with colB:
             st.subheader("⏰ Early Arrivals by Airline (Minutes)")
             e1 = delay_stats[['AIRLINE_NAME','TOTAL_EARLY_MINUTES']].copy().sort_values('TOTAL_EARLY_MINUTES', ascending=False).head(15)
             
-            chart_e1 = alt.Chart(e1).mark_bar(color='#66BB6A', size=12).encode(
+            chart_e1 = alt.Chart(e1).mark_bar(color='#66BB6A', size=15).encode(
                 x=alt.X('TOTAL_EARLY_MINUTES:Q', title='Early Minutes'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
                         axis=alt.Axis(labelLimit=200)),
@@ -488,7 +488,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('TOTAL_EARLY_MINUTES:Q', title='Early Minutes', format=',.0f')
                 ]
-            ).properties(height=alt.Step(18))
+            ).properties(height=alt.Step(20))
             
             st.altair_chart(chart_e1, use_container_width=True)
 
