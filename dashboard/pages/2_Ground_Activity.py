@@ -14,6 +14,7 @@ sys.path.append('..')
 import utils
 import colors
 import ui_components
+import constants
 
 # Page configuration
 st.set_page_config(
@@ -72,55 +73,39 @@ with st.sidebar:
     st.divider()
     
     # Hexagon size selector
-    hexagon_size_label = st.selectbox(
-        "Hexagon size",
-        options=["Small", "Medium", "Large"],
-        index=1,
-        help="Size of hexagons for aggregation. Small = fine detail, Large = broader overview"
+    h3_resolution = ui_components.render_hexagon_size_selector(
+        key_prefix="airport_activity",
+        sidebar=True
     )
-    # Map labels to H3 resolution values (higher resolution = smaller hexagons)
-    size_to_resolution = {"Small": 14, "Medium": 13, "Large": 12}
-    h3_resolution = size_to_resolution[hexagon_size_label]
     
     st.divider()
     
     # Display metric
-    metric_type_selection = st.radio(
-        "Display metric:",
-        options=["flight_count", "total_duration"],
-        format_func=lambda x: "Flight Count" if x == "flight_count" else "Duration (min)",
-        index=0,
-        key="airport_activity_metric_selector"
+    metric_type_selection = ui_components.render_metric_selector(
+        key_prefix="airport_activity",
+        sidebar=True
     )
     
     # Aggregation
-    aggregation_type = st.radio(
-        "Aggregation:",
-        options=["sum", "daily_average"],
-        format_func=lambda x: "Sum" if x == "sum" else "Daily Average",
-        index=0,
-        key="airport_activity_aggregation"
+    aggregation_type = ui_components.render_aggregation_selector(
+        key_prefix="airport_activity",
+        sidebar=True
     )
     
     # Percentile threshold
-    percentile_threshold = st.slider(
-        "Percentile threshold:",
-        min_value=0,
-        max_value=99,
-        value=0,
-        step=5,
-        key="hotzone_percentile",
-        help="Show only hexagons above this percentile (0 = show all)"
+    percentile_threshold = ui_components.render_percentile_filter(
+        key_prefix="airport_activity",
+        sidebar=True
     )
     
     # Map the selection to the format expected by the rest of the code
-    metric_type = "Distinct Aircraft Count" if metric_type_selection == "flight_count" else "Total Time Spent (minutes)"
+    metric_type = "Distinct Aircraft Count" if metric_type_selection == constants.METRIC_FLIGHT_COUNT else "Total Time Spent (minutes)"
 
 # Altitude filter removed; analyze all data
 alt_min, alt_max = 0, 100000
 
 # Query function
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=constants.CACHE_TTL_SECONDS)
 def get_schedule_for_flights(_session, date, flight_numbers):
     """
     Fetch origin, destination, and seats for a set of flight numbers on the given date.
@@ -146,7 +131,7 @@ def get_schedule_for_flights(_session, date, flight_numbers):
     except Exception:
         return pd.DataFrame(columns=['FLIGHT_NUMBER','ORIGIN_AIRPORT','DESTINATION_AIRPORT','SEATS'])
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=constants.CACHE_TTL_SECONDS)
 def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, aggregation_type, sample_percent: int = 10, max_cells: int = 4000):
     """
     Get all traffic data aggregated by H3 hexagons using Snowflake's native H3 functions
@@ -161,17 +146,9 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
     else:  # Time Spent
         order_by_expr = "observation_count"
     
-    # Calculate number of days in the date range for daily average
-    from datetime import datetime
-    start_date = datetime.strptime(start_dt.split()[0], '%Y-%m-%d')
-    end_date = datetime.strptime(end_dt.split()[0], '%Y-%m-%d')
-    num_days = (end_date - start_date).days + 1
-    
-    # Determine aggregation divisor
-    if aggregation_type == "daily_average":
-        divisor = max(1, num_days)  # Avoid division by zero
-    else:
-        divisor = 1
+    # Calculate aggregation parameters
+    agg_params = utils.calculate_aggregation_params(start_dt, end_dt, aggregation_type)
+    divisor = agg_params['divisor']
     
     bbox = utils.get_airport_bbox(session)
     local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
@@ -251,18 +228,10 @@ with st.spinner("Loading geographic data..."):
     )
     
     # Apply percentile filter if enabled
-    if percentile_threshold > 0 and h3_data is not None and not h3_data.empty:
+    if percentile_threshold > 0:
         # Determine which column to use for filtering based on selected metric
-        if metric_type == "Distinct Aircraft Count":
-            filter_column = 'DISTINCT_AIRCRAFT_COUNT'
-        else:  # Total Time Spent
-            filter_column = 'OBSERVATION_COUNT'
-        
-        # Calculate percentile threshold value
-        threshold_value = h3_data[filter_column].quantile(percentile_threshold / 100.0)
-        
-        # Filter to keep only hexagons above the percentile
-        h3_data = h3_data[h3_data[filter_column] >= threshold_value]
+        filter_column = 'DISTINCT_AIRCRAFT_COUNT' if metric_type == "Distinct Aircraft Count" else 'OBSERVATION_COUNT'
+        h3_data = utils.apply_percentile_filter(h3_data, filter_column, percentile_threshold)
 
 
 # Geographic Coverage Statistics removed
@@ -271,11 +240,9 @@ with st.spinner("Loading geographic data..."):
 has_data = (h3_data is not None and not h3_data.empty)
 
 if has_data:
-    # Determine metric labels for dual encoding based on aggregation type
-    if aggregation_type == "daily_average":
-        prefix = "Avg daily"
-    else:
-        prefix = "Total"
+    # Get aggregation labels
+    agg_labels = utils.get_aggregation_labels(aggregation_type)
+    prefix = agg_labels['prefix']
     
     if metric_type == "Distinct Aircraft Count":
         height_label = f"{prefix} Aircraft Count" if aggregation_type == "daily_average" else "Distinct Aircraft Count"

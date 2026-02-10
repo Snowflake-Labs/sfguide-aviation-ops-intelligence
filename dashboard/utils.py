@@ -1840,3 +1840,98 @@ def create_infrastructure_pydeck_layers(infra_df, show_tags: bool = False) -> li
     
     return layers
 
+
+# =============================================================================
+# AGGREGATION UTILITIES
+# =============================================================================
+
+def calculate_aggregation_params(start_date, end_date, aggregation_type):
+    """
+    Calculate aggregation parameters for SQL queries.
+    
+    Args:
+        start_date: Start date (string or date object)
+        end_date: End date (string or date object)
+        aggregation_type: 'sum' or 'daily_average'
+    
+    Returns:
+        dict: {
+            'divisor': int (1 for sum, num_days for daily average),
+            'num_days': int,
+            'aggregation_type': str
+        }
+    """
+    from datetime import datetime
+    
+    # Handle string dates
+    if isinstance(start_date, str):
+        if ' ' in start_date:
+            start_date = datetime.strptime(start_date.split()[0], '%Y-%m-%d').date()
+        else:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+    
+    if isinstance(end_date, str):
+        if ' ' in end_date:
+            end_date = datetime.strptime(end_date.split()[0], '%Y-%m-%d').date()
+        else:
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+    
+    num_days = (end_date - start_date).days + 1
+    divisor = max(1, num_days) if aggregation_type == "daily_average" else 1
+    
+    return {
+        'divisor': divisor,
+        'num_days': num_days,
+        'aggregation_type': aggregation_type
+    }
+
+
+def get_aggregation_labels(aggregation_type):
+    """
+    Get display labels based on aggregation type.
+    
+    Args:
+        aggregation_type: 'sum' or 'daily_average'
+    
+    Returns:
+        dict: {
+            'prefix': str ('Total' or 'Avg daily'),
+            'crossings': str,
+            'flights': str,
+            'duration': str
+        }
+    """
+    if aggregation_type == "daily_average":
+        return {
+            'prefix': 'Avg daily',
+            'crossings': 'Avg Daily Crossings',
+            'flights': 'Avg Daily Flights',
+            'duration': 'Avg Daily Duration'
+        }
+    else:
+        return {
+            'prefix': 'Total',
+            'crossings': 'Total Crossings',
+            'flights': 'Unique Flights',
+            'duration': 'Total Duration'
+        }
+
+
+def apply_percentile_filter(df, column, percentile_threshold):
+    """
+    Filter dataframe to keep only rows above percentile threshold.
+    
+    Args:
+        df: pandas DataFrame
+        column: Column name to filter on
+        percentile_threshold: Percentile value (0-100)
+    
+    Returns:
+        Filtered DataFrame
+    """
+    if percentile_threshold == 0 or df is None or df.empty:
+        return df
+    
+    threshold_value = df[column].quantile(percentile_threshold / 100.0)
+    return df[df[column] >= threshold_value]
+

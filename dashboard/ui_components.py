@@ -5,6 +5,7 @@ Reusable UI components for the Aviation Operations Dashboard
 import streamlit as st
 from datetime import datetime, timedelta
 import utils
+import constants
 
 
 def render_date_range_picker(min_date, max_date, key_prefix="", default_days_back=7):
@@ -195,3 +196,133 @@ def render_map_layers_selector(session, db_prefix: str, sidebar: bool = True,
     show_tags = False
     
     return {'layers': selected_layers, 'show_tags': show_tags}
+
+
+def render_aggregation_selector(key_prefix="", sidebar=True):
+    """
+    Render standardized aggregation type selector.
+    
+    Args:
+        key_prefix: Unique prefix for widget key
+        sidebar: If True, render in sidebar
+    
+    Returns:
+        str: 'sum' or 'daily_average'
+    """
+    container = st.sidebar if sidebar else st
+    return container.radio(
+        "Aggregation:",
+        options=[constants.AGG_SUM, constants.AGG_DAILY_AVG],
+        format_func=lambda x: constants.AGG_LABELS[x],
+        index=0,
+        key=f"{key_prefix}_aggregation"
+    )
+
+
+def render_metric_selector(key_prefix="", sidebar=True):
+    """
+    Render standardized display metric selector.
+    
+    Args:
+        key_prefix: Unique prefix for widget key
+        sidebar: If True, render in sidebar
+    
+    Returns:
+        str: 'flight_count' or 'total_duration'
+    """
+    container = st.sidebar if sidebar else st
+    return container.radio(
+        "Display metric:",
+        options=[constants.METRIC_FLIGHT_COUNT, constants.METRIC_DURATION],
+        format_func=lambda x: constants.METRIC_LABELS[x],
+        index=0,
+        key=f"{key_prefix}_metric_selector"
+    )
+
+
+def render_hexagon_size_selector(key_prefix="", sidebar=True):
+    """
+    Render hexagon size selector with mapping to H3 resolution.
+    
+    Args:
+        key_prefix: Unique prefix for widget key
+        sidebar: If True, render in sidebar
+    
+    Returns:
+        int: H3 resolution (12, 13, or 14)
+    """
+    container = st.sidebar if sidebar else st
+    size_label = container.selectbox(
+        "Hexagon size",
+        options=list(constants.HEXAGON_SIZES.keys()),
+        index=list(constants.HEXAGON_SIZES.keys()).index(constants.DEFAULT_HEXAGON_SIZE),
+        key=f"{key_prefix}_hexagon_size",
+        help="Size of hexagons for aggregation. Small = fine detail, Large = broader overview"
+    )
+    return constants.HEXAGON_SIZES[size_label]
+
+
+def render_percentile_filter(key_prefix="", sidebar=True):
+    """
+    Render percentile threshold slider for hotzone filtering.
+    
+    Args:
+        key_prefix: Unique prefix for widget key
+        sidebar: If True, render in sidebar
+    
+    Returns:
+        int: Percentile threshold (0-99)
+    """
+    container = st.sidebar if sidebar else st
+    return container.slider(
+        "Percentile threshold:",
+        min_value=0,
+        max_value=99,
+        value=constants.DEFAULT_PERCENTILE,
+        step=5,
+        key=f"{key_prefix}_percentile",
+        help="Show only hexagons above this percentile (0 = show all)"
+    )
+
+
+def render_kpi_metrics(metrics_data, aggregation_type="sum"):
+    """
+    Render standardized KPI metrics with aggregation-aware labels.
+    
+    Args:
+        metrics_data: Dict with keys like {
+            'crossings': value,
+            'flights': value,
+            'avg_duration_s': value,
+            'total_duration_min': value
+        }
+        aggregation_type: 'sum' or 'daily_average'
+    
+    Returns:
+        None (renders directly to Streamlit)
+    """
+    labels = utils.get_aggregation_labels(aggregation_type)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            labels['crossings'],
+            f"{int(metrics_data.get('crossings', 0)):,}"
+        )
+    with col2:
+        st.metric(
+            labels['flights'],
+            f"{int(metrics_data.get('flights', 0)):,}"
+        )
+    with col3:
+        st.metric(
+            "Avg Duration",
+            f"{metrics_data.get('avg_duration_s', 0):.1f} sec"
+        )
+    with col4:
+        st.metric(
+            labels['duration'],
+            f"{int(metrics_data.get('total_duration_min', 0)):,} min"
+        )
+
