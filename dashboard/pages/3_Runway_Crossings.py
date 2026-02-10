@@ -65,14 +65,6 @@ with st.sidebar:
     dir_south_north = st.checkbox("South → North", value=True, key="dir_sn")
     dir_north_south = st.checkbox("North → South", value=True, key="dir_ns")
     
-    st.divider()
-    st.subheader("Metric")
-    metric_type = st.radio(
-        "Display metric:",
-        options=["flight_count", "total_duration"],
-        format_func=lambda x: "Flight Count" if x == "flight_count" else "Total Duration (min)",
-        index=0
-    )
     # Hide Unknown functionality removed - always show all airlines
     hide_unknown_airlines = False
     # Show Flights functionality removed - flights are always hidden
@@ -277,6 +269,9 @@ def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
         return _session.sql(q).to_pandas()
     except Exception:
         return pd.DataFrame()
+
+# Metric selector above the map
+metric_type = ui_components.render_metric_selector(key_prefix="runway_crossings")
 
 # Fetch data
 with st.spinner("Loading crossing data..."):

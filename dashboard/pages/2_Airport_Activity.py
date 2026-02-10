@@ -79,13 +79,6 @@ with st.sidebar:
         help="Choose how to visualize traffic density"
     )
     
-    # Metric Type
-    metric_type = st.radio(
-        "What to Measure",
-        ["Distinct Aircraft Count", "Total Time Spent (minutes)"],
-        help="Distinct Aircraft Count: Count unique aircraft | Total Time Spent (minutes): Observation count (each ADS-B position report represents time in location)"
-    )
-    
     st.divider()
     
     # Map controls
@@ -367,6 +360,11 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
     return _session.sql(query).to_pandas()
 
 # Density stats removed
+
+# Metric selector above the map
+metric_type_selection = ui_components.render_metric_selector(key_prefix="airport_activity")
+# Map the selection to the format expected by the rest of the code
+metric_type = "Distinct Aircraft Count" if metric_type_selection == "flight_count" else "Total Time Spent (minutes)"
 
 # Load data
 with st.spinner("Loading geographic data..."):

@@ -195,3 +195,23 @@ def render_map_layers_selector(session, db_prefix: str, sidebar: bool = True,
     show_tags = False
     
     return {'layers': selected_layers, 'show_tags': show_tags}
+
+
+def render_metric_selector(key_prefix: str = "metric"):
+    """
+    Render a metric selector for visualization pages.
+    
+    Args:
+        key_prefix: Prefix for widget keys to avoid conflicts between pages
+    
+    Returns:
+        str: Selected metric type ('flight_count' or 'total_duration')
+    """
+    metric_type = st.radio(
+        "Display metric:",
+        options=["flight_count", "total_duration"],
+        format_func=lambda x: "Flight Count" if x == "flight_count" else "Total Duration (min)",
+        index=0,
+        key=f"{key_prefix}_metric_selector"
+    )
+    return metric_type
