@@ -20,8 +20,6 @@ def render_date_range_picker(min_date, max_date, key_prefix="", default_days_bac
     Returns:
         tuple: (start_date, end_date) selected by the user
     """
-    st.subheader("Date Range")
-    
     # Calculate default date range
     if max_date:
         default_start = max_date - timedelta(days=default_days_back)
