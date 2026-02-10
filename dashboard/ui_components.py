@@ -235,7 +235,7 @@ def render_metric_selector(key_prefix="", sidebar=True):
         "Display metric:",
         options=[Metrics.FLIGHT_COUNT, Metrics.DURATION],
         format_func=lambda x: Labels.METRIC_FLIGHT_COUNT if x == Metrics.FLIGHT_COUNT else Labels.METRIC_DURATION,
-        index=0,
+        index=1,  # Default to Duration (min)
         key=f"{key_prefix}_metric_selector"
     )
 
