@@ -175,49 +175,6 @@ def render_airport_selector(sidebar=True):
     return selected_db
 
 
-def get_airport_iata_code():
-    """
-    Extract IATA code from the currently selected airport database.
-    Returns the 3-letter IATA code (e.g., 'SAN' from 'AIRPORT_SAN').
-    """
-    db = get_selected_database()
-    if db and db.startswith('AIRPORT_'):
-        return db.replace('AIRPORT_', '')
-    return None
-
-
-def get_airport_iata_level():
-    """
-    Get the IATA Level (1, 2, or 3) for the currently selected airport.
-    Returns the level from config, or defaults to Level 1 if not configured.
-    
-    IATA Levels:
-    - Level 1: Adequate capacity (no slot constraints)
-    - Level 2: Schedule Facilitated (voluntary schedule coordination)
-    - Level 3: Fully Coordinated (slot allocation required)
-    """
-    from config.core import AIRPORT_IATA_LEVELS, IATALevel
-    
-    iata_code = get_airport_iata_code()
-    if iata_code:
-        return AIRPORT_IATA_LEVELS.get(iata_code, IATALevel.LEVEL_1)
-    return IATALevel.LEVEL_1
-
-
-def get_visualization_defaults():
-    """
-    Get default visualization settings based on the airport's IATA Level.
-    Returns a dict with: hotspots_only, percentile_threshold, elevation_scale, opacity, coverage
-    """
-    from config.core import IATALevel, VisualizationDefaults
-    
-    level = get_airport_iata_level()
-    if level == IATALevel.LEVEL_2:
-        return VisualizationDefaults.LEVEL_2
-    else:
-        return VisualizationDefaults.DEFAULT
-
-
 # =============================================================================
 # COLOR SCHEMES
 # =============================================================================
@@ -1616,7 +1573,7 @@ def render_infrastructure_selector(session, db_prefix: str, sidebar: bool = True
     container.subheader("🗺️ Map Layers")
     
     preset_options = ["None", "Airport Ops", "All", "Custom"]
-    preset_index = {"none": 0, "airport_ops": 1, "all": 2, "custom": 3}.get(default_preset, 1)
+    preset_index = {"none": 0, "airport_ops": 1, "all": 2, "custom": 3}.get(default_preset, 0)
     
     preset = container.radio(
         "Quick select:",
@@ -1977,68 +1934,4 @@ def apply_percentile_filter(df, column, percentile_threshold):
     
     threshold_value = df[column].quantile(percentile_threshold / 100.0)
     return df[df[column] >= threshold_value]
-
-
-def apply_percentile_elevation_scaling(df, column, max_elevation=500):
-    """
-    Apply robust percentile-based elevation scaling to make hotspots visually prominent.
-    
-    Uses quantile-based scaling (robust to outliers):
-    - Values <= 50th percentile → scaled to 0-25% of max_elevation
-    - Values between 50th-75th percentile → scaled to 25-50% of max_elevation
-    - Values between 75th-90th percentile → scaled to 50-75% of max_elevation
-    - Values > 90th percentile (top 10%) → scaled to 75-100% of max_elevation
-    
-    This makes hotspots (top 10-25%) immediately visible while suppressing low-signal areas.
-    
-    Args:
-        df: pandas DataFrame
-        column: Column name to scale
-        max_elevation: Maximum elevation value in PyDeck units (default 500)
-    
-    Returns:
-        DataFrame with 'elevation' column added
-    """
-    if df is None or df.empty:
-        df['elevation'] = 0
-        return df
-    
-    # Calculate percentiles
-    q50 = df[column].quantile(0.50)
-    q75 = df[column].quantile(0.75)
-    q90 = df[column].quantile(0.90)
-    q97 = df[column].quantile(0.97)
-    
-    def scale_value(val):
-        """Scale individual value based on percentile ranges"""
-        if pd.isna(val):
-            return 0
-        
-        if val <= q50:
-            # Bottom 50% - minimal elevation (0-25%)
-            if q50 > 0:
-                t = val / q50
-                return max_elevation * 0.25 * t
-            return 0
-        elif val <= q75:
-            # 50th-75th percentile - moderate elevation (25-50%)
-            if q75 > q50:
-                t = (val - q50) / (q75 - q50)
-                return max_elevation * (0.25 + 0.25 * t)
-            return max_elevation * 0.25
-        elif val <= q90:
-            # 75th-90th percentile - elevated (50-75%)
-            if q90 > q75:
-                t = (val - q75) / (q90 - q75)
-                return max_elevation * (0.50 + 0.25 * t)
-            return max_elevation * 0.50
-        else:
-            # Top 10% - maximum prominence (75-100%)
-            if q97 > q90:
-                t = min(1.0, (val - q90) / (q97 - q90))
-                return max_elevation * (0.75 + 0.25 * t)
-            return max_elevation
-    
-    df['elevation'] = df[column].apply(scale_value)
-    return df
 

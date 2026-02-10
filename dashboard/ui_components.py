@@ -143,7 +143,7 @@ def render_map_layers_selector(session, db_prefix: str, sidebar: bool = True,
     container.markdown("**Map Layers**")
     
     preset_options = ["None", "Airport Ops", "All", "Custom"]
-    preset_index = {"none": 0, "airport_ops": 1, "all": 2, "custom": 3}.get(default_preset, 1)
+    preset_index = {"none": 0, "airport_ops": 1, "all": 2, "custom": 3}.get(default_preset, 0)
     
     preset = container.radio(
         "Map Layers",
