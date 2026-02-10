@@ -283,11 +283,11 @@ if has_data:
     h3_data['PRIMARY_METRIC'] = h3_data[primary_metric_col]
     
     # Apply percentile-based elevation scaling (robust to outliers)
-    # Use same max_elevation as Runway Crossings for consistency
+    # Use lower max_elevation to prevent hexagons from going too high
     h3_data = utils.apply_percentile_elevation_scaling(
         h3_data,
         'PRIMARY_METRIC',
-        max_elevation=500
+        max_elevation=10
     )
     
     # Color gradient based on PRIMARY_METRIC (same as elevation)
