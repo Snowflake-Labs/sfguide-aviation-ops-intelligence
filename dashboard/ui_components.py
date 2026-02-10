@@ -146,7 +146,6 @@ def render_map_layers_selector(session, db_prefix: str, sidebar: bool = True,
         "Map Layers",
         options=preset_options,
         index=preset_index,
-        horizontal=True,
         key=f"{key_prefix}_preset"
     )
     
