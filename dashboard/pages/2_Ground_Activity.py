@@ -287,7 +287,7 @@ if has_data:
     h3_data = utils.apply_percentile_elevation_scaling(
         h3_data,
         'PRIMARY_METRIC',
-        max_elevation=300
+        max_elevation=30
     )
     
     # Color gradient based on PRIMARY_METRIC (same as elevation)
