@@ -92,11 +92,37 @@ with st.sidebar:
         sidebar=True
     )
     
-    # Percentile threshold
-    percentile_threshold = ui_components.render_percentile_filter(
-        key_prefix="airport_activity",
-        sidebar=True
+    st.divider()
+    
+    # Get airport-specific visualization defaults
+    viz_defaults = utils.get_visualization_defaults()
+    airport_iata_level = utils.get_airport_iata_level()
+    
+    # Show IATA Level badge if Level 2
+    if airport_iata_level == 2:
+        st.info("🏷️ **IATA Level 2 Airport** — Hotspots-first mode enabled by default for slot coordination focus")
+    
+    # Hotspots mode toggle
+    hotspots_only = st.checkbox(
+        "Show hotspots only",
+        value=viz_defaults['hotspots_only'],
+        key="airport_activity_hotspots_only",
+        help="Filter to show only high-intensity areas (recommended for Level 2 airports)"
     )
+    
+    # Percentile threshold slider (only when hotspots mode is enabled)
+    if hotspots_only:
+        percentile_threshold = st.slider(
+            "Hotspot threshold (percentile)",
+            min_value=core.Thresholds.PERCENTILE_MIN,
+            max_value=core.Thresholds.PERCENTILE_MAX,
+            value=viz_defaults['percentile_threshold'],
+            step=core.Thresholds.PERCENTILE_STEP,
+            key="airport_activity_percentile",
+            help=f"Show only hexagons above this percentile. Level {airport_iata_level} default: {viz_defaults['percentile_threshold']}%"
+        )
+    else:
+        percentile_threshold = 0
     
     # Map the selection to the format expected by the rest of the code
     metric_type = "Distinct Aircraft Count" if metric_type_selection == Metrics.FLIGHT_COUNT else "Total Time Spent (minutes)"
@@ -227,10 +253,10 @@ with st.spinner("Loading geographic data..."):
         max_cells=int(st.session_state.get('hex_max_cells', 4000))
     )
     
-    # Apply percentile filter if enabled
-    if percentile_threshold > 0:
-        # Determine which column to use for filtering based on selected metric
-        filter_column = 'DISTINCT_AIRCRAFT_COUNT' if metric_type == "Distinct Aircraft Count" else 'OBSERVATION_COUNT'
+    # Apply percentile filter if hotspots mode is enabled
+    if hotspots_only and percentile_threshold > 0:
+        # Use OBSERVATION_COUNT (dwell time) as the primary filter metric
+        filter_column = 'OBSERVATION_COUNT'
         h3_data = utils.apply_percentile_filter(h3_data, filter_column, percentile_threshold)
 
 
@@ -244,17 +270,19 @@ if has_data:
     agg_labels = utils.get_aggregation_labels(aggregation_type)
     prefix = agg_labels['prefix']
     
-    if metric_type == "Distinct Aircraft Count":
-        height_label = f"{prefix} Aircraft Count" if aggregation_type == "daily_average" else "Distinct Aircraft Count"
-        color_label = f"{prefix} dwell time (minutes)"
-    else:
-        height_label = f"{prefix} dwell time (minutes)"
-        color_label = f"{prefix} Aircraft Count" if aggregation_type == "daily_average" else "Distinct Aircraft Count"
+    # Single-metric encoding: Primary metric is TOTAL_DWELL_MINUTES (OBSERVATION_COUNT)
+    # Both height and color encode the same metric for cognitive simplicity
+    primary_metric_col = 'OBSERVATION_COUNT'
+    primary_metric_label = f"{prefix} dwell time (minutes)"
+    secondary_metric_col = 'DISTINCT_AIRCRAFT_COUNT'
+    secondary_metric_label = f"{prefix} Aircraft Count" if aggregation_type == "daily_average" else "Distinct Aircraft Count"
     
-    # Add legend explanation for dual encoding (always show 3D)
-    caption_text = f"**Dual Encoding:** Height = {height_label} | Color (Teal→Yellow→Red): {color_label}. Teal=low, Yellow=medium, Red=high. Hover for exact values."
-    if percentile_threshold > 0:
-        caption_text += f" | **Hotzone Filter:** Showing only top {100 - percentile_threshold}% of hexagons by {metric_type_selection.replace('_', ' ')}."
+    # Show caption explaining the visualization
+    viz_defaults = utils.get_visualization_defaults()
+    if hotspots_only:
+        caption_text = f"**Hotspots Mode:** Height & Color = {primary_metric_label}. Teal=low, Yellow=medium, Orange/Red=high. Showing top {100 - percentile_threshold}% by dwell time."
+    else:
+        caption_text = f"**Full View:** Height & Color = {primary_metric_label}. Teal=low, Yellow=medium, Orange/Red=high. Hover for exact values."
     st.caption(caption_text)
     
     # Create layers
@@ -264,60 +292,61 @@ if has_data:
     infra_df = utils.get_infrastructure_layers(session, db_prefix, selected_infra_layers, include_tags=show_infra_tags) if selected_infra_layers else pd.DataFrame()
     layers.extend(utils.create_infrastructure_pydeck_layers(infra_df, show_tags=show_infra_tags))
     
-    # Hexagon visualization with dual encoding
-    # Dual encoding: Height = selected metric, Color = secondary metric
-    if metric_type == "Distinct Aircraft Count":
-        # Height shows aircraft count, color shows dwell time
-        h3_data['HEIGHT_METRIC'] = h3_data['DISTINCT_AIRCRAFT_COUNT']
-        h3_data['COLOR_METRIC'] = h3_data['OBSERVATION_COUNT']
-    else:  # Total Time Spent
-        # Height shows dwell time, color shows aircraft count
-        h3_data['HEIGHT_METRIC'] = h3_data['OBSERVATION_COUNT']
-        h3_data['COLOR_METRIC'] = h3_data['DISTINCT_AIRCRAFT_COUNT']
+    # Hexagon visualization with single-metric encoding
+    # Single metric: OBSERVATION_COUNT (dwell time in minutes)
+    # Both height and color encode the same metric for simplicity
+    h3_data['PRIMARY_METRIC'] = h3_data[primary_metric_col]
     
-    # Use PyDeck's H3HexagonLayer with H3 string cell IDs
-    # Elevation based on HEIGHT_METRIC
-    max_height = h3_data['HEIGHT_METRIC'].max()
-    max_height = max_height if pd.notna(max_height) and max_height > 0 else 1
+    # Apply percentile-based elevation scaling (robust to outliers)
+    h3_data = utils.apply_percentile_elevation_scaling(
+        h3_data,
+        'PRIMARY_METRIC',
+        max_elevation=500
+    )
     
-    # Always use elevation for 3D
-    h3_data['elevation'] = (h3_data['HEIGHT_METRIC'] / max_height * 500)
-    
-    # Color gradient based on COLOR_METRIC (secondary metric)
-    max_color = h3_data['COLOR_METRIC'].max()
+    # Color gradient based on PRIMARY_METRIC (same as elevation)
+    max_color = h3_data['PRIMARY_METRIC'].max()
     max_color = max_color if pd.notna(max_color) and max_color > 0 else 1
     
-    # Aviation-standard intensity gradient: Teal -> Yellow -> Red
+    # Aviation-standard intensity gradient: Teal -> Yellow -> Orange -> Red
     def to_color(val):
         t = float(val) / float(max_color)
         t = 0.0 if pd.isna(t) else max(0.0, min(1.0, t))
         return get_intensity_color_3point(t)
     
-    h3_data['color'] = h3_data['COLOR_METRIC'].apply(to_color)
+    h3_data['color'] = h3_data['PRIMARY_METRIC'].apply(to_color)
     
-    # Add tooltip showing BOTH metrics with proper formatting based on aggregation
+    # Add tooltip showing primary metric and aircraft count
     def create_tooltip(row):
         dwell_time = row['OBSERVATION_COUNT'] if pd.notna(row['OBSERVATION_COUNT']) else 0
         aircraft_count = row['DISTINCT_AIRCRAFT_COUNT'] if pd.notna(row['DISTINCT_AIRCRAFT_COUNT']) else 0
         
         if aggregation_type == "daily_average":
             # Show as integer for daily averages (rounded in SQL)
-            return f"<b>Avg daily dwell time (minutes):</b> {int(dwell_time)}<br/><b>Avg daily Aircraft Count:</b> {int(aircraft_count)}"
+            return f"<b>{primary_metric_label}:</b> {int(dwell_time)}<br/><b>{secondary_metric_label}:</b> {int(aircraft_count)}"
         else:
             # Show as integer for sum
-            return f"<b>Total dwell time (minutes):</b> {int(dwell_time)}<br/><b>Distinct Aircraft Count:</b> {int(aircraft_count)}"
+            return f"<b>{primary_metric_label}:</b> {int(dwell_time)}<br/><b>{secondary_metric_label}:</b> {int(aircraft_count)}"
     
     h3_data['tooltip'] = h3_data.apply(create_tooltip, axis=1)
     
-    # Use H3HexagonLayer which works directly with H3 string cell IDs
+    # Get airport-specific visualization defaults for PyDeck parameters
+    elevation_scale = viz_defaults['elevation_scale']
+    opacity = viz_defaults['opacity']
+    coverage = viz_defaults['coverage']
+    
+    # Use H3HexagonLayer with IATA Level-specific parameters
     layer = pdk.Layer(
         'H3HexagonLayer',
         data=h3_data,
         get_hexagon='H3_CELL',
         get_fill_color='color',
         get_elevation='elevation',
-        elevation_scale=1,
-        extruded=True,  # Always 3D
+        elevation_scale=elevation_scale,
+        extruded=True,
+        wireframe=False,
+        opacity=opacity,
+        coverage=coverage,
         pickable=True,
         auto_highlight=True,
         get_line_color=[255, 255, 255, 100],
