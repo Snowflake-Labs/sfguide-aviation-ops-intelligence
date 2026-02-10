@@ -163,8 +163,8 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
     h3_with_bounds AS (
         SELECT 
             h3_cell,
-            COUNT(DISTINCT FLIGHT) / {divisor} as distinct_aircraft_count,
-            COUNT(*) / {divisor} as observation_count,
+            ROUND(COUNT(DISTINCT FLIGHT) / {divisor}) as distinct_aircraft_count,
+            ROUND(COUNT(*) / {divisor}) as observation_count,
             ST_COLLECT(point_geom) as collected_points
         FROM points_with_h3
         WHERE h3_cell IS NOT NULL
@@ -305,8 +305,8 @@ if has_data:
         aircraft_count = row['DISTINCT_AIRCRAFT_COUNT'] if pd.notna(row['DISTINCT_AIRCRAFT_COUNT']) else 0
         
         if aggregation_type == "daily_average":
-            # Show as decimal for daily averages
-            return f"<b>Avg daily dwell time (minutes):</b> {dwell_time:.1f}<br/><b>Avg daily Aircraft Count:</b> {aircraft_count:.1f}"
+            # Show as integer for daily averages (rounded in SQL)
+            return f"<b>Avg daily dwell time (minutes):</b> {int(dwell_time)}<br/><b>Avg daily Aircraft Count:</b> {int(aircraft_count)}"
         else:
             # Show as integer for sum
             return f"<b>Total dwell time (minutes):</b> {int(dwell_time)}<br/><b>Distinct Aircraft Count:</b> {int(aircraft_count)}"

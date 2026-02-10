@@ -270,15 +270,8 @@ def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
     except Exception:
         return pd.DataFrame()
 
-# Map configuration controls - horizontal layout above map
-metric_type = st.radio(
-    "Display metric:",
-    options=["flight_count", "total_duration"],
-    format_func=lambda x: "Flight Count" if x == "flight_count" else "Duration (min)",
-    index=0,
-    key="runway_crossings_metric_selector",
-    horizontal=True
-)
+# Placeholder for metric_type - will be set by user selection below
+metric_type = "flight_count"  # Default value
 
 # Fetch data
 with st.spinner("Loading crossing data..."):
@@ -309,6 +302,16 @@ with col4:
     st.metric("Total Duration", f"{summary['TOTAL_DURATION_MIN']:.1f} min")
 
 st.divider()
+
+# Map configuration controls - horizontal layout above map
+metric_type = st.radio(
+    "Display metric:",
+    options=["flight_count", "total_duration"],
+    format_func=lambda x: "Flight Count" if x == "flight_count" else "Duration (min)",
+    index=0,
+    key="runway_crossings_metric_selector",
+    horizontal=True
+)
 
 # Map visualization
 st.subheader("📍 Crossing Density Heatmap")
