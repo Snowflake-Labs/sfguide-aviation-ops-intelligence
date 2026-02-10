@@ -229,8 +229,7 @@ if breakdown_all is not None and not breakdown_all.empty:
         y=alt.Y('AIRLINE_NAME:N', 
                 sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
                 title='Airline',
-                axis=alt.Axis(labelLimit=200),
-                scale=alt.Scale(paddingInner=0, paddingOuter=0)),
+                axis=alt.Axis(labelLimit=200)),
         color=alt.Color('GATE_NAME:N', legend=None),
         order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
         tooltip=[
@@ -238,7 +237,7 @@ if breakdown_all is not None and not breakdown_all.empty:
             alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=',.0f')
         ]
     ).properties(
-        height=min(max(500, 40 * len(air_gate_pivot)), 1200)
+        height=alt.Step(20)  # Fixed step size of 20 pixels per bar
     ).configure_mark(
         opacity=0.9
     )
@@ -291,16 +290,15 @@ if not breakdown_df.empty:
         y=alt.Y('GATE_NAME:N',
                 sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
                 title='Gate',
-                axis=alt.Axis(labelFontSize=11),
-                scale=alt.Scale(paddingInner=0, paddingOuter=0)),
+                axis=alt.Axis(labelFontSize=11)),
         color=alt.Color('AIRLINE_CODE:N', legend=None),
         order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
         tooltip=[
             alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
-            alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=',')
+            alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=',.0f')
         ]
     ).properties(
-        height=min(max(800, 28 * len(dwell_pivot)), 2400)
+        height=alt.Step(15)  # Fixed step size of 15 pixels per bar
     ).configure_mark(
         opacity=0.9
     )
@@ -336,8 +334,7 @@ if not breakdown_df.empty:
         y=alt.Y('GATE_NAME:N',
                 sort=alt.EncodingSortField(field='FLIGHTS', op='sum', order='descending'),
                 title='Gate',
-                axis=alt.Axis(labelFontSize=11),
-                scale=alt.Scale(paddingInner=0.1, paddingOuter=0.05)),
+                axis=alt.Axis(labelFontSize=11)),
         color=alt.Color('AIRLINE_CODE:N', legend=None),
         order=alt.Order('FLIGHTS:Q', sort='descending'),
         tooltip=[
@@ -345,7 +342,7 @@ if not breakdown_df.empty:
             alt.Tooltip('sum(FLIGHTS):Q', title='Flights', format=',.0f')
         ]
     ).properties(
-        height=min(max(800, 28 * len(flights_pivot)), 2400)
+        height=alt.Step(15)  # Fixed step size of 15 pixels per bar
     ).configure_mark(
         opacity=0.9
     )

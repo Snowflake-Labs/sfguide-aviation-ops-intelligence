@@ -798,8 +798,7 @@ if not analytics_df.empty:
                             x=alt.X('sum(count):Q', title='Number of Crossings'),
                             y=alt.Y('GATE_NAME:N',
                                     sort=alt.EncodingSortField(field='count', op='sum', order='descending'),
-                                    title='Gate',
-                                    scale=alt.Scale(paddingInner=0, paddingOuter=0)),
+                                    title='Gate'),
                             color=alt.Color('DIRECTION:N'),
                             order=alt.Order('count:Q', sort='descending'),
                             tooltip=[
@@ -807,7 +806,7 @@ if not analytics_df.empty:
                                 alt.Tooltip('sum(count):Q', title='Crossings', format=',.0f')
                             ]
                         ).properties(
-                            height=450
+                            height=alt.Step(20)  # Fixed step size of 20 pixels per bar
                         ).configure_mark(
                             opacity=0.9
                         )
