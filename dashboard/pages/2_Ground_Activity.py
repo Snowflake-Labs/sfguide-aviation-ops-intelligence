@@ -1,6 +1,6 @@
 """
-Airport Activity Page - Geographic traffic analysis and airport-centric views
-Visualize traffic density, airport activity, and geographic patterns
+Ground Activity Page - Geographic traffic analysis and airport-centric views
+Visualize traffic density, ground activity, and geographic patterns
 """
 
 import streamlit as st
@@ -17,7 +17,7 @@ import ui_components
 
 # Page configuration
 st.set_page_config(
-    page_title="Airport Activity",
+    page_title="Ground Activity",
     page_icon="🗺️",
     layout="wide"
 )
@@ -38,7 +38,7 @@ with st.sidebar:
 if not selected_db:
     st.warning("No airport databases found yet. Run the installer first.")
     st.stop()
-st.title("🗺️ Airport Activity & Geographic Analysis")
+st.title("🗺️ Ground Activity & Geographic Analysis")
 st.markdown("Visualize air traffic density, airport zones, and geographic patterns")
 utils.render_timezone_caption(session, db_prefix)
 
@@ -110,18 +110,31 @@ def get_schedule_for_flights(_session, date, flight_numbers):
         return pd.DataFrame(columns=['FLIGHT_NUMBER','ORIGIN_AIRPORT','DESTINATION_AIRPORT','SEATS'])
 
 @st.cache_data(ttl=300)
-def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, sample_percent: int = 10, max_cells: int = 4000):
+def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, aggregation_type, sample_percent: int = 10, max_cells: int = 4000):
     """
     Get all traffic data aggregated by H3 hexagons using Snowflake's native H3 functions
     Returns H3 cell strings with BOTH distinct flight counts AND observation counts
     Analyzes all datapoints for the given time interval - no limits
     metric_type: 'Distinct Aircraft Count' or 'Total Time Spent (minutes)' - determines which metric is used for visualization (color/height)
+    aggregation_type: 'sum' or 'daily_average' - determines if values are summed or averaged by day
     """
     # Determine which metric to use for sorting/limiting and visualization
     if metric_type == "Distinct Aircraft Count":
         order_by_expr = "distinct_aircraft_count"
     else:  # Time Spent
         order_by_expr = "observation_count"
+    
+    # Calculate number of days in the date range for daily average
+    from datetime import datetime
+    start_date = datetime.strptime(start_dt.split()[0], '%Y-%m-%d')
+    end_date = datetime.strptime(end_dt.split()[0], '%Y-%m-%d')
+    num_days = (end_date - start_date).days + 1
+    
+    # Determine aggregation divisor
+    if aggregation_type == "daily_average":
+        divisor = max(1, num_days)  # Avoid division by zero
+    else:
+        divisor = 1
     
     bbox = utils.get_airport_bbox(session)
     local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
@@ -150,8 +163,8 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
     h3_with_bounds AS (
         SELECT 
             h3_cell,
-            COUNT(DISTINCT FLIGHT) as distinct_aircraft_count,
-            COUNT(*) as observation_count,
+            COUNT(DISTINCT FLIGHT) / {divisor} as distinct_aircraft_count,
+            COUNT(*) / {divisor} as observation_count,
             ST_COLLECT(point_geom) as collected_points
         FROM points_with_h3
         WHERE h3_cell IS NOT NULL
@@ -180,7 +193,7 @@ with col1:
     metric_type_selection = st.radio(
         "Display metric:",
         options=["flight_count", "total_duration"],
-        format_func=lambda x: "Flight Count" if x == "flight_count" else "Total Duration (min)",
+        format_func=lambda x: "Flight Count" if x == "flight_count" else "Duration (min)",
         index=0,
         key="airport_activity_metric_selector",
         horizontal=True
@@ -220,6 +233,7 @@ with st.spinner("Loading geographic data..."):
         end_datetime,
         h3_resolution,
         metric_type,
+        aggregation_type,
         sample_percent=int(hex_sample_pct),
         max_cells=int(st.session_state.get('hex_max_cells', 4000))
     )
@@ -231,13 +245,18 @@ with st.spinner("Loading geographic data..."):
 has_data = (h3_data is not None and not h3_data.empty)
 
 if has_data:
-    # Determine metric labels for dual encoding
-    if metric_type == "Distinct Aircraft Count":
-        height_label = "Distinct Aircraft Count"
-        color_label = "Total dwell time (minutes)"
+    # Determine metric labels for dual encoding based on aggregation type
+    if aggregation_type == "daily_average":
+        prefix = "Avg daily"
     else:
-        height_label = "Total dwell time (minutes)"
-        color_label = "Distinct Aircraft Count"
+        prefix = "Total"
+    
+    if metric_type == "Distinct Aircraft Count":
+        height_label = f"{prefix} Aircraft Count" if aggregation_type == "daily_average" else "Distinct Aircraft Count"
+        color_label = f"{prefix} dwell time (minutes)"
+    else:
+        height_label = f"{prefix} dwell time (minutes)"
+        color_label = f"{prefix} Aircraft Count" if aggregation_type == "daily_average" else "Distinct Aircraft Count"
     
     # Add legend explanation for dual encoding (always show 3D)
     st.caption(f"**Dual Encoding:** Height = {height_label} | Color (Teal→Yellow→Red): {color_label}. Teal=low, Yellow=medium, Red=high. Hover for exact values.")
@@ -280,11 +299,17 @@ if has_data:
     
     h3_data['color'] = h3_data['COLOR_METRIC'].apply(to_color)
     
-    # Add tooltip showing BOTH metrics
+    # Add tooltip showing BOTH metrics with proper formatting based on aggregation
     def create_tooltip(row):
-        dwell_time = int(row['OBSERVATION_COUNT']) if pd.notna(row['OBSERVATION_COUNT']) else 0
-        aircraft_count = int(row['DISTINCT_AIRCRAFT_COUNT']) if pd.notna(row['DISTINCT_AIRCRAFT_COUNT']) else 0
-        return f"<b>Total dwell time (minutes):</b> {dwell_time}<br/><b>Distinct Aircraft Count:</b> {aircraft_count}"
+        dwell_time = row['OBSERVATION_COUNT'] if pd.notna(row['OBSERVATION_COUNT']) else 0
+        aircraft_count = row['DISTINCT_AIRCRAFT_COUNT'] if pd.notna(row['DISTINCT_AIRCRAFT_COUNT']) else 0
+        
+        if aggregation_type == "daily_average":
+            # Show as decimal for daily averages
+            return f"<b>Avg daily dwell time (minutes):</b> {dwell_time:.1f}<br/><b>Avg daily Aircraft Count:</b> {aircraft_count:.1f}"
+        else:
+            # Show as integer for sum
+            return f"<b>Total dwell time (minutes):</b> {int(dwell_time)}<br/><b>Distinct Aircraft Count:</b> {int(aircraft_count)}"
     
     h3_data['tooltip'] = h3_data.apply(create_tooltip, axis=1)
     

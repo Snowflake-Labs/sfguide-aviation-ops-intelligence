@@ -17,7 +17,7 @@ CHART_TITLES = {
     'traffic_by_hour': '🕐 Traffic by Hour of Day',
     'traffic_by_dow': '📆 Traffic by Day of Week',
     'top_airlines': '🏢 Top Airlines by Activity',
-    'airport_activity': '🗺️ Airport Activity & Geographic Analysis',
+    'ground_activity': '🗺️ Ground Activity & Geographic Analysis',
     'runway_crossings': '🛤️ On-Ground Runway Crossings',
     'gate_analysis': '🛬 Gate Analysis',
 }

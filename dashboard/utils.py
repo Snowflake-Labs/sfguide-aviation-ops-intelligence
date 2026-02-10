@@ -810,7 +810,7 @@ def render_navigation(current_page_label: str = "Flight Tracker") -> None:
 
     page_label_to_path = {
         "Flight Tracker": "pages/1_Flight_Tracker.py",
-        "Airport Activity": "pages/3_Airport_Activity.py",
+        "Ground Activity": "pages/2_Ground_Activity.py",
         "Traffic Analysis": "pages/2_Traffic_Analysis.py",
         "Gate Analysis": "pages/4_Gate_Analysis.py",
         "Runway Crossings": "pages/9_Runway_Crossings.py",
