@@ -71,43 +71,32 @@ with st.sidebar:
     
     st.divider()
     
-    # Visualization Type
-    viz_type = st.radio(
-        "Select Visualization",
-        ["Heatmap", "Hexagon"],
-        index=1,  # Default to Hexagon
-        help="Choose how to visualize traffic density"
-    )
-    
-    st.divider()
-    
     # Map controls
-    if viz_type == "Heatmap":
-        heatmap_intensity = st.slider(
-            "Colour Intensity",
-            min_value=1,
-            max_value=10,
-            value=5,
-            help="Adjust the colour intensity of the heatmap"
-        )
-    elif viz_type == "Hexagon":
-        h3_resolution = st.selectbox(
-            "H3 Resolution",
-            options=[12, 13, 14, 15],
-            index=1,
-            help="Higher resolution for detailed airport activity analysis. 12 = larger hexagons, 15 = smaller hexagons"
-        )
-        hex_elevation = st.checkbox("Show 3D Elevation", value=True)
-        default_hex_pct = st.session_state.get('hex_sample_pct', 10)
-        hex_sample_pct = st.slider(
-            "Sample % of points (pre-aggregation)",
-            min_value=1,
-            max_value=50,
-            value=int(default_hex_pct),
-            help="Randomly sample points before H3 aggregation to keep payload size reasonable"
-        )
-        st.session_state['hex_sample_pct'] = int(hex_sample_pct)
-        st.session_state.setdefault('hex_max_cells', 4000)
+    h3_resolution = st.selectbox(
+        "H3 Resolution",
+        options=[12, 13, 14, 15],
+        index=1,
+        help="Higher resolution for detailed airport activity analysis. 12 = larger hexagons, 15 = smaller hexagons"
+    )
+    hex_elevation = st.checkbox("Show 3D Elevation", value=True)
+    default_hex_pct = st.session_state.get('hex_sample_pct', 10)
+    hex_sample_pct = st.slider(
+        "Sample % of points (pre-aggregation)",
+        min_value=1,
+        max_value=50,
+        value=int(default_hex_pct),
+        help="Randomly sample points before H3 aggregation to keep payload size reasonable"
+    )
+    st.session_state['hex_sample_pct'] = int(hex_sample_pct)
+    st.session_state.setdefault('hex_max_cells', 4000)
+    
+    heatmap_intensity = st.slider(
+        "Colour Intensity",
+        min_value=1,
+        max_value=10,
+        value=5,
+        help="Adjust the colour intensity of the heatmap"
+    )
     
     show_all_flights = st.checkbox("Show All Flights", value=False, help="Render all flight paths in the selected time window")
     
@@ -361,10 +350,29 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
 
 # Density stats removed
 
-# Metric selector above the map
-metric_type_selection = ui_components.render_metric_selector(key_prefix="airport_activity")
-# Map the selection to the format expected by the rest of the code
-metric_type = "Distinct Aircraft Count" if metric_type_selection == "flight_count" else "Total Time Spent (minutes)"
+# Map configuration controls - horizontal layout above map
+col1, col2 = st.columns(2)
+
+with col1:
+    metric_type_selection = st.radio(
+        "Display metric:",
+        options=["flight_count", "total_duration"],
+        format_func=lambda x: "Flight Count" if x == "flight_count" else "Total Duration (min)",
+        index=0,
+        key="airport_activity_metric_selector",
+        horizontal=True
+    )
+    # Map the selection to the format expected by the rest of the code
+    metric_type = "Distinct Aircraft Count" if metric_type_selection == "flight_count" else "Total Time Spent (minutes)"
+
+with col2:
+    viz_type = st.radio(
+        "Select Visualization",
+        ["Heatmap", "Hexagon"],
+        index=1,
+        help="Choose how to visualize traffic density",
+        horizontal=True
+    )
 
 # Load data
 with st.spinner("Loading geographic data..."):

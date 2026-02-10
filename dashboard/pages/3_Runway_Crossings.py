@@ -270,8 +270,15 @@ def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
     except Exception:
         return pd.DataFrame()
 
-# Metric selector above the map
-metric_type = ui_components.render_metric_selector(key_prefix="runway_crossings")
+# Map configuration controls - horizontal layout above map
+metric_type = st.radio(
+    "Display metric:",
+    options=["flight_count", "total_duration"],
+    format_func=lambda x: "Flight Count" if x == "flight_count" else "Total Duration (min)",
+    index=0,
+    key="runway_crossings_metric_selector",
+    horizontal=True
+)
 
 # Fetch data
 with st.spinner("Loading crossing data..."):
