@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import json
 import sys
 import plotly.graph_objects as go
+import altair as alt
 sys.path.append('..')
 import utils
 import colors
@@ -196,8 +197,9 @@ with st.sidebar:
     hide_unknown_airlines = st.checkbox("Hide Unknown (UNK)", value=False)
 
 # Sections
-st.subheader("🏢 Gate Utilization by Airline (Stacked Minutes by Gate)")
-# Use full gate-by-airline breakdown to build stacked absolute minutes per airline
+st.info("🔬 PROTOTYPE: Comparing visualization libraries (Plotly vs Altair)")
+
+# Prepare data for comparison
 breakdown_all = get_gate_by_airline_breakdown(session, start_date, end_date)
 if breakdown_all is not None and not breakdown_all.empty:
     breakdown_all = breakdown_all.copy()
@@ -224,37 +226,177 @@ if breakdown_all is not None and not breakdown_all.empty:
     # Get airline order for Plotly categoryorder (largest first = top of chart)
     airline_order = air_gate_pivot.index.tolist()
     
-    base_colors = [
-        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
-        '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#4daf4a', '#984ea3',
-        '#ff7f00', '#377eb8', '#f781bf', '#a65628', '#999999'
-    ]
-    gate_palette = {g: base_colors[i % len(base_colors)] for i, g in enumerate(gate_names)}
-    fig_air = go.Figure()
-    for g in gate_names:
-        fig_air.add_trace(go.Bar(
-            x=air_gate_pivot[g],
-            y=air_gate_pivot.index,
-            name=str(g),
-            orientation='h',
-            marker_color=gate_palette[g],
-            customdata=[str(g)] * len(air_gate_pivot.index),
-            hovertemplate="Gate %{customdata}: %{x:.0f} min<extra></extra>"
-        ))
-    n_rows = len(air_gate_pivot)
-    fig_air.update_layout(
-        barmode='stack',
-        height=min(max(500, 40 * n_rows), 1200),
-        xaxis_title='Dwell Minutes',
-        yaxis_title='Airline',
-        template='plotly_white',
-        bargap=0.1,
-        bargroupgap=0.02,
-        margin=dict(l=160, r=30, t=40, b=40),
-        showlegend=False,
-        yaxis=dict(categoryorder='array', categoryarray=airline_order)
-    )
-    st.plotly_chart(fig_air, use_container_width=True)
+    # Side-by-side comparison
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Current: Plotly")
+        base_colors = [
+            '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
+            '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#4daf4a', '#984ea3',
+            '#ff7f00', '#377eb8', '#f781bf', '#a65628', '#999999'
+        ]
+        gate_palette = {g: base_colors[i % len(base_colors)] for i, g in enumerate(gate_names)}
+        fig_air = go.Figure()
+        for g in gate_names:
+            fig_air.add_trace(go.Bar(
+                x=air_gate_pivot[g],
+                y=air_gate_pivot.index,
+                name=str(g),
+                orientation='h',
+                marker_color=gate_palette[g],
+                customdata=[str(g)] * len(air_gate_pivot.index),
+                hovertemplate="Gate %{customdata}: %{x:.0f} min<extra></extra>"
+            ))
+        n_rows = len(air_gate_pivot)
+        fig_air.update_layout(
+            barmode='stack',
+            height=min(max(500, 40 * n_rows), 1200),
+            xaxis_title='Dwell Minutes',
+            yaxis_title='Airline',
+            template='plotly_white',
+            bargap=0.1,
+            bargroupgap=0.02,
+            margin=dict(l=160, r=30, t=40, b=40),
+            showlegend=False,
+            yaxis=dict(categoryorder='array', categoryarray=airline_order)
+        )
+        st.plotly_chart(fig_air, use_container_width=True)
+    
+    with col2:
+        st.subheader("Proposed: Altair")
+        
+        # Transform pivot to long format for Altair
+        df_long = air_gate_pivot.reset_index().melt(
+            id_vars='AIRLINE_NAME',
+            var_name='GATE_NAME',
+            value_name='DWELL_MINUTES'
+        )
+        
+        # Altair chart with automatic descending sort
+        chart = alt.Chart(df_long).mark_bar().encode(
+            x=alt.X('sum(DWELL_MINUTES):Q', title='Dwell Minutes'),
+            y=alt.Y('AIRLINE_NAME:N', 
+                    sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
+                    title='Airline'),
+            color=alt.Color('GATE_NAME:N',
+                           sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
+                           legend=None),
+            tooltip=[
+                alt.Tooltip('GATE_NAME:N', title='Gate'),
+                alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=',')
+            ]
+        ).properties(
+            height=min(max(500, 40 * len(air_gate_pivot)), 1200)
+        ).configure_mark(
+            opacity=0.9
+        )
+        
+        st.altair_chart(chart, use_container_width=True)
+    
+    # Code comparison
+    with st.expander("📝 Code Comparison: See the Difference"):
+        st.markdown("""
+        ### Plotly (Current) - ~50 lines
+        ```python
+        # Sort airlines
+        air_gate_pivot['_total'] = air_gate_pivot.sum(axis=1)
+        air_gate_pivot = air_gate_pivot.sort_values('_total', ascending=False)
+        air_gate_pivot = air_gate_pivot.drop(columns=['_total'])
+        
+        # Sort gates
+        gate_totals = air_gate_pivot.sum(axis=0).sort_values(ascending=False)
+        gate_names = gate_totals.index.tolist()
+        air_gate_pivot = air_gate_pivot[gate_names]
+        
+        # Get airline order for categoryorder
+        airline_order = air_gate_pivot.index.tolist()
+        
+        # Create color palette
+        gate_palette = {g: base_colors[i % len(base_colors)] 
+                       for i, g in enumerate(gate_names)}
+        
+        # Build figure trace by trace
+        fig_air = go.Figure()
+        for g in gate_names:
+            fig_air.add_trace(go.Bar(
+                x=air_gate_pivot[g],
+                y=air_gate_pivot.index,
+                name=str(g),
+                orientation='h',
+                marker_color=gate_palette[g],
+                customdata=[str(g)] * len(air_gate_pivot.index),
+                hovertemplate="Gate %{customdata}: %{x:.0f} min<extra></extra>"
+            ))
+        
+        # Configure layout with explicit category order
+        fig_air.update_layout(
+            barmode='stack',
+            height=min(max(500, 40 * n_rows), 1200),
+            yaxis=dict(categoryorder='array', categoryarray=airline_order),
+            # ... more config
+        )
+        st.plotly_chart(fig_air)
+        ```
+        
+        ### Altair (Proposed) - ~20 lines
+        ```python
+        # Transform to long format
+        df_long = air_gate_pivot.reset_index().melt(
+            id_vars='AIRLINE_NAME', 
+            var_name='GATE_NAME', 
+            value_name='DWELL_MINUTES'
+        )
+        
+        # Declarative chart - sorting is automatic!
+        chart = alt.Chart(df_long).mark_bar().encode(
+            x=alt.X('sum(DWELL_MINUTES):Q', title='Dwell Minutes'),
+            y=alt.Y('AIRLINE_NAME:N', 
+                    sort=alt.EncodingSortField(
+                        field='DWELL_MINUTES', 
+                        op='sum', 
+                        order='descending'
+                    )),
+            color=alt.Color('GATE_NAME:N',
+                           sort=alt.EncodingSortField(
+                               field='DWELL_MINUTES', 
+                               op='sum', 
+                               order='descending'
+                           )),
+            tooltip=['GATE_NAME:N', 'sum(DWELL_MINUTES):Q']
+        ).properties(height=min(max(500, 40 * len(air_gate_pivot)), 1200))
+        
+        st.altair_chart(chart, use_container_width=True)
+        ```
+        
+        ### Key Differences
+        | Aspect | Plotly | Altair |
+        |--------|--------|--------|
+        | **Lines of code** | ~50 | ~20 |
+        | **Sorting** | Manual (`categoryorder='array'`) | Declarative (`sort=EncodingSortField(...)`) |
+        | **Data format** | Pivot (wide) | Long format |
+        | **Color assignment** | Manual palette loop | Automatic |
+        | **Tooltips** | Template strings | Column references |
+        | **Stacking** | Explicit traces + `barmode='stack'` | Automatic from encoding |
+        
+        ### Comparison Results
+        
+        **Altair Advantages:**
+        - ✅ 60% less code (20 lines vs 50)
+        - ✅ Automatic descending sort (no manual category arrays)
+        - ✅ Largest segments automatically appear first
+        - ✅ Cleaner, more readable code
+        - ✅ Same interactivity (hover, tooltips)
+        - ✅ Declarative: say *what* you want, not *how* to build it
+        
+        **Plotly Advantages:**
+        - ✅ More customization options for complex layouts
+        - ✅ Better for 3D visualizations and maps (keep for PyDeck pages)
+        - ✅ Familiar to current team
+        
+        **Recommendation:** Use Altair for bar charts, keep Plotly for maps/3D visualizations.
+        """)
+
 else:
     st.info("No airline-gate breakdown available in selected range.")
 
