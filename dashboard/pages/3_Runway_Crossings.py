@@ -833,7 +833,7 @@ if not analytics_df.empty:
             st.markdown("**By Crossing Count**")
             airline_count_sorted = airline_agg.sort_values('crossing_count', ascending=False)
             
-            chart_a1 = alt.Chart(airline_count_sorted).mark_bar(color=COLORS['blue'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
+            chart_a1 = alt.Chart(airline_count_sorted).mark_bar(color=COLORS.BLUE, size=BAR_CONFIG['horizontal_compact']['size']).encode(
                 x=alt.X('crossing_count:Q', title='Crossings'),
                 y=alt.Y('airline_name:N', sort='-x', title='Airline'),
                 tooltip=[
@@ -848,7 +848,7 @@ if not analytics_df.empty:
             st.markdown("**By Total Time (min)**")
             airline_dur_sorted = airline_agg.sort_values('total_duration_min', ascending=False)
             
-            chart_a2 = alt.Chart(airline_dur_sorted).mark_bar(color=COLORS['orange'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
+            chart_a2 = alt.Chart(airline_dur_sorted).mark_bar(color=COLORS.ORANGE, size=BAR_CONFIG['horizontal_compact']['size']).encode(
                 x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
                 y=alt.Y('airline_name:N', sort='-x', title='Airline'),
                 tooltip=[
