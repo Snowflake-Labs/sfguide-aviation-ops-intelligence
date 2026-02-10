@@ -207,8 +207,16 @@ if breakdown_all is not None and not breakdown_all.empty:
     if airline_selected != "All Airlines":
         breakdown_all = breakdown_all[breakdown_all['AIRLINE_NAME'] == airline_selected]
     air_gate_pivot = breakdown_all.pivot_table(index='AIRLINE_NAME', columns='GATE_NAME', values='DWELL_MINUTES', aggfunc='sum', fill_value=0)
-    air_gate_pivot = air_gate_pivot.round(0).sort_index()
-    gate_names = list(air_gate_pivot.columns)
+    air_gate_pivot = air_gate_pivot.round(0)
+    
+    # Sort airlines by total utilization (descending)
+    air_gate_pivot['_total_utilization'] = air_gate_pivot.sum(axis=1)
+    air_gate_pivot = air_gate_pivot.sort_values('_total_utilization', ascending=False)
+    air_gate_pivot = air_gate_pivot.drop(columns=['_total_utilization'])
+    
+    # Sort gates by total utilization across all airlines (descending)
+    gate_totals = air_gate_pivot.sum(axis=0).sort_values(ascending=False)
+    gate_names = gate_totals.index.tolist()
     base_colors = [
         '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
         '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#4daf4a', '#984ea3',
@@ -395,6 +403,17 @@ if hm_df is not None and not hm_df.empty:
     pivot = hm_df.pivot_table(index='DAY_NAME', columns='GATE_NAME', values='DWELL_MINUTES', aggfunc='sum', fill_value=0)
     # Reorder rows by week sequence
     pivot = pivot.reindex(day_names)
+    # Sort gates by number (natural sort for mixed alphanumeric like A1, A2, A10, B1)
+    try:
+        import re
+        def natural_sort_key(s):
+            """Extract numbers for natural sorting (A1, A2, A10 instead of A1, A10, A2)"""
+            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
+        sorted_gates = sorted(pivot.columns, key=natural_sort_key)
+        pivot = pivot[sorted_gates]
+    except Exception:
+        # Fallback to simple string sort if natural sort fails
+        pivot = pivot[sorted(pivot.columns)]
     fig_hm = go.Figure(data=go.Heatmap(
         z=pivot.values,
         x=pivot.columns.tolist(),
