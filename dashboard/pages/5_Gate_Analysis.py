@@ -209,7 +209,7 @@ if breakdown_all is not None and not breakdown_all.empty:
     air_gate_pivot = breakdown_all.pivot_table(index='AIRLINE_NAME', columns='GATE_NAME', values='DWELL_MINUTES', aggfunc='sum', fill_value=0)
     air_gate_pivot = air_gate_pivot.round(0)
     
-    # Sort airlines by total utilization (descending)
+    # Sort airlines by total utilization (descending) - largest at top
     air_gate_pivot['_total_utilization'] = air_gate_pivot.sum(axis=1)
     air_gate_pivot = air_gate_pivot.sort_values('_total_utilization', ascending=False)
     air_gate_pivot = air_gate_pivot.drop(columns=['_total_utilization'])
@@ -221,8 +221,8 @@ if breakdown_all is not None and not breakdown_all.empty:
     # Reorder columns to match sorted gate order
     air_gate_pivot = air_gate_pivot[gate_names]
     
-    # Reverse row order for horizontal bars (Plotly displays first row at bottom)
-    air_gate_pivot = air_gate_pivot.iloc[::-1]
+    # Get airline order for Plotly categoryorder (largest first = top of chart)
+    airline_order = air_gate_pivot.index.tolist()
     
     base_colors = [
         '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
@@ -252,7 +252,7 @@ if breakdown_all is not None and not breakdown_all.empty:
         bargroupgap=0.02,
         margin=dict(l=160, r=30, t=40, b=40),
         showlegend=False,
-        yaxis=dict(autorange=False)
+        yaxis=dict(categoryorder='array', categoryarray=airline_order)
     )
     st.plotly_chart(fig_air, use_container_width=True)
 else:
@@ -290,8 +290,8 @@ if not breakdown_df.empty:
     airlines_codes = airline_totals.index.tolist()
     dwell_pivot = dwell_pivot[airlines_codes]
     
-    # Reverse row order for horizontal bars (Plotly displays first row at bottom)
-    dwell_pivot = dwell_pivot.iloc[::-1]
+    # Get gate order for Plotly categoryorder (largest first = top of chart)
+    gate_order = dwell_pivot.index.tolist()
     
     fig_dwell = go.Figure()
     # Use consistent color set per airline code
@@ -325,7 +325,7 @@ if not breakdown_df.empty:
         bargap=0.1,
         bargroupgap=0.02,
         margin=dict(l=160, r=20, t=40, b=40),
-        yaxis=dict(tickfont=dict(size=11))
+        yaxis=dict(tickfont=dict(size=11), categoryorder='array', categoryarray=gate_order)
     )
     st.plotly_chart(fig_dwell, use_container_width=True)
 else:
@@ -347,8 +347,8 @@ if not breakdown_df.empty:
     airline_codes = airline_totals_f.index.tolist()
     flights_pivot = flights_pivot[airline_codes]
     
-    # Reverse row order for horizontal bars (Plotly displays first row at bottom)
-    flights_pivot = flights_pivot.iloc[::-1]
+    # Get gate order for Plotly categoryorder (largest first = top of chart)
+    gate_order_f = flights_pivot.index.tolist()
     
     fig_flights = go.Figure()
     # reuse palette
@@ -374,7 +374,7 @@ if not breakdown_df.empty:
         bargap=0.1,
         bargroupgap=0.02,
         margin=dict(l=160, r=20, t=40, b=40),
-        yaxis=dict(tickfont=dict(size=11))
+        yaxis=dict(tickfont=dict(size=11), categoryorder='array', categoryarray=gate_order_f)
     )
     st.plotly_chart(fig_flights, use_container_width=True)
 else:
@@ -398,8 +398,8 @@ if top_df is not None and not top_df.empty:
     )
     display_df['LABEL'] = display_df.apply(lambda r: f"{str(r.get('FLIGHT_NUMBER',''))} — {r.get('AIRLINE_NAME','')} — {r.get('DAY','')} ({r.get('GATE_NAME','N/A')})", axis=1)
     
-    # Reverse for horizontal bars (Plotly displays first row at bottom)
-    display_df = display_df.iloc[::-1]
+    # Get label order for Plotly categoryorder (largest first = top of chart)
+    label_order = display_df['LABEL'].tolist()
     
     fig_top = go.Figure(go.Bar(
         x=display_df['DWELL_MINUTES'].round(0),
@@ -413,7 +413,8 @@ if top_df is not None and not top_df.empty:
         xaxis_title='Dwell Minutes',
         yaxis_title='Flight (Gate)',
         template='plotly_white',
-        margin=dict(l=180, r=20, t=40, b=40)
+        margin=dict(l=180, r=20, t=40, b=40),
+        yaxis=dict(categoryorder='array', categoryarray=label_order)
     )
     st.plotly_chart(fig_top, use_container_width=True)
 else:
