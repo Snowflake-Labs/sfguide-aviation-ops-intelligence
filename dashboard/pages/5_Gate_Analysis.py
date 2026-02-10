@@ -273,6 +273,13 @@ if breakdown_all is not None and not breakdown_all.empty:
             value_name='DWELL_MINUTES'
         )
         
+        # CRITICAL: Sort within each airline so largest segments appear first
+        # This controls the stacking order in Altair
+        df_long = df_long.sort_values(
+            ['AIRLINE_NAME', 'DWELL_MINUTES'],
+            ascending=[True, False]
+        )
+        
         # Altair chart with automatic descending sort
         chart = alt.Chart(df_long).mark_bar().encode(
             x=alt.X('sum(DWELL_MINUTES):Q', title='Dwell Minutes'),
@@ -280,8 +287,8 @@ if breakdown_all is not None and not breakdown_all.empty:
                     sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
                     title='Airline'),
             color=alt.Color('GATE_NAME:N',
-                           sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
                            legend=None),
+            order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
             tooltip=[
                 alt.Tooltip('GATE_NAME:N', title='Gate'),
                 alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=',')
@@ -339,13 +346,19 @@ if breakdown_all is not None and not breakdown_all.empty:
         st.plotly_chart(fig_air)
         ```
         
-        ### Altair (Proposed) - ~20 lines
+        ### Altair (Proposed) - ~25 lines
         ```python
         # Transform to long format
         df_long = air_gate_pivot.reset_index().melt(
             id_vars='AIRLINE_NAME', 
             var_name='GATE_NAME', 
             value_name='DWELL_MINUTES'
+        )
+        
+        # Sort within each airline for proper segment ordering
+        df_long = df_long.sort_values(
+            ['AIRLINE_NAME', 'DWELL_MINUTES'],
+            ascending=[True, False]
         )
         
         # Declarative chart - sorting is automatic!
@@ -357,12 +370,8 @@ if breakdown_all is not None and not breakdown_all.empty:
                         op='sum', 
                         order='descending'
                     )),
-            color=alt.Color('GATE_NAME:N',
-                           sort=alt.EncodingSortField(
-                               field='DWELL_MINUTES', 
-                               op='sum', 
-                               order='descending'
-                           )),
+            color=alt.Color('GATE_NAME:N', legend=None),
+            order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
             tooltip=['GATE_NAME:N', 'sum(DWELL_MINUTES):Q']
         ).properties(height=min(max(500, 40 * len(air_gate_pivot)), 1200))
         
@@ -372,19 +381,19 @@ if breakdown_all is not None and not breakdown_all.empty:
         ### Key Differences
         | Aspect | Plotly | Altair |
         |--------|--------|--------|
-        | **Lines of code** | ~50 | ~20 |
-        | **Sorting** | Manual (`categoryorder='array'`) | Declarative (`sort=EncodingSortField(...)`) |
+        | **Lines of code** | ~50 | ~25 |
+        | **Sorting** | Manual (`categoryorder='array'`) | Declarative (`sort=...`) + data pre-sort |
         | **Data format** | Pivot (wide) | Long format |
         | **Color assignment** | Manual palette loop | Automatic |
         | **Tooltips** | Template strings | Column references |
-        | **Stacking** | Explicit traces + `barmode='stack'` | Automatic from encoding |
+        | **Stacking** | Explicit traces + `barmode='stack'` | Automatic from encoding + `order` channel |
         
         ### Comparison Results
         
         **Altair Advantages:**
-        - ✅ 60% less code (20 lines vs 50)
+        - ✅ 50% less code (25 lines vs 50)
         - ✅ Automatic descending sort (no manual category arrays)
-        - ✅ Largest segments automatically appear first
+        - ✅ Largest segments automatically appear first (with `order` channel)
         - ✅ Cleaner, more readable code
         - ✅ Same interactivity (hover, tooltips)
         - ✅ Declarative: say *what* you want, not *how* to build it
