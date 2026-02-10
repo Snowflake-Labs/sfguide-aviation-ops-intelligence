@@ -230,7 +230,7 @@ if breakdown_all is not None and not breakdown_all.empty:
                 sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
                 title='Airline',
                 axis=alt.Axis(labelLimit=200),
-                scale=alt.Scale(paddingInner=0.05, paddingOuter=0.025)),
+                scale=alt.Scale(paddingInner=0, paddingOuter=0)),
         color=alt.Color('GATE_NAME:N', legend=None),
         order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
         tooltip=[
@@ -292,7 +292,7 @@ if not breakdown_df.empty:
                 sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
                 title='Gate',
                 axis=alt.Axis(labelFontSize=11),
-                scale=alt.Scale(paddingInner=0.05, paddingOuter=0.025)),
+                scale=alt.Scale(paddingInner=0, paddingOuter=0)),
         color=alt.Color('AIRLINE_CODE:N', legend=None),
         order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
         tooltip=[

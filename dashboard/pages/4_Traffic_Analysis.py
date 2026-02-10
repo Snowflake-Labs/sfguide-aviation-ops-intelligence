@@ -394,7 +394,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
         chart_flights = alt.Chart(airline_sorted).mark_bar(color='#FF6B6B', size=12).encode(
             x=alt.X('FLIGHT_COUNT:Q', title='Number of Flights'),
             y=alt.Y('AIRLINE_NAME:N', sort='-x', title='',
-                    scale=alt.Scale(paddingInner=0.05, paddingOuter=0.025)),
+                    scale=alt.Scale(paddingInner=0, paddingOuter=0)),
             tooltip=[
                 alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                 alt.Tooltip('FLIGHT_COUNT:Q', title='Flights', format=',.0f')
@@ -441,7 +441,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             chart_d1 = alt.Chart(d1).mark_bar(color='#EF5350', size=12).encode(
                 x=alt.X('TOTAL_DELAY_MINUTES:Q', title='Total Delay Minutes'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
-                        scale=alt.Scale(paddingInner=0.05, paddingOuter=0.025)),
+                        scale=alt.Scale(paddingInner=0, paddingOuter=0)),
                 tooltip=[
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('TOTAL_DELAY_MINUTES:Q', title='Delay Minutes', format=',.0f')
