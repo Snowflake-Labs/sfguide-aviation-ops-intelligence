@@ -8,6 +8,7 @@ import colors
 import plotly.graph_objects as go
 import altair as alt
 from chart_config import BAR_CONFIG, COLORS, TOOLTIP_FORMAT
+import ui_components
 
 st.set_page_config(page_title="Runway Crossings", page_icon="🛤️", layout="wide")
 utils.apply_custom_css()
@@ -59,21 +60,12 @@ with st.sidebar:
     hide_unknown_airlines = st.checkbox("Hide Unknown (UNK)", value=False)
     st.divider()
     st.subheader("Date Range")
-    try:
-        local_today = datetime.fromisoformat(utils.get_airport_local_today(session, db_prefix)).date()
-    except Exception:
-        local_today = datetime.now().date()
-    start_d, end_d = (
-        (max_date - timedelta(days=7), max_date) if max_date else (local_today - timedelta(days=7), local_today)
+    start_d, end_d = ui_components.render_date_range_picker(
+        min_date,
+        max_date,
+        key_prefix="runway_crossings",
+        default_days_back=7
     )
-    date_range = st.date_input(
-        "Date Range",
-        value=(start_d, end_d)
-    )
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        start_d, end_d = date_range
-    else:
-        start_d = end_d = date_range
     
     st.divider()
     st.subheader("Map Layers")

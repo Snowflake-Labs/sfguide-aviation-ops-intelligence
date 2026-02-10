@@ -13,6 +13,7 @@ import json
 sys.path.append('..')
 import utils
 import colors
+import ui_components
 
 # Page configuration
 st.set_page_config(
@@ -45,28 +46,18 @@ utils.render_timezone_caption(session, db_prefix)
 sample_size = None
 with st.sidebar:
     
-    # Get date range
+    # Get date range using reusable component
     min_date, max_date = utils.get_date_range(session)
-    selected_start_date, selected_end_date, _period = utils.render_time_period_filter(
+    selected_start_date, selected_end_date = ui_components.render_date_range_picker(
         min_date,
         max_date,
         key_prefix="airport_activity",
-        default_period="Last 7 Days",
+        default_days_back=7
     )
     
-    col1, col2 = st.columns(2)
-    with col1:
-        time_start = st.time_input(
-            "Start Time",
-            value=datetime.strptime("00:00", "%H:%M").time(),
-            help="Start of time window"
-        )
-    with col2:
-        time_end = st.time_input(
-            "End Time",
-            value=datetime.strptime("23:59", "%H:%M").time(),
-            help="End of time window"
-        )
+    # Set time to full day (00:00 to 23:59)
+    time_start = datetime.strptime("00:00", "%H:%M").time()
+    time_end = datetime.strptime("23:59", "%H:%M").time()
     
     st.divider()
     

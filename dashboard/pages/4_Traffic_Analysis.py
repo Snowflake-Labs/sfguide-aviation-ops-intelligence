@@ -16,6 +16,7 @@ sys.path.append('..')
 import utils
 import colors
 from chart_config import BAR_CONFIG, COLORS, TOOLTIP_FORMAT
+import ui_components
 
 # Page configuration
 st.set_page_config(
@@ -49,22 +50,12 @@ with st.sidebar:
     
     # Get date range
     min_date, max_date = utils.get_date_range(session)
-    st.subheader("Date Range")
-    try:
-        local_today = datetime.fromisoformat(utils.get_airport_local_today(session, db_prefix)).date()
-    except Exception:
-        local_today = datetime.now().date()
-    start_date, end_date = (
-        (max_date - timedelta(days=7), max_date) if max_date else (local_today - timedelta(days=7), local_today)
+    start_date, end_date = ui_components.render_date_range_picker(
+        min_date,
+        max_date,
+        key_prefix="traffic_analysis",
+        default_days_back=7
     )
-    date_range = st.date_input(
-        "Date Range",
-        value=(start_date, end_date)
-    )
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        start_date, end_date = date_range
-    else:
-        start_date = end_date = date_range
     
     st.divider()
     
