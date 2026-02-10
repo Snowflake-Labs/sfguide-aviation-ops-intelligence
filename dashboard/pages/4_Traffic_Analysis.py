@@ -37,7 +37,7 @@ db_prefix = f"{db}.{schema}"
 
 # Header
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 if not selected_db:
     st.warning("No airport databases found yet. Run the installer first.")
     st.stop()
@@ -78,7 +78,8 @@ with st.sidebar:
     # Always show airline breakdown and heatmap (toggles removed)
     show_airlines = True
     show_heatmap = True
-    hide_unknown_airlines = st.checkbox("Hide Unknown (UNK)", value=False)
+    # Hide Unknown functionality removed - always show all airlines
+    hide_unknown_airlines = False
 
 # Query functions
 @st.cache_data(ttl=300)

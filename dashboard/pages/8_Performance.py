@@ -33,7 +33,7 @@ def get_ops_date_range(_session, _db_prefix: str):
     return None, None
 
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 
 if not selected_db:
     st.warning("No airport databases found yet. Run the installer first.")

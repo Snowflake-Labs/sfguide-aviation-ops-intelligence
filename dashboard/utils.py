@@ -1627,15 +1627,8 @@ def render_infrastructure_selector(session, db_prefix: str, sidebar: bool = True
         
         selected_layers = selected_aeroway + selected_other
     
-    # Show Tags checkbox - displays OSM source tags in tooltips when hovering
-    show_tags = True
-    if selected_layers:
-        show_tags = container.checkbox(
-            "Show Tags", 
-            value=True, 
-            key=f"{key_prefix}_show_tags",
-            help="Display OSM source tags as key-value pairs when hovering over objects"
-        )
+    # Always set show_tags to False (removed checkbox)
+    show_tags = False
     
     return {'layers': selected_layers, 'show_tags': show_tags}
 

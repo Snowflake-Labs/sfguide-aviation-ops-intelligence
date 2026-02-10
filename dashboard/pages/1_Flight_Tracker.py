@@ -29,7 +29,7 @@ session = get_active_session()
 
 # Sidebar: airport selector should run BEFORE any queries that depend on db/schema
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 
 # Resolve selected DB after selector renders
 if not selected_db:
@@ -208,7 +208,7 @@ with st.sidebar:
     st.divider()
     
     # Infrastructure Layers - use new dynamic selector
-    infra_selection = utils.render_infrastructure_selector(
+    infra_selection = ui_components.render_map_layers_selector(
         session, db_prefix, 
         sidebar=True, 
         default_preset="all",

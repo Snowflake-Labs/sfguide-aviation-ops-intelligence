@@ -34,7 +34,7 @@ db_prefix = f"{db}.{schema}"
 
 # Header
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 if not selected_db:
     st.warning("No airport databases found yet. Run the installer first.")
     st.stop()
@@ -107,7 +107,7 @@ with st.sidebar:
         st.session_state.setdefault('hex_max_cells', 4000)
     
     # Infrastructure Layers - use new dynamic selector
-    infra_selection = utils.render_infrastructure_selector(
+    infra_selection = ui_components.render_map_layers_selector(
         session, db_prefix, 
         sidebar=True, 
         default_preset="all",

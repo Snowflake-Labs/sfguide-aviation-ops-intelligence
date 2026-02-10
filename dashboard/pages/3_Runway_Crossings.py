@@ -36,7 +36,7 @@ min_date, max_date = utils.get_table_date_bounds(
 )
 
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 
 with st.sidebar:
     if not selected_db:
@@ -57,7 +57,8 @@ with st.sidebar:
         format_func=lambda x: "Flight Count" if x == "flight_count" else "Total Duration (min)",
         index=0
     )
-    hide_unknown_airlines = st.checkbox("Hide Unknown (UNK)", value=False)
+    # Hide Unknown functionality removed - always show all airlines
+    hide_unknown_airlines = False
     st.divider()
     st.subheader("Date Range")
     start_d, end_d = ui_components.render_date_range_picker(
@@ -69,30 +70,13 @@ with st.sidebar:
     
     st.divider()
     st.subheader("Map Layers")
-    show_flights = st.checkbox("Show Flights", value=False, help="Display trajectories of flights that performed crossings")
-    if show_flights:
-        max_flights = st.slider(
-            "Max flights to display",
-            min_value=10,
-            max_value=500,
-            value=100,
-            step=10,
-            help="Limit number of flight paths to prevent overload"
-        )
-        sample_points = st.slider(
-            "Points per flight (%)",
-            min_value=10,
-            max_value=100,
-            value=30,
-            step=10,
-            help="Percentage of points to show per flight (reduces detail but improves performance)"
-        )
-    else:
-        max_flights = 100
-        sample_points = 30
+    # Show Flights functionality removed - flights are always hidden
+    show_flights = False
+    max_flights = 100
+    sample_points = 30
     
     # Infrastructure Layers - use new dynamic selector
-    infra_selection = utils.render_infrastructure_selector(
+    infra_selection = ui_components.render_map_layers_selector(
         session, db_prefix, 
         sidebar=True, 
         default_preset="all",

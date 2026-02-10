@@ -19,6 +19,7 @@ import re
 sys.path.append("..")
 import utils
 import colors
+import ui_components
 
 
 st.set_page_config(page_title="Live View", page_icon="🛫", layout="wide")
@@ -29,7 +30,7 @@ session = get_active_session()
 schema = 'PUBLIC'
 
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 
 if not selected_db:
     st.warning("No airport databases found yet. Run the installer first.")
@@ -53,7 +54,7 @@ with st.sidebar:
         trails_hours = 2  # Default value when not shown
     st.divider()
 
-    infra_selection = utils.render_infrastructure_selector(
+    infra_selection = ui_components.render_map_layers_selector(
         session,
         db_prefix,
         sidebar=True,
