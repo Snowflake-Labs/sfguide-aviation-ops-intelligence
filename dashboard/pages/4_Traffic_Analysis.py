@@ -391,7 +391,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
         # Flights by airline
         airline_sorted = airline_data.sort_values('FLIGHT_COUNT', ascending=False)
         
-        chart_flights = alt.Chart(airline_sorted).mark_bar(color='#FF6B6B').encode(
+        chart_flights = alt.Chart(airline_sorted).mark_bar(color='#FF6B6B', size=12).encode(
             x=alt.X('FLIGHT_COUNT:Q', title='Number of Flights'),
             y=alt.Y('AIRLINE_NAME:N', sort='-x', title=''),
             tooltip=[
@@ -437,7 +437,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             d1 = delay_stats[['AIRLINE_NAME','TOTAL_DELAY_MINUTES']].copy()
             d1 = d1.sort_values('TOTAL_DELAY_MINUTES', ascending=False).head(15)
             
-            chart_d1 = alt.Chart(d1).mark_bar(color='#EF5350').encode(
+            chart_d1 = alt.Chart(d1).mark_bar(color='#EF5350', size=12).encode(
                 x=alt.X('TOTAL_DELAY_MINUTES:Q', title='Total Delay Minutes'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
                 tooltip=[
@@ -451,7 +451,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             st.subheader("🛬 Early Flights by Airline")
             e2 = delay_stats[['AIRLINE_NAME','EARLY_FLIGHTS']].copy().sort_values('EARLY_FLIGHTS', ascending=False).head(15)
             
-            chart_e2 = alt.Chart(e2).mark_bar(color='#43A047').encode(
+            chart_e2 = alt.Chart(e2).mark_bar(color='#43A047', size=12).encode(
                 x=alt.X('EARLY_FLIGHTS:Q', title='Early Flights'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
                 tooltip=[
@@ -468,7 +468,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             st.subheader("✈️ Delayed Flights by Airline")
             d2 = delay_stats[['AIRLINE_NAME','DELAYED_FLIGHTS']].copy().sort_values('DELAYED_FLIGHTS', ascending=False).head(15)
             
-            chart_d2 = alt.Chart(d2).mark_bar(color='#F57C00').encode(
+            chart_d2 = alt.Chart(d2).mark_bar(color='#F57C00', size=12).encode(
                 x=alt.X('DELAYED_FLIGHTS:Q', title='Delayed Flights'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
                 tooltip=[
@@ -482,7 +482,7 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             st.subheader("⏰ Early Arrivals by Airline (Minutes)")
             e1 = delay_stats[['AIRLINE_NAME','TOTAL_EARLY_MINUTES']].copy().sort_values('TOTAL_EARLY_MINUTES', ascending=False).head(15)
             
-            chart_e1 = alt.Chart(e1).mark_bar(color='#66BB6A').encode(
+            chart_e1 = alt.Chart(e1).mark_bar(color='#66BB6A', size=12).encode(
                 x=alt.X('TOTAL_EARLY_MINUTES:Q', title='Early Minutes'),
                 y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
                 tooltip=[

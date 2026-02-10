@@ -224,7 +224,7 @@ if breakdown_all is not None and not breakdown_all.empty:
         ascending=[True, False]
     )
     
-    chart = alt.Chart(df_long).mark_bar().encode(
+    chart = alt.Chart(df_long).mark_bar(size=15).encode(
         x=alt.X('sum(DWELL_MINUTES):Q', title='Dwell Minutes'),
         y=alt.Y('AIRLINE_NAME:N', 
                 sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
@@ -264,7 +264,7 @@ if breakdown_df is None:
 if hide_unknown_airlines and breakdown_df is not None and not breakdown_df.empty:
     breakdown_df = breakdown_df[breakdown_df['AIRLINE_CODE'].astype(str) != 'UNK']
 
-st.subheader("🧭 Gate Utilization by Gate (Dwell Minutes)")
+st.subheader("🧭 Gate Utilization by Dwell Minutes")
 if not breakdown_df.empty:
     dwell_pivot = breakdown_df.pivot_table(index='GATE_NAME', columns='AIRLINE_CODE', values='DWELL_MINUTES', aggfunc='sum', fill_value=0)
     
@@ -284,7 +284,7 @@ if not breakdown_df.empty:
     # Add airline names for tooltip
     df_dwell_long['AIRLINE_NAME'] = df_dwell_long['AIRLINE_CODE'].apply(lambda c: code_to_name.get(str(c), str(c)))
     
-    chart_dwell = alt.Chart(df_dwell_long).mark_bar().encode(
+    chart_dwell = alt.Chart(df_dwell_long).mark_bar(size=10).encode(
         x=alt.X('sum(DWELL_MINUTES):Q', title='Dwell Minutes'),
         y=alt.Y('GATE_NAME:N',
                 sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
@@ -308,7 +308,7 @@ else:
 
 st.divider()
 
-st.subheader("🧮 Gate Utilization by Gate (Number of Flights)")
+st.subheader("🧮 Gate Utilization by Number of Flights")
 if not breakdown_df.empty:
     flights_pivot = breakdown_df.pivot_table(index='GATE_NAME', columns='AIRLINE_CODE', values='FLIGHTS', aggfunc='sum', fill_value=0)
     
@@ -328,7 +328,7 @@ if not breakdown_df.empty:
     # Add airline names for tooltip
     df_flights_long['AIRLINE_NAME'] = df_flights_long['AIRLINE_CODE'].apply(lambda c: code_to_name.get(str(c), str(c)))
     
-    chart_flights = alt.Chart(df_flights_long).mark_bar().encode(
+    chart_flights = alt.Chart(df_flights_long).mark_bar(size=10).encode(
         x=alt.X('sum(FLIGHTS):Q', title='Flights'),
         y=alt.Y('GATE_NAME:N',
                 sort=alt.EncodingSortField(field='FLIGHTS', op='sum', order='descending'),
@@ -368,7 +368,7 @@ if top_df is not None and not top_df.empty:
     )
     display_df['LABEL'] = display_df.apply(lambda r: f"{str(r.get('FLIGHT_NUMBER',''))} — {r.get('AIRLINE_NAME','')} — {r.get('DAY','')} ({r.get('GATE_NAME','N/A')})", axis=1)
     
-    chart_top = alt.Chart(display_df).mark_bar(color='#4FC3F7').encode(
+    chart_top = alt.Chart(display_df).mark_bar(color='#4FC3F7', size=10).encode(
         x=alt.X('DWELL_MINUTES:Q', title='Dwell Minutes'),
         y=alt.Y('LABEL:N', sort='-x', title='Flight (Gate)'),
         tooltip=[

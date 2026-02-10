@@ -794,7 +794,7 @@ if not analytics_df.empty:
                             ascending=[True, False]
                         )
                         
-                        chart_gate = alt.Chart(df_gate_long).mark_bar().encode(
+                        chart_gate = alt.Chart(df_gate_long).mark_bar(size=10).encode(
                             x=alt.X('sum(count):Q', title='Number of Crossings'),
                             y=alt.Y('GATE_NAME:N',
                                     sort=alt.EncodingSortField(field='count', op='sum', order='descending'),
@@ -851,7 +851,7 @@ if not analytics_df.empty:
             st.markdown("**By Crossing Count**")
             airline_count_sorted = airline_agg.sort_values('crossing_count', ascending=False)
             
-            chart_a1 = alt.Chart(airline_count_sorted).mark_bar(color='#4FC3F7').encode(
+            chart_a1 = alt.Chart(airline_count_sorted).mark_bar(color='#4FC3F7', size=12).encode(
                 x=alt.X('crossing_count:Q', title='Crossings'),
                 y=alt.Y('airline_name:N', sort='-x', title=''),
                 tooltip=[
@@ -866,7 +866,7 @@ if not analytics_df.empty:
             st.markdown("**By Total Time (min)**")
             airline_dur_sorted = airline_agg.sort_values('total_duration_min', ascending=False)
             
-            chart_a2 = alt.Chart(airline_dur_sorted).mark_bar(color='#FF9800').encode(
+            chart_a2 = alt.Chart(airline_dur_sorted).mark_bar(color='#FF9800', size=12).encode(
                 x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
                 y=alt.Y('airline_name:N', sort='-x', title=''),
                 tooltip=[
@@ -946,7 +946,7 @@ if not analytics_df.empty:
             st.markdown("**By Crossing Count**")
             flight_count_sorted = flight_agg.sort_values('crossing_count', ascending=False)
             
-            chart_f1 = alt.Chart(flight_count_sorted).mark_bar(color='#66BB6A').encode(
+            chart_f1 = alt.Chart(flight_count_sorted).mark_bar(color='#66BB6A', size=12).encode(
                 x=alt.X('crossing_count:Q', title='Crossings'),
                 y=alt.Y('LABEL:N', sort='-x', title=''),
                 tooltip=[
@@ -961,7 +961,7 @@ if not analytics_df.empty:
             st.markdown("**By Total Time (min)**")
             flight_dur_sorted = flight_agg.sort_values('total_duration_min', ascending=False)
             
-            chart_f2 = alt.Chart(flight_dur_sorted).mark_bar(color='#9C27B0').encode(
+            chart_f2 = alt.Chart(flight_dur_sorted).mark_bar(color='#9C27B0', size=12).encode(
                 x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
                 y=alt.Y('LABEL:N', sort='-x', title=''),
                 tooltip=[
