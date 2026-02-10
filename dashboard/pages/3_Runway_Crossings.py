@@ -57,12 +57,22 @@ with st.sidebar:
     )
     hide_unknown_airlines = st.checkbox("Hide Unknown (UNK)", value=False)
     st.divider()
-    start_d, end_d, _period = utils.render_time_period_filter(
-        min_date,
-        max_date,
-        key_prefix="runway_crossings",
-        default_period="Last 7 Days",
+    st.subheader("Date Range")
+    try:
+        local_today = datetime.fromisoformat(utils.get_airport_local_today(session, db_prefix)).date()
+    except Exception:
+        local_today = datetime.now().date()
+    start_d, end_d = (
+        (max_date - timedelta(days=7), max_date) if max_date else (local_today - timedelta(days=7), local_today)
     )
+    date_range = st.date_input(
+        "Date Range",
+        value=(start_d, end_d)
+    )
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_d, end_d = date_range
+    else:
+        start_d = end_d = date_range
     
     st.divider()
     st.subheader("Map Layers")
@@ -930,7 +940,8 @@ if not analytics_df.empty:
             
             chart_f1 = alt.Chart(flight_count_sorted).mark_bar(color='#66BB6A', size=12).encode(
                 x=alt.X('crossing_count:Q', title='Crossings'),
-                y=alt.Y('LABEL:N', sort='-x', title=''),
+                y=alt.Y('LABEL:N', sort='-x', title='Flight',
+                        axis=alt.Axis(labelLimit=200)),
                 tooltip=[
                     alt.Tooltip('LABEL:N', title='Flight'),
                     alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
@@ -945,7 +956,8 @@ if not analytics_df.empty:
             
             chart_f2 = alt.Chart(flight_dur_sorted).mark_bar(color='#9C27B0', size=12).encode(
                 x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
-                y=alt.Y('LABEL:N', sort='-x', title=''),
+                y=alt.Y('LABEL:N', sort='-x', title='Flight',
+                        axis=alt.Axis(labelLimit=200)),
                 tooltip=[
                     alt.Tooltip('LABEL:N', title='Flight'),
                     alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')

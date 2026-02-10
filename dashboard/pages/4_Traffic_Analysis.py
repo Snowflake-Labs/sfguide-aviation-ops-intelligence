@@ -48,12 +48,22 @@ with st.sidebar:
     
     # Get date range
     min_date, max_date = utils.get_date_range(session)
-    start_date, end_date, analysis_period = utils.render_time_period_filter(
-        min_date,
-        max_date,
-        key_prefix="traffic",
-        default_period="Last 7 Days",
+    st.subheader("Date Range")
+    try:
+        local_today = datetime.fromisoformat(utils.get_airport_local_today(session, db_prefix)).date()
+    except Exception:
+        local_today = datetime.now().date()
+    start_date, end_date = (
+        (max_date - timedelta(days=7), max_date) if max_date else (local_today - timedelta(days=7), local_today)
     )
+    date_range = st.date_input(
+        "Date Range",
+        value=(start_date, end_date)
+    )
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
+    else:
+        start_date = end_date = date_range
     
     st.divider()
     
@@ -378,15 +388,14 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
         
         chart_flights = alt.Chart(airline_sorted).mark_bar(color='#FF6B6B', size=12).encode(
             x=alt.X('FLIGHT_COUNT:Q', title='Number of Flights'),
-            y=alt.Y('AIRLINE_NAME:N', sort='-x', title='',
-                    scale=alt.Scale(paddingInner=0, paddingOuter=0)),
+            y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
             tooltip=[
                 alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                 alt.Tooltip('FLIGHT_COUNT:Q', title='Flights', format=',.0f')
             ]
         ).properties(
             title='Flights by Airline',
-            height=500
+            height=alt.Step(18)
         )
         
         st.altair_chart(chart_flights, use_container_width=True)
@@ -425,7 +434,8 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             
             chart_d1 = alt.Chart(d1).mark_bar(color='#EF5350', size=12).encode(
                 x=alt.X('TOTAL_DELAY_MINUTES:Q', title='Total Delay Minutes'),
-                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=200)),
                 tooltip=[
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('TOTAL_DELAY_MINUTES:Q', title='Delay Minutes', format=',.0f')
@@ -439,7 +449,8 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             
             chart_e2 = alt.Chart(e2).mark_bar(color='#43A047', size=12).encode(
                 x=alt.X('EARLY_FLIGHTS:Q', title='Early Flights'),
-                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=200)),
                 tooltip=[
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('EARLY_FLIGHTS:Q', title='Early Flights', format=',.0f')
@@ -456,7 +467,8 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             
             chart_d2 = alt.Chart(d2).mark_bar(color='#F57C00', size=12).encode(
                 x=alt.X('DELAYED_FLIGHTS:Q', title='Delayed Flights'),
-                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=200)),
                 tooltip=[
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('DELAYED_FLIGHTS:Q', title='Delayed Flights', format=',.0f')
@@ -470,7 +482,8 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
             
             chart_e1 = alt.Chart(e1).mark_bar(color='#66BB6A', size=12).encode(
                 x=alt.X('TOTAL_EARLY_MINUTES:Q', title='Early Minutes'),
-                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=200)),
                 tooltip=[
                     alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
                     alt.Tooltip('TOTAL_EARLY_MINUTES:Q', title='Early Minutes', format=',.0f')

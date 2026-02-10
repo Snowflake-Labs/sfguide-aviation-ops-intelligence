@@ -51,29 +51,16 @@ with st.sidebar:
         local_today = datetime.now().date()
     default_end = (max_date if max_date else local_today)
     default_start = default_end - timedelta(days=7)
-    min_bound = (min_date if min_date else local_today - timedelta(days=365))
-    max_bound = (max_date if max_date else local_today)
 
-    # Clamp defaults into the allowed bounds (avoids StreamlitAPIException)
-    if default_start < min_bound:
-        default_start = min_bound
-    if default_end > max_bound:
-        default_end = max_bound
-    if default_end < default_start:
-        default_end = default_start
-
-    start_date = st.date_input(
-        "Start date",
-        value=default_start,
-        min_value=min_bound,
-        max_value=max_bound,
+    st.subheader("Date Range")
+    date_range = st.date_input(
+        "Date Range",
+        value=(default_start, default_end)
     )
-    end_date = st.date_input(
-        "End date",
-        value=default_end,
-        min_value=min_bound,
-        max_value=max_bound,
-    )
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
+    else:
+        start_date = end_date = date_range
 
     @st.cache_data(ttl=600)
     def get_airlines(_session, _db_prefix: str):

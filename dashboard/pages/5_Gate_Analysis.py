@@ -372,7 +372,7 @@ if top_df is not None and not top_df.empty:
     chart_top = alt.Chart(display_df).mark_bar(color='#4FC3F7', size=10).encode(
         x=alt.X('DWELL_MINUTES:Q', title='Dwell Minutes'),
         y=alt.Y('LABEL:N', sort='-x', title='Flight (Gate)',
-                scale=alt.Scale(paddingInner=0.1, paddingOuter=0.05)),
+                axis=alt.Axis(labelLimit=300)),
         tooltip=[
             alt.Tooltip('FLIGHT_NUMBER:N', title='Flight'),
             alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
@@ -380,7 +380,7 @@ if top_df is not None and not top_df.empty:
             alt.Tooltip('DWELL_MINUTES:Q', title='Dwell Minutes', format='.0f')
         ]
     ).properties(
-        height=min(max(600, 28 * len(display_df)), 1200)
+        height=alt.Step(20)
     )
     
     st.altair_chart(chart_top, use_container_width=True)
