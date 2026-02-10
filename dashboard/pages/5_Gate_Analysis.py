@@ -404,7 +404,7 @@ if hm_df is not None and not hm_df.empty:
     hm_df['GATE_NAME'] = pd.Categorical(hm_df['GATE_NAME'], categories=sorted_gates, ordered=True)
     
     chart_hm = alt.Chart(hm_df).mark_rect().encode(
-        x=alt.X('GATE_NAME:O', title='Gate', sort=sorted_gates),
+        x=alt.X('GATE_NAME:O', title='Gate', sort=sorted_gates, axis=alt.Axis(labelAngle=-45)),
         y=alt.Y('DAY_NAME:O', title='Day of Week', sort=day_names),
         color=alt.Color('DWELL_MINUTES:Q', 
                        title='Dwell Time (min)',
@@ -415,7 +415,8 @@ if hm_df is not None and not hm_df.empty:
             alt.Tooltip('DWELL_MINUTES:Q', title='Dwell Minutes', format='.0f')
         ]
     ).properties(
-        height=500
+        width=alt.Step(20),
+        height=alt.Step(20)
     )
     
     st.altair_chart(chart_hm, use_container_width=True)

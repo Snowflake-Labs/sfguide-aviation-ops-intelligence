@@ -270,9 +270,6 @@ def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
     except Exception:
         return pd.DataFrame()
 
-# Placeholder for metric_type - will be set by user selection below
-metric_type = "flight_count"  # Default value
-
 # Fetch data
 with st.spinner("Loading crossing data..."):
     summary_df = get_crossing_summary(session, start_d, end_d, directions)
@@ -312,6 +309,9 @@ metric_type = st.radio(
     key="runway_crossings_metric_selector",
     horizontal=True
 )
+
+# Refetch aggregated data with selected metric
+agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type)
 
 # Map visualization
 st.subheader("📍 Crossing Density Heatmap")
@@ -572,7 +572,8 @@ if not analytics_df.empty:
             alt.Tooltip('CROSSINGS:Q', title='Crossings', format=',.0f')
         ]
     ).properties(
-        height=400
+        width=alt.Step(20),
+        height=alt.Step(20)
     )
     
     st.altair_chart(chart_heat, use_container_width=True)

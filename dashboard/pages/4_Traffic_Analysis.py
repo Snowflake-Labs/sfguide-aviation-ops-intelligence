@@ -357,7 +357,8 @@ if show_heatmap and not traffic_data.empty:
                 alt.Tooltip('AIRCRAFT_COUNT:Q', title='Aircraft', format=',.0f')
             ]
         ).properties(
-            height=400
+            width=alt.Step(20),
+            height=alt.Step(20)
         )
         
         st.caption("**Color Scale:** Teal (low) → Yellow (medium) → Red (high) aircraft count. Color intensity shows traffic concentration by day and hour.")

@@ -187,7 +187,7 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
 # Density stats removed
 
 # Map configuration controls - horizontal layout above map
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     metric_type_selection = st.radio(
@@ -210,6 +210,25 @@ with col2:
         key="airport_activity_aggregation",
         horizontal=True
     )
+
+with col3:
+    enable_hotzone_filter = st.checkbox(
+        "Hotzones by percentile",
+        value=False,
+        key="hotzone_filter_enabled"
+    )
+    if enable_hotzone_filter:
+        percentile_threshold = st.slider(
+            "Percentile threshold:",
+            min_value=50,
+            max_value=99,
+            value=90,
+            step=5,
+            key="hotzone_percentile",
+            help="Show only hexagons above this percentile"
+        )
+    else:
+        percentile_threshold = None
 
 # Always use Hexagon visualization
 viz_type = "Hexagon"
@@ -237,6 +256,20 @@ with st.spinner("Loading geographic data..."):
         sample_percent=int(hex_sample_pct),
         max_cells=int(st.session_state.get('hex_max_cells', 4000))
     )
+    
+    # Apply percentile filter if enabled
+    if enable_hotzone_filter and percentile_threshold is not None and h3_data is not None and not h3_data.empty:
+        # Determine which column to use for filtering based on selected metric
+        if metric_type == "Distinct Aircraft Count":
+            filter_column = 'DISTINCT_AIRCRAFT_COUNT'
+        else:  # Total Time Spent
+            filter_column = 'OBSERVATION_COUNT'
+        
+        # Calculate percentile threshold value
+        threshold_value = h3_data[filter_column].quantile(percentile_threshold / 100.0)
+        
+        # Filter to keep only hexagons above the percentile
+        h3_data = h3_data[h3_data[filter_column] >= threshold_value]
 
 
 # Geographic Coverage Statistics removed
@@ -259,7 +292,10 @@ if has_data:
         color_label = f"{prefix} Aircraft Count" if aggregation_type == "daily_average" else "Distinct Aircraft Count"
     
     # Add legend explanation for dual encoding (always show 3D)
-    st.caption(f"**Dual Encoding:** Height = {height_label} | Color (Teal→Yellow→Red): {color_label}. Teal=low, Yellow=medium, Red=high. Hover for exact values.")
+    caption_text = f"**Dual Encoding:** Height = {height_label} | Color (Teal→Yellow→Red): {color_label}. Teal=low, Yellow=medium, Red=high. Hover for exact values."
+    if enable_hotzone_filter and percentile_threshold is not None:
+        caption_text += f" | **Hotzone Filter:** Showing only top {100 - percentile_threshold}% of hexagons by {metric_type_selection.replace('_', ' ')}."
+    st.caption(caption_text)
     
     # Create layers
     layers = []
