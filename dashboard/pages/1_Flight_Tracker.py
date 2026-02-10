@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import utils
 import colors
 import re
+import ui_components
 
 # Page configuration
 st.set_page_config(

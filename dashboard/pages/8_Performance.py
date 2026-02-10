@@ -9,6 +9,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 from snowflake.snowpark.context import get_active_session
 import utils
+import ui_components
 
 st.set_page_config(page_title="Performance", page_icon="📊", layout="wide")
 utils.apply_custom_css()
@@ -45,22 +46,12 @@ with st.sidebar:
     st.divider()
     st.header("Filters")
 
-    try:
-        local_today = datetime.fromisoformat(utils.get_airport_local_today(session, db_prefix)).date()
-    except Exception:
-        local_today = datetime.now().date()
-    default_end = (max_date if max_date else local_today)
-    default_start = default_end - timedelta(days=7)
-
-    st.subheader("Date Range")
-    date_range = st.date_input(
-        "Date Range",
-        value=(default_start, default_end)
+    start_date, end_date = ui_components.render_date_range_picker(
+        min_date,
+        max_date,
+        key_prefix="performance",
+        default_days_back=7
     )
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        start_date, end_date = date_range
-    else:
-        start_date = end_date = date_range
 
     @st.cache_data(ttl=600)
     def get_airlines(_session, _db_prefix: str):
