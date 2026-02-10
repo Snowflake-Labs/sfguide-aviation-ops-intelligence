@@ -228,7 +228,9 @@ if breakdown_all is not None and not breakdown_all.empty:
         x=alt.X('sum(DWELL_MINUTES):Q', title='Dwell Minutes'),
         y=alt.Y('AIRLINE_NAME:N', 
                 sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
-                title='Airline'),
+                title='Airline',
+                axis=alt.Axis(labelLimit=200),
+                scale=alt.Scale(paddingInner=0.1, paddingOuter=0.05)),
         color=alt.Color('GATE_NAME:N', legend=None),
         order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
         tooltip=[
@@ -289,7 +291,8 @@ if not breakdown_df.empty:
         y=alt.Y('GATE_NAME:N',
                 sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
                 title='Gate',
-                axis=alt.Axis(labelFontSize=11)),
+                axis=alt.Axis(labelFontSize=11),
+                scale=alt.Scale(paddingInner=0.1, paddingOuter=0.05)),
         color=alt.Color('AIRLINE_CODE:N', legend=None),
         order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
         tooltip=[
@@ -333,7 +336,8 @@ if not breakdown_df.empty:
         y=alt.Y('GATE_NAME:N',
                 sort=alt.EncodingSortField(field='FLIGHTS', op='sum', order='descending'),
                 title='Gate',
-                axis=alt.Axis(labelFontSize=11)),
+                axis=alt.Axis(labelFontSize=11),
+                scale=alt.Scale(paddingInner=0.1, paddingOuter=0.05)),
         color=alt.Color('AIRLINE_CODE:N', legend=None),
         order=alt.Order('FLIGHTS:Q', sort='descending'),
         tooltip=[
@@ -370,7 +374,8 @@ if top_df is not None and not top_df.empty:
     
     chart_top = alt.Chart(display_df).mark_bar(color='#4FC3F7', size=10).encode(
         x=alt.X('DWELL_MINUTES:Q', title='Dwell Minutes'),
-        y=alt.Y('LABEL:N', sort='-x', title='Flight (Gate)'),
+        y=alt.Y('LABEL:N', sort='-x', title='Flight (Gate)',
+                scale=alt.Scale(paddingInner=0.1, paddingOuter=0.05)),
         tooltip=[
             alt.Tooltip('FLIGHT_NUMBER:N', title='Flight'),
             alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
