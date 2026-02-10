@@ -214,9 +214,16 @@ if breakdown_all is not None and not breakdown_all.empty:
     air_gate_pivot = air_gate_pivot.sort_values('_total_utilization', ascending=False)
     air_gate_pivot = air_gate_pivot.drop(columns=['_total_utilization'])
     
-    # Sort gates by total utilization across all airlines (descending)
+    # Sort gates by total utilization across all airlines (descending) - largest segments first
     gate_totals = air_gate_pivot.sum(axis=0).sort_values(ascending=False)
     gate_names = gate_totals.index.tolist()
+    
+    # Reorder columns to match sorted gate order
+    air_gate_pivot = air_gate_pivot[gate_names]
+    
+    # Reverse row order for horizontal bars (Plotly displays first row at bottom)
+    air_gate_pivot = air_gate_pivot.iloc[::-1]
+    
     base_colors = [
         '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
         '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#4daf4a', '#984ea3',
@@ -244,7 +251,8 @@ if breakdown_all is not None and not breakdown_all.empty:
         bargap=0.1,
         bargroupgap=0.02,
         margin=dict(l=160, r=30, t=40, b=40),
-        showlegend=False
+        showlegend=False,
+        yaxis=dict(autorange=False)
     )
     st.plotly_chart(fig_air, use_container_width=True)
 else:
@@ -276,9 +284,17 @@ if not breakdown_df.empty:
     dwell_pivot['_total'] = dwell_pivot.sum(axis=1)
     dwell_pivot = dwell_pivot.sort_values('_total', ascending=False)
     dwell_pivot = dwell_pivot.drop(columns=['_total'])
+    
+    # Sort airlines by total contribution (largest segments first)
+    airline_totals = dwell_pivot.sum(axis=0).sort_values(ascending=False)
+    airlines_codes = airline_totals.index.tolist()
+    dwell_pivot = dwell_pivot[airlines_codes]
+    
+    # Reverse row order for horizontal bars (Plotly displays first row at bottom)
+    dwell_pivot = dwell_pivot.iloc[::-1]
+    
     fig_dwell = go.Figure()
     # Use consistent color set per airline code
-    airlines_codes = list(dwell_pivot.columns)
     palette = {}
     base_colors = [
         '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
@@ -325,8 +341,16 @@ if not breakdown_df.empty:
     flights_pivot['_total'] = flights_pivot.sum(axis=1)
     flights_pivot = flights_pivot.sort_values('_total', ascending=False)
     flights_pivot = flights_pivot.drop(columns=['_total'])
+    
+    # Sort airlines by total contribution (largest segments first)
+    airline_totals_f = flights_pivot.sum(axis=0).sort_values(ascending=False)
+    airline_codes = airline_totals_f.index.tolist()
+    flights_pivot = flights_pivot[airline_codes]
+    
+    # Reverse row order for horizontal bars (Plotly displays first row at bottom)
+    flights_pivot = flights_pivot.iloc[::-1]
+    
     fig_flights = go.Figure()
-    airline_codes = list(flights_pivot.columns)
     # reuse palette
     for code in airline_codes:
         values = flights_pivot[code]
@@ -373,6 +397,10 @@ if top_df is not None and not top_df.empty:
         display_df['AIRLINE_CODE'].apply(lambda c: code_to_name.get(str(c), str(c)))
     )
     display_df['LABEL'] = display_df.apply(lambda r: f"{str(r.get('FLIGHT_NUMBER',''))} — {r.get('AIRLINE_NAME','')} — {r.get('DAY','')} ({r.get('GATE_NAME','N/A')})", axis=1)
+    
+    # Reverse for horizontal bars (Plotly displays first row at bottom)
+    display_df = display_df.iloc[::-1]
+    
     fig_top = go.Figure(go.Bar(
         x=display_df['DWELL_MINUTES'].round(0),
         y=display_df['LABEL'],
