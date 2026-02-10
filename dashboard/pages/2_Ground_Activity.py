@@ -100,18 +100,29 @@ with st.sidebar:
     
     # Show IATA Level badge if Level 2
     if airport_iata_level == 2:
-        st.info("🏷️ **IATA Level 2 Airport** — Hotspots-first mode optimized for slot coordination focus")
+        st.info("🏷️ **IATA Level 2 Airport** — Hotspots-first mode enabled by default for slot coordination focus")
     
-    # Percentile threshold slider (always show hotspots, default 90%)
-    percentile_threshold = st.slider(
-        "Hotspot threshold (percentile)",
-        min_value=core.Thresholds.PERCENTILE_MIN,
-        max_value=core.Thresholds.PERCENTILE_MAX,
-        value=90,
-        step=core.Thresholds.PERCENTILE_STEP,
-        key="airport_activity_percentile",
-        help=f"Show only hexagons above this percentile. Shows top {100-90}% by default for maximum clarity."
+    # Hotspots mode toggle
+    hotspots_only = st.checkbox(
+        "Show hotspots only",
+        value=viz_defaults['hotspots_only'],
+        key="airport_activity_hotspots_only",
+        help="Filter to show only high-intensity areas (recommended for Level 2 airports)"
     )
+    
+    # Percentile threshold slider (only when hotspots mode is enabled)
+    if hotspots_only:
+        percentile_threshold = st.slider(
+            "Hotspot threshold (percentile)",
+            min_value=core.Thresholds.PERCENTILE_MIN,
+            max_value=core.Thresholds.PERCENTILE_MAX,
+            value=viz_defaults['percentile_threshold'],
+            step=core.Thresholds.PERCENTILE_STEP,
+            key="airport_activity_percentile",
+            help=f"Show only hexagons above this percentile. Level {airport_iata_level} default: {viz_defaults['percentile_threshold']}%"
+        )
+    else:
+        percentile_threshold = 0
     
     # Map the selection to the format expected by the rest of the code
     metric_type = "Distinct Aircraft Count" if metric_type_selection == Metrics.FLIGHT_COUNT else "Total Time Spent (minutes)"
@@ -242,8 +253,8 @@ with st.spinner("Loading geographic data..."):
         max_cells=int(st.session_state.get('hex_max_cells', 4000))
     )
     
-    # Always apply percentile filter for hotspots mode
-    if percentile_threshold > 0:
+    # Apply percentile filter if hotspots mode is enabled
+    if hotspots_only and percentile_threshold > 0:
         # Use OBSERVATION_COUNT (dwell time) as the primary filter metric
         filter_column = 'OBSERVATION_COUNT'
         h3_data = utils.apply_percentile_filter(h3_data, filter_column, percentile_threshold)
@@ -267,7 +278,11 @@ if has_data:
     secondary_metric_label = f"{prefix} Aircraft Count" if aggregation_type == "daily_average" else "Distinct Aircraft Count"
     
     # Show caption explaining the visualization
-    caption_text = f"**Hotspots Mode:** Height & Color = {primary_metric_label}. Teal=low, Yellow=medium, Orange/Red=high. Showing top {100 - percentile_threshold}% by dwell time."
+    viz_defaults = utils.get_visualization_defaults()
+    if hotspots_only:
+        caption_text = f"**Hotspots Mode:** Height & Color = {primary_metric_label}. Teal=low, Yellow=medium, Orange/Red=high. Showing top {100 - percentile_threshold}% by dwell time."
+    else:
+        caption_text = f"**Full View:** Height & Color = {primary_metric_label}. Teal=low, Yellow=medium, Orange/Red=high. Hover for exact values."
     st.caption(caption_text)
     
     # Create layers
@@ -283,11 +298,10 @@ if has_data:
     h3_data['PRIMARY_METRIC'] = h3_data[primary_metric_col]
     
     # Apply percentile-based elevation scaling (robust to outliers)
-    # Use lower max_elevation to prevent hexagons from going too high
     h3_data = utils.apply_percentile_elevation_scaling(
         h3_data,
         'PRIMARY_METRIC',
-        max_elevation=300
+        max_elevation=500
     )
     
     # Color gradient based on PRIMARY_METRIC (same as elevation)

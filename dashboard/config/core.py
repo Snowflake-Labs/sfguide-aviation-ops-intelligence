@@ -111,6 +111,7 @@ class VisualizationDefaults:
     
     # Level 2 - Schedule Facilitated (hotspots-first approach)
     LEVEL_2 = {
+        'hotspots_only': True,
         'percentile_threshold': 90,
         'elevation_scale': 60,
         'opacity': 0.8,
@@ -119,7 +120,8 @@ class VisualizationDefaults:
     
     # Non-Level 2 (Level 1 or 3, or unknown)
     DEFAULT = {
-        'percentile_threshold': 90,
+        'hotspots_only': False,
+        'percentile_threshold': 75,
         'elevation_scale': 35,
         'opacity': 0.65,
         'coverage': 0.8
