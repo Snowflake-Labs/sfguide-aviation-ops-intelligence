@@ -214,7 +214,7 @@ def render_aggregation_selector(key_prefix="", sidebar=True):
         "Aggregation:",
         options=[Aggregation.SUM, Aggregation.DAILY_AVG],
         format_func=lambda x: Labels.AGG_SUM if x == Aggregation.SUM else Labels.AGG_DAILY_AVG,
-        index=0,
+        index=1,  # Default to Daily Average
         key=f"{key_prefix}_aggregation"
     )
 
