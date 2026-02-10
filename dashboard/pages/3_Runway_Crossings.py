@@ -616,43 +616,40 @@ if not analytics_df.empty:
         col_d1, col_d2, col_d3 = st.columns(3)
         with col_d1:
             st.markdown("**By Flight Count**")
-            chart_d1 = alt.Chart(dir_agg).mark_bar(size=40).encode(
-                x=alt.X('DIRECTION:N', title='Direction'),
-                y=alt.Y('crossing_count:Q', title='Number of Crossings'),
-                color=alt.Color('DIRECTION:N', scale=alt.Scale(domain=['Arrival', 'Departure'], range=['#4FC3F7', '#66BB6A']), legend=None),
+            chart_d1 = alt.Chart(dir_agg).mark_bar(size=15, color='#4FC3F7').encode(
+                x=alt.X('crossing_count:Q', title='Number of Crossings'),
+                y=alt.Y('DIRECTION:N', title='Direction'),
                 tooltip=[
                     alt.Tooltip('DIRECTION:N', title='Direction'),
                     alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
                 ]
-            ).properties(height=300)
+            ).properties(height=alt.Step(25))
             
             st.altair_chart(chart_d1, use_container_width=True)
         
         with col_d2:
             st.markdown("**By Total Time (min)**")
-            chart_d2 = alt.Chart(dir_agg).mark_bar(size=40).encode(
-                x=alt.X('DIRECTION:N', title='Direction'),
-                y=alt.Y('total_duration_min:Q', title='Total Duration (min)'),
-                color=alt.Color('DIRECTION:N', scale=alt.Scale(domain=['Arrival', 'Departure'], range=['#FF9800', '#9C27B0']), legend=None),
+            chart_d2 = alt.Chart(dir_agg).mark_bar(size=15, color='#FF9800').encode(
+                x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
+                y=alt.Y('DIRECTION:N', title='Direction'),
                 tooltip=[
                     alt.Tooltip('DIRECTION:N', title='Direction'),
                     alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
                 ]
-            ).properties(height=300)
+            ).properties(height=alt.Step(25))
             
             st.altair_chart(chart_d2, use_container_width=True)
         
         with col_d3:
             st.markdown("**By Avg Time Per Crossing (sec)**")
-            chart_d3 = alt.Chart(dir_agg).mark_bar(size=40).encode(
-                x=alt.X('DIRECTION:N', title='Direction'),
-                y=alt.Y('avg_duration_s:Q', title='Avg Duration (sec)'),
-                color=alt.Color('DIRECTION:N', scale=alt.Scale(domain=['Arrival', 'Departure'], range=['#E91E63', '#00BCD4']), legend=None),
+            chart_d3 = alt.Chart(dir_agg).mark_bar(size=15, color='#E91E63').encode(
+                x=alt.X('avg_duration_s:Q', title='Avg Duration (sec)'),
+                y=alt.Y('DIRECTION:N', title='Direction'),
                 tooltip=[
                     alt.Tooltip('DIRECTION:N', title='Direction'),
                     alt.Tooltip('avg_duration_s:Q', title='Seconds', format=',.0f')
                 ]
-            ).properties(height=300)
+            ).properties(height=alt.Step(25))
             
             st.altair_chart(chart_d3, use_container_width=True)
     
