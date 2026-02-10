@@ -78,6 +78,40 @@ with st.sidebar:
         index=1,
         help="Higher resolution for detailed airport activity analysis. 12 = larger hexagons, 15 = smaller hexagons"
     )
+    
+    st.divider()
+    
+    # Display metric
+    metric_type_selection = st.radio(
+        "Display metric:",
+        options=["flight_count", "total_duration"],
+        format_func=lambda x: "Flight Count" if x == "flight_count" else "Duration (min)",
+        index=0,
+        key="airport_activity_metric_selector"
+    )
+    
+    # Aggregation
+    aggregation_type = st.radio(
+        "Aggregation:",
+        options=["sum", "daily_average"],
+        format_func=lambda x: "Sum for the selected period" if x == "sum" else "Daily Average",
+        index=0,
+        key="airport_activity_aggregation"
+    )
+    
+    # Percentile threshold
+    percentile_threshold = st.slider(
+        "Percentile threshold:",
+        min_value=0,
+        max_value=99,
+        value=0,
+        step=5,
+        key="hotzone_percentile",
+        help="Show only hexagons above this percentile (0 = show all)"
+    )
+    
+    # Map the selection to the format expected by the rest of the code
+    metric_type = "Distinct Aircraft Count" if metric_type_selection == "flight_count" else "Total Time Spent (minutes)"
 
 # Altitude filter removed; analyze all data
 alt_min, alt_max = 0, 100000
@@ -186,50 +220,6 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
 
 # Density stats removed
 
-# Map configuration controls - horizontal layout above map
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    metric_type_selection = st.radio(
-        "Display metric:",
-        options=["flight_count", "total_duration"],
-        format_func=lambda x: "Flight Count" if x == "flight_count" else "Duration (min)",
-        index=0,
-        key="airport_activity_metric_selector",
-        horizontal=True
-    )
-    # Map the selection to the format expected by the rest of the code
-    metric_type = "Distinct Aircraft Count" if metric_type_selection == "flight_count" else "Total Time Spent (minutes)"
-
-with col2:
-    aggregation_type = st.radio(
-        "Aggregation:",
-        options=["sum", "daily_average"],
-        format_func=lambda x: "Sum for the selected period" if x == "sum" else "Daily Average",
-        index=0,
-        key="airport_activity_aggregation",
-        horizontal=True
-    )
-
-with col3:
-    enable_hotzone_filter = st.checkbox(
-        "Hotzones by percentile",
-        value=False,
-        key="hotzone_filter_enabled"
-    )
-    if enable_hotzone_filter:
-        percentile_threshold = st.slider(
-            "Percentile threshold:",
-            min_value=50,
-            max_value=99,
-            value=90,
-            step=5,
-            key="hotzone_percentile",
-            help="Show only hexagons above this percentile"
-        )
-    else:
-        percentile_threshold = None
-
 # Always use Hexagon visualization
 viz_type = "Hexagon"
 # Always show 3D elevation
@@ -258,7 +248,7 @@ with st.spinner("Loading geographic data..."):
     )
     
     # Apply percentile filter if enabled
-    if enable_hotzone_filter and percentile_threshold is not None and h3_data is not None and not h3_data.empty:
+    if percentile_threshold > 0 and h3_data is not None and not h3_data.empty:
         # Determine which column to use for filtering based on selected metric
         if metric_type == "Distinct Aircraft Count":
             filter_column = 'DISTINCT_AIRCRAFT_COUNT'
@@ -293,7 +283,7 @@ if has_data:
     
     # Add legend explanation for dual encoding (always show 3D)
     caption_text = f"**Dual Encoding:** Height = {height_label} | Color (Teal→Yellow→Red): {color_label}. Teal=low, Yellow=medium, Red=high. Hover for exact values."
-    if enable_hotzone_filter and percentile_threshold is not None:
+    if percentile_threshold > 0:
         caption_text += f" | **Hotzone Filter:** Showing only top {100 - percentile_threshold}% of hexagons by {metric_type_selection.replace('_', ' ')}."
     st.caption(caption_text)
     

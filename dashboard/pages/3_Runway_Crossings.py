@@ -65,6 +65,17 @@ with st.sidebar:
     dir_south_north = st.checkbox("South → North", value=True, key="dir_sn")
     dir_north_south = st.checkbox("North → South", value=True, key="dir_ns")
     
+    st.divider()
+    
+    # Display metric
+    metric_type = st.radio(
+        "Display metric:",
+        options=["flight_count", "total_duration"],
+        format_func=lambda x: "Flight Count" if x == "flight_count" else "Duration (min)",
+        index=0,
+        key="runway_crossings_metric_selector"
+    )
+    
     # Hide Unknown functionality removed - always show all airlines
     hide_unknown_airlines = False
     # Show Flights functionality removed - flights are always hidden
@@ -299,16 +310,6 @@ with col4:
     st.metric("Total Duration", f"{summary['TOTAL_DURATION_MIN']:.1f} min")
 
 st.divider()
-
-# Map configuration controls - horizontal layout above map
-metric_type = st.radio(
-    "Display metric:",
-    options=["flight_count", "total_duration"],
-    format_func=lambda x: "Flight Count" if x == "flight_count" else "Duration (min)",
-    index=0,
-    key="runway_crossings_metric_selector",
-    horizontal=True
-)
 
 # Refetch aggregated data with selected metric
 agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type)
