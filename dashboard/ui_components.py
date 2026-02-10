@@ -139,6 +139,8 @@ def render_map_layers_selector(session, db_prefix: str, sidebar: bool = True,
     airport_ops_available = all_layer_types & utils.AIRPORT_OPS_TYPES
     
     # Preset selector
+    container.markdown("**Map Layers**")
+    
     preset_options = ["None", "Airport Ops", "All", "Custom"]
     preset_index = {"none": 0, "airport_ops": 1, "all": 2, "custom": 3}.get(default_preset, 0)
     
@@ -146,7 +148,8 @@ def render_map_layers_selector(session, db_prefix: str, sidebar: bool = True,
         "Map Layers",
         options=preset_options,
         index=preset_index,
-        key=f"{key_prefix}_preset"
+        key=f"{key_prefix}_preset",
+        label_visibility="collapsed"
     )
     
     selected_layers = []
