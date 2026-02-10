@@ -76,6 +76,15 @@ with st.sidebar:
         key="runway_crossings_metric_selector"
     )
     
+    # Aggregation
+    aggregation_type = st.radio(
+        "Aggregation:",
+        options=["sum", "daily_average"],
+        format_func=lambda x: "Sum" if x == "sum" else "Daily Average",
+        index=0,
+        key="runway_crossings_aggregation"
+    )
+    
     # Hide Unknown functionality removed - always show all airlines
     hide_unknown_airlines = False
     # Show Flights functionality removed - flights are always hidden
@@ -95,16 +104,29 @@ if not directions:
     st.stop()
 
 @st.cache_data(ttl=600)
-def get_crossing_summary(_session, start_d, end_d, dirs):
+def get_crossing_summary(_session, start_d, end_d, dirs, aggregation_type):
     """Get overall crossing counts and stats"""
     dir_filter = "','".join(dirs)
     local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
+    
+    # Calculate number of days in the date range for daily average
+    from datetime import datetime
+    start_date = datetime.strptime(str(start_d), '%Y-%m-%d')
+    end_date = datetime.strptime(str(end_d), '%Y-%m-%d')
+    num_days = (end_date - start_date).days + 1
+    
+    # Determine aggregation divisor
+    if aggregation_type == "daily_average":
+        divisor = max(1, num_days)
+    else:
+        divisor = 1
+    
     q = f"""
     SELECT
-      COUNT(DISTINCT flight_key) AS total_flights,
-      COUNT(*) AS total_crossings,
+      ROUND(COUNT(DISTINCT flight_key) / {divisor}) AS total_flights,
+      ROUND(COUNT(*) / {divisor}) AS total_crossings,
       AVG(duration_s) AS avg_duration_s,
-      SUM(duration_s)/60.0 AS total_duration_min
+      ROUND(SUM(duration_s)/60.0 / {divisor}) AS total_duration_min
     FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
     WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
       AND direction IN ('{dir_filter}')
@@ -115,19 +137,32 @@ def get_crossing_summary(_session, start_d, end_d, dirs):
         return pd.DataFrame()
 
 @st.cache_data(ttl=600)
-def get_crossing_aggregates(_session, start_d, end_d, dirs, metric):
+def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_type):
     """
     Aggregate crossings by H3 cell for heatmap visualization.
     metric: 'flight_count' or 'total_duration'
+    aggregation_type: 'sum' or 'daily_average'
     """
     dir_filter = "','".join(dirs)
     local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
     
+    # Calculate number of days in the date range for daily average
+    from datetime import datetime
+    start_date = datetime.strptime(str(start_d), '%Y-%m-%d')
+    end_date = datetime.strptime(str(end_d), '%Y-%m-%d')
+    num_days = (end_date - start_date).days + 1
+    
+    # Determine aggregation divisor
+    if aggregation_type == "daily_average":
+        divisor = max(1, num_days)
+    else:
+        divisor = 1
+    
     if metric == 'flight_count':
-        agg_expr = 'COUNT(DISTINCT flight_key) AS metric_value'
+        agg_expr = f'ROUND(COUNT(DISTINCT flight_key) / {divisor}) AS metric_value'
         metric_label = 'flights'
     else:
-        agg_expr = 'SUM(duration_s)/60.0 AS metric_value'
+        agg_expr = f'ROUND(SUM(duration_s)/60.0 / {divisor}) AS metric_value'
         metric_label = 'minutes'
     
     q = f"""
@@ -283,8 +318,8 @@ def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
 
 # Fetch data
 with st.spinner("Loading crossing data..."):
-    summary_df = get_crossing_summary(session, start_d, end_d, directions)
-    agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type)
+    summary_df = get_crossing_summary(session, start_d, end_d, directions, aggregation_type)
+    agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type, aggregation_type)
     analytics_df = get_crossing_analytics(session, start_d, end_d, directions)  # For charts (all data)
     details_df = get_crossing_details(session, start_d, end_d, directions)  # For table (limited to 100)
     runway_df = get_runway_geometry(session)
@@ -300,19 +335,30 @@ if summary_df.empty or summary_df.iloc[0]['TOTAL_CROSSINGS'] == 0:
 
 summary = summary_df.iloc[0]
 col1, col2, col3, col4 = st.columns(4)
+
+# Adjust labels based on aggregation type
+if aggregation_type == "daily_average":
+    crossings_label = "Avg Daily Crossings"
+    flights_label = "Avg Daily Flights"
+    duration_label = "Avg Daily Duration"
+else:
+    crossings_label = "Total Crossings"
+    flights_label = "Unique Flights"
+    duration_label = "Total Duration"
+
 with col1:
-    st.metric("Total Crossings", f"{int(summary['TOTAL_CROSSINGS']):,}")
+    st.metric(crossings_label, f"{int(summary['TOTAL_CROSSINGS']):,}")
 with col2:
-    st.metric("Unique Flights", f"{int(summary['TOTAL_FLIGHTS']):,}")
+    st.metric(flights_label, f"{int(summary['TOTAL_FLIGHTS']):,}")
 with col3:
     st.metric("Avg Duration", f"{summary['AVG_DURATION_S']:.1f} sec")
 with col4:
-    st.metric("Total Duration", f"{summary['TOTAL_DURATION_MIN']:.1f} min")
+    st.metric(duration_label, f"{int(summary['TOTAL_DURATION_MIN']):,} min")
 
 st.divider()
 
 # Refetch aggregated data with selected metric
-agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type)
+agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type, aggregation_type)
 
 # Map visualization
 st.subheader("📍 Crossing Density Heatmap")
@@ -573,8 +619,7 @@ if not analytics_df.empty:
             alt.Tooltip('CROSSINGS:Q', title='Crossings', format=',.0f')
         ]
     ).properties(
-        width=alt.Step(20),
-        height=alt.Step(20)
+        height=300
     )
     
     st.altair_chart(chart_heat, use_container_width=True)

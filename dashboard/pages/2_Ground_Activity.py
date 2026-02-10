@@ -71,13 +71,16 @@ with st.sidebar:
     
     st.divider()
     
-    # Map controls
-    h3_resolution = st.selectbox(
-        "H3 Resolution",
-        options=[12, 13, 14],
+    # Hexagon size selector
+    hexagon_size_label = st.selectbox(
+        "Hexagon size",
+        options=["Small", "Medium", "Large"],
         index=1,
-        help="Higher resolution for detailed airport activity analysis. 12 = larger hexagons, 14 = smaller hexagons"
+        help="Size of hexagons for aggregation. Small = fine detail, Large = broader overview"
     )
+    # Map labels to H3 resolution values (higher resolution = smaller hexagons)
+    size_to_resolution = {"Small": 14, "Medium": 13, "Large": 12}
+    h3_resolution = size_to_resolution[hexagon_size_label]
     
     st.divider()
     

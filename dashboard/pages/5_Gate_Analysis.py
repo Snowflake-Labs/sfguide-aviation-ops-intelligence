@@ -415,8 +415,7 @@ if hm_df is not None and not hm_df.empty:
             alt.Tooltip('DWELL_MINUTES:Q', title='Dwell Minutes', format='.0f')
         ]
     ).properties(
-        width=alt.Step(20),
-        height=alt.Step(20)
+        height=300
     )
     
     st.altair_chart(chart_hm, use_container_width=True)
