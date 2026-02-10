@@ -14,6 +14,7 @@ import altair as alt
 sys.path.append('..')
 import utils
 import colors
+from chart_config import BAR_CONFIG, COLORS, AXIS_CONFIG, TOOLTIP_FORMAT
 
 # Page configuration
 st.set_page_config(
@@ -224,20 +225,20 @@ if breakdown_all is not None and not breakdown_all.empty:
         ascending=[True, False]
     )
     
-    chart = alt.Chart(df_long).mark_bar(size=15).encode(
+    chart = alt.Chart(df_long).mark_bar(size=BAR_CONFIG['horizontal']['size']).encode(
         x=alt.X('sum(DWELL_MINUTES):Q', title='Dwell Minutes'),
         y=alt.Y('AIRLINE_NAME:N', 
                 sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
                 title='Airline',
-                axis=alt.Axis(labelLimit=200)),
+                axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
         color=alt.Color('GATE_NAME:N', legend=None),
         order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
         tooltip=[
             alt.Tooltip('GATE_NAME:N', title='Gate'),
-            alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=',.0f')
+            alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
         ]
     ).properties(
-        height=alt.Step(20)  # Fixed step size of 20 pixels per bar
+        height=alt.Step(BAR_CONFIG['horizontal']['step'])
     ).configure_mark(
         opacity=0.9
     )
@@ -285,7 +286,7 @@ if not breakdown_df.empty:
     # Add airline names for tooltip
     df_dwell_long['AIRLINE_NAME'] = df_dwell_long['AIRLINE_CODE'].apply(lambda c: code_to_name.get(str(c), str(c)))
     
-    chart_dwell = alt.Chart(df_dwell_long).mark_bar(size=10).encode(
+    chart_dwell = alt.Chart(df_dwell_long).mark_bar(size=BAR_CONFIG['horizontal_compact']['size']).encode(
         x=alt.X('sum(DWELL_MINUTES):Q', title='Dwell Minutes'),
         y=alt.Y('GATE_NAME:N',
                 sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
@@ -295,10 +296,10 @@ if not breakdown_df.empty:
         order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
         tooltip=[
             alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
-            alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=',.0f')
+            alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
         ]
     ).properties(
-        height=alt.Step(15)  # Fixed step size of 15 pixels per bar
+        height=alt.Step(BAR_CONFIG['horizontal_compact']['step'])
     ).configure_mark(
         opacity=0.9
     )
@@ -329,7 +330,7 @@ if not breakdown_df.empty:
     # Add airline names for tooltip
     df_flights_long['AIRLINE_NAME'] = df_flights_long['AIRLINE_CODE'].apply(lambda c: code_to_name.get(str(c), str(c)))
     
-    chart_flights = alt.Chart(df_flights_long).mark_bar(size=10).encode(
+    chart_flights = alt.Chart(df_flights_long).mark_bar(size=BAR_CONFIG['horizontal_compact']['size']).encode(
         x=alt.X('sum(FLIGHTS):Q', title='Flights'),
         y=alt.Y('GATE_NAME:N',
                 sort=alt.EncodingSortField(field='FLIGHTS', op='sum', order='descending'),
@@ -339,10 +340,10 @@ if not breakdown_df.empty:
         order=alt.Order('FLIGHTS:Q', sort='descending'),
         tooltip=[
             alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
-            alt.Tooltip('sum(FLIGHTS):Q', title='Flights', format=',.0f')
+            alt.Tooltip('sum(FLIGHTS):Q', title='Flights', format=TOOLTIP_FORMAT['integer'])
         ]
     ).properties(
-        height=alt.Step(15)  # Fixed step size of 15 pixels per bar
+        height=alt.Step(BAR_CONFIG['horizontal_compact']['step'])
     ).configure_mark(
         opacity=0.9
     )
@@ -369,18 +370,18 @@ if top_df is not None and not top_df.empty:
     )
     display_df['LABEL'] = display_df.apply(lambda r: f"{str(r.get('FLIGHT_NUMBER',''))} — {r.get('AIRLINE_NAME','')} — {r.get('DAY','')} ({r.get('GATE_NAME','N/A')})", axis=1)
     
-    chart_top = alt.Chart(display_df).mark_bar(color='#4FC3F7', size=10).encode(
+    chart_top = alt.Chart(display_df).mark_bar(color=COLORS['utilization'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
         x=alt.X('DWELL_MINUTES:Q', title='Dwell Minutes'),
         y=alt.Y('LABEL:N', sort='-x', title='Flight (Gate)',
-                axis=alt.Axis(labelLimit=300)),
+                axis=alt.Axis(labelLimit=AXIS_CONFIG['label_limit_long'])),
         tooltip=[
             alt.Tooltip('FLIGHT_NUMBER:N', title='Flight'),
             alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
             alt.Tooltip('GATE_NAME:N', title='Gate'),
-            alt.Tooltip('DWELL_MINUTES:Q', title='Dwell Minutes', format='.0f')
+            alt.Tooltip('DWELL_MINUTES:Q', title='Dwell Minutes', format=TOOLTIP_FORMAT['integer'])
         ]
     ).properties(
-        height=alt.Step(20)
+        height=alt.Step(BAR_CONFIG['horizontal']['step'])
     )
     
     st.altair_chart(chart_top, use_container_width=True)

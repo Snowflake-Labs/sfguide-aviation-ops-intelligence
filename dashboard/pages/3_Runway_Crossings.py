@@ -7,6 +7,7 @@ import utils
 import colors
 import plotly.graph_objects as go
 import altair as alt
+from chart_config import BAR_CONFIG, COLORS, TOOLTIP_FORMAT
 
 st.set_page_config(page_title="Runway Crossings", page_icon="🛤️", layout="wide")
 utils.apply_custom_css()
@@ -616,40 +617,40 @@ if not analytics_df.empty:
         col_d1, col_d2, col_d3 = st.columns(3)
         with col_d1:
             st.markdown("**By Flight Count**")
-            chart_d1 = alt.Chart(dir_agg).mark_bar(size=15, color='#4FC3F7').encode(
+            chart_d1 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS['blue']).encode(
                 x=alt.X('crossing_count:Q', title='Number of Crossings'),
                 y=alt.Y('DIRECTION:N', title='Direction'),
                 tooltip=[
                     alt.Tooltip('DIRECTION:N', title='Direction'),
-                    alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
                 ]
-            ).properties(height=alt.Step(25))
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_large']['step']))
             
             st.altair_chart(chart_d1, use_container_width=True)
         
         with col_d2:
             st.markdown("**By Total Time (min)**")
-            chart_d2 = alt.Chart(dir_agg).mark_bar(size=15, color='#FF9800').encode(
+            chart_d2 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS['orange']).encode(
                 x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
                 y=alt.Y('DIRECTION:N', title='Direction'),
                 tooltip=[
                     alt.Tooltip('DIRECTION:N', title='Direction'),
-                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
                 ]
-            ).properties(height=alt.Step(25))
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_large']['step']))
             
             st.altair_chart(chart_d2, use_container_width=True)
         
         with col_d3:
             st.markdown("**By Avg Time Per Crossing (sec)**")
-            chart_d3 = alt.Chart(dir_agg).mark_bar(size=15, color='#E91E63').encode(
+            chart_d3 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS['pink']).encode(
                 x=alt.X('avg_duration_s:Q', title='Avg Duration (sec)'),
                 y=alt.Y('DIRECTION:N', title='Direction'),
                 tooltip=[
                     alt.Tooltip('DIRECTION:N', title='Direction'),
-                    alt.Tooltip('avg_duration_s:Q', title='Seconds', format=',.0f')
+                    alt.Tooltip('avg_duration_s:Q', title='Seconds', format=TOOLTIP_FORMAT['integer'])
                 ]
-            ).properties(height=alt.Step(25))
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_large']['step']))
             
             st.altair_chart(chart_d3, use_container_width=True)
     
@@ -783,7 +784,7 @@ if not analytics_df.empty:
                             ascending=[True, False]
                         )
                         
-                        chart_gate = alt.Chart(df_gate_long).mark_bar(size=10).encode(
+                        chart_gate = alt.Chart(df_gate_long).mark_bar(size=BAR_CONFIG['horizontal_compact']['size']).encode(
                             x=alt.X('sum(count):Q', title='Number of Crossings'),
                             y=alt.Y('GATE_NAME:N',
                                     sort=alt.EncodingSortField(field='count', op='sum', order='descending'),
@@ -792,10 +793,10 @@ if not analytics_df.empty:
                             order=alt.Order('count:Q', sort='descending'),
                             tooltip=[
                                 alt.Tooltip('DIRECTION:N', title='Direction'),
-                                alt.Tooltip('sum(count):Q', title='Crossings', format=',.0f')
+                                alt.Tooltip('sum(count):Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
                             ]
                         ).properties(
-                            height=alt.Step(20)  # Fixed step size of 20 pixels per bar
+                            height=alt.Step(BAR_CONFIG['horizontal']['step'])
                         ).configure_mark(
                             opacity=0.9
                         )
@@ -840,14 +841,14 @@ if not analytics_df.empty:
             st.markdown("**By Crossing Count**")
             airline_count_sorted = airline_agg.sort_values('crossing_count', ascending=False)
             
-            chart_a1 = alt.Chart(airline_count_sorted).mark_bar(color='#4FC3F7', size=12).encode(
+            chart_a1 = alt.Chart(airline_count_sorted).mark_bar(color=COLORS['blue'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
                 x=alt.X('crossing_count:Q', title='Crossings'),
-                y=alt.Y('airline_name:N', sort='-x', title=''),
+                y=alt.Y('airline_name:N', sort='-x', title='Airline'),
                 tooltip=[
                     alt.Tooltip('airline_name:N', title='Airline'),
-                    alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
                 ]
-            ).properties(height=alt.Step(18))
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
             
             st.altair_chart(chart_a1, use_container_width=True)
         
@@ -855,14 +856,14 @@ if not analytics_df.empty:
             st.markdown("**By Total Time (min)**")
             airline_dur_sorted = airline_agg.sort_values('total_duration_min', ascending=False)
             
-            chart_a2 = alt.Chart(airline_dur_sorted).mark_bar(color='#FF9800', size=12).encode(
+            chart_a2 = alt.Chart(airline_dur_sorted).mark_bar(color=COLORS['orange'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
                 x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
-                y=alt.Y('airline_name:N', sort='-x', title=''),
+                y=alt.Y('airline_name:N', sort='-x', title='Airline'),
                 tooltip=[
                     alt.Tooltip('airline_name:N', title='Airline'),
-                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
                 ]
-            ).properties(height=alt.Step(18))
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
             
             st.altair_chart(chart_a2, use_container_width=True)
     else:
@@ -935,15 +936,15 @@ if not analytics_df.empty:
             st.markdown("**By Crossing Count**")
             flight_count_sorted = flight_agg.sort_values('crossing_count', ascending=False)
             
-            chart_f1 = alt.Chart(flight_count_sorted).mark_bar(color='#66BB6A', size=12).encode(
+            chart_f1 = alt.Chart(flight_count_sorted).mark_bar(color=COLORS['green'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
                 x=alt.X('crossing_count:Q', title='Crossings'),
                 y=alt.Y('LABEL:N', sort='-x', title='Flight',
-                        axis=alt.Axis(labelLimit=200)),
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal_compact']['label_limit'])),
                 tooltip=[
                     alt.Tooltip('LABEL:N', title='Flight'),
-                    alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
                 ]
-            ).properties(height=alt.Step(18))
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
             
             st.altair_chart(chart_f1, use_container_width=True)
         
@@ -951,15 +952,15 @@ if not analytics_df.empty:
             st.markdown("**By Total Time (min)**")
             flight_dur_sorted = flight_agg.sort_values('total_duration_min', ascending=False)
             
-            chart_f2 = alt.Chart(flight_dur_sorted).mark_bar(color='#9C27B0', size=12).encode(
+            chart_f2 = alt.Chart(flight_dur_sorted).mark_bar(color=COLORS['purple'], size=BAR_CONFIG['horizontal_compact']['size']).encode(
                 x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
                 y=alt.Y('LABEL:N', sort='-x', title='Flight',
-                        axis=alt.Axis(labelLimit=200)),
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal_compact']['label_limit'])),
                 tooltip=[
                     alt.Tooltip('LABEL:N', title='Flight'),
-                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
                 ]
-            ).properties(height=alt.Step(18))
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
             
             st.altair_chart(chart_f2, use_container_width=True)
     else:
