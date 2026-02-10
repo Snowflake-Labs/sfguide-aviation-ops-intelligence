@@ -799,7 +799,7 @@ if not analytics_df.empty:
                             y=alt.Y('GATE_NAME:N',
                                     sort=alt.EncodingSortField(field='count', op='sum', order='descending'),
                                     title='Gate',
-                                    scale=alt.Scale(paddingInner=0.1, paddingOuter=0.05)),
+                                    scale=alt.Scale(paddingInner=0.05, paddingOuter=0.025)),
                             color=alt.Color('DIRECTION:N'),
                             order=alt.Order('count:Q', sort='descending'),
                             tooltip=[
@@ -855,7 +855,7 @@ if not analytics_df.empty:
             chart_a1 = alt.Chart(airline_count_sorted).mark_bar(color='#4FC3F7', size=12).encode(
                 x=alt.X('crossing_count:Q', title='Crossings'),
                 y=alt.Y('airline_name:N', sort='-x', title='',
-                        scale=alt.Scale(paddingInner=0.1, paddingOuter=0.05)),
+                        scale=alt.Scale(paddingInner=0.05, paddingOuter=0.025)),
                 tooltip=[
                     alt.Tooltip('airline_name:N', title='Airline'),
                     alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
