@@ -364,6 +364,8 @@ if top_df is not None and not top_df.empty:
     display_df = top_df.copy()
     if hide_unknown_airlines:
         display_df = display_df[display_df['AIRLINE_CODE'].astype(str).str.strip().str.upper() != 'UNK']
+    # Ensure sorted by dwell minutes descending (longest first)
+    display_df = display_df.sort_values('DWELL_MINUTES', ascending=False)
     # Prefer DB-provided airline_name (from HELPER_AIRLINE_DIM fallback), then fallback to mapping
     if 'AIRLINE_NAME' not in display_df.columns:
         display_df['AIRLINE_NAME'] = None
