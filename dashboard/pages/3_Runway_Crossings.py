@@ -43,7 +43,23 @@ with st.sidebar:
         st.warning("No airport databases found yet. Run the installer first.")
         st.stop()
 
-    st.header("Filters")
+    start_d, end_d = ui_components.render_date_range_picker(
+        min_date,
+        max_date,
+        key_prefix="runway_crossings",
+        default_days_back=7
+    )
+    
+    infra_selection = ui_components.render_map_layers_selector(
+        session, db_prefix, 
+        sidebar=True, 
+        default_preset="all",
+        key_prefix="runway_crossings"
+    )
+    selected_infra_layers = infra_selection['layers']
+    show_infra_tags = infra_selection['show_tags']
+    
+    st.divider()
     
     st.subheader("Direction")
     dir_south_north = st.checkbox("South → North", value=True, key="dir_sn")
@@ -59,31 +75,10 @@ with st.sidebar:
     )
     # Hide Unknown functionality removed - always show all airlines
     hide_unknown_airlines = False
-    st.divider()
-    st.subheader("Date Range")
-    start_d, end_d = ui_components.render_date_range_picker(
-        min_date,
-        max_date,
-        key_prefix="runway_crossings",
-        default_days_back=7
-    )
-    
-    st.divider()
-    st.subheader("Map Layers")
     # Show Flights functionality removed - flights are always hidden
     show_flights = False
     max_flights = 100
     sample_points = 30
-    
-    # Infrastructure Layers - use new dynamic selector
-    infra_selection = ui_components.render_map_layers_selector(
-        session, db_prefix, 
-        sidebar=True, 
-        default_preset="all",
-        key_prefix="runway_crossings"
-    )
-    selected_infra_layers = infra_selection['layers']
-    show_infra_tags = infra_selection['show_tags']
 
 # Build direction filter
 directions = []

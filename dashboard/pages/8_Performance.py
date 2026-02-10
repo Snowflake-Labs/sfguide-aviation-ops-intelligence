@@ -43,15 +43,14 @@ db_prefix = f"{selected_db}.{schema}"
 min_date, max_date = get_ops_date_range(session, db_prefix)
 
 with st.sidebar:
-    st.divider()
-    st.header("Filters")
-
     start_date, end_date = ui_components.render_date_range_picker(
         min_date,
         max_date,
         key_prefix="performance",
         default_days_back=7
     )
+    
+    st.divider()
 
     @st.cache_data(ttl=600)
     def get_airlines(_session, _db_prefix: str):

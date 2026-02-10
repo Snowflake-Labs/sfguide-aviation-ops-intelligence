@@ -45,15 +45,18 @@ tzid = utils.get_airport_tzid(session, db_prefix)
 
 # Controls
 with st.sidebar:
-    st.subheader("Live Controls")
+    # No Date Range for Live View (it's real-time)
+    
+    st.divider()
     lookback_min = st.slider("Live window (minutes)", min_value=1, max_value=120, value=60, step=1)
     show_trajectories = st.checkbox("Show trajectories", value=False, help="Display flight trajectory trails")
     if show_trajectories:
         trails_hours = st.select_slider("Trajectory window (hours)", options=[1, 2, 3, 4, 6], value=2)
     else:
         trails_hours = 2  # Default value when not shown
+    
     st.divider()
-
+    
     infra_selection = ui_components.render_map_layers_selector(
         session,
         db_prefix,

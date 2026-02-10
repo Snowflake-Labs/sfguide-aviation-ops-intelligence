@@ -47,7 +47,6 @@ with st.sidebar:
         st.warning("No airport databases found yet. Run the installer first.")
         st.stop()
 
-    st.subheader("Filters")
     min_date, max_date = utils.get_date_range(session)
     start_date, end_date = ui_components.render_date_range_picker(
         min_date,

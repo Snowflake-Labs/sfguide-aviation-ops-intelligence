@@ -69,11 +69,10 @@ if max_date is None:
 
 # Sidebar controls
 with st.sidebar:
-    st.header("Flight Selection")
-    
-    # Date picker
+    # Date picker (single date for flight selection)
+    st.subheader("Date")
     selected_date = st.date_input(
-        "Select Date of the Flight",
+        "Select Date",
         value=max_date if max_date else local_today,
         min_value=min_date if min_date else local_today - timedelta(days=365),
         max_value=max_date if max_date else local_today

@@ -59,6 +59,16 @@ with st.sidebar:
     time_start = datetime.strptime("00:00", "%H:%M").time()
     time_end = datetime.strptime("23:59", "%H:%M").time()
     
+    # Infrastructure Layers
+    infra_selection = ui_components.render_map_layers_selector(
+        session, db_prefix, 
+        sidebar=True, 
+        default_preset="all",
+        key_prefix="airport_activity"
+    )
+    selected_infra_layers = infra_selection['layers']
+    show_infra_tags = infra_selection['show_tags']
+    
     st.divider()
     
     # Visualization Type
@@ -105,16 +115,6 @@ with st.sidebar:
         )
         st.session_state['hex_sample_pct'] = int(hex_sample_pct)
         st.session_state.setdefault('hex_max_cells', 4000)
-    
-    # Infrastructure Layers - use new dynamic selector
-    infra_selection = ui_components.render_map_layers_selector(
-        session, db_prefix, 
-        sidebar=True, 
-        default_preset="all",
-        key_prefix="airport_activity"
-    )
-    selected_infra_layers = infra_selection['layers']
-    show_infra_tags = infra_selection['show_tags']
     
     show_all_flights = st.checkbox("Show All Flights", value=False, help="Render all flight paths in the selected time window")
     
