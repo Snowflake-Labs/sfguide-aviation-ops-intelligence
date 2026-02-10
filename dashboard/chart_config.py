@@ -15,13 +15,13 @@ BAR_CONFIG = {
         'size': 40,           # Bar thickness in pixels
     },
     'horizontal_compact': {
-        'step': 18,           # For charts with many items
-        'size': 12,
+        'step': 20,           # For charts with many items (now same as horizontal)
+        'size': 15,           # Bar thickness (now same as horizontal)
         'label_limit': 200
     },
     'horizontal_large': {
-        'step': 25,           # For charts with few items
-        'size': 15,
+        'step': 20,           # For charts with few items (now same as horizontal)
+        'size': 15,           # Bar thickness (now same as horizontal)
         'label_limit': 200
     }
 }
