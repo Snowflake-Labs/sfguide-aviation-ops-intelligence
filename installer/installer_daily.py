@@ -1666,7 +1666,7 @@ $$;
 -- Enrichment task (daily - aligns with batch ADS-B ingest cadence)
 CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
   WAREHOUSE = {warehouse}
-  AFTER {database}.{schema}.TASK_INGEST_ADSB
+  SCHEDULE = 'USING CRON 15 2 * * * UTC'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
 AS
   CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
@@ -3362,7 +3362,7 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.PROPERTIES_RUNWAYS (
 -- This is a derived convenience layer for dashboards; ADSB_DATA remains the raw point truth.
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.ADSB_DATA_LOCAL
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH airport AS (
@@ -3426,7 +3426,7 @@ DROP VIEW IF EXISTS {database}.{schema}.ADSB_DATA_LOVAL;
 -- These keys avoid reliance on callsign/flight_key for historical data.
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH ap AS (
@@ -3482,7 +3482,7 @@ agg AS (
 SELECT * FROM agg;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH ap AS (
@@ -3547,7 +3547,7 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY w.ICAO_HEX, w.service_date, w.ts ORDER B
 -- 2. Gate Analysis summaries
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_GATE_TIME
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH per_gate AS (
@@ -3580,7 +3580,7 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY ground_session_id ORDER BY dwell_seconds
 -- 2b. GATE_UTIL_DAILY (used by Gate Analysis)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_GATE_UTIL_DAILY
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 SELECT
@@ -3596,7 +3596,7 @@ GROUP BY date, gate_name;
 -- 2c. GATE_AIRLINE_DWELL_DAILY (used by Gate Analysis)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH dim_icao AS (
@@ -3668,7 +3668,7 @@ GROUP BY 1,2,3;
 -- 2d. Gate dwell with airline (pre-joined for dashboard performance)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_DWELL_WITH_AIRLINE
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH dim_icao AS (
@@ -3947,7 +3947,7 @@ LEFT JOIN gate_actual ga
 -- 3. Flight Traffic derived tables (used by Traffic Analysis)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
-  TARGET_LAG = '2 HOUR'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH ap AS (
@@ -3967,7 +3967,7 @@ CROSS JOIN ap
 GROUP BY date;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 SELECT
@@ -3982,7 +3982,7 @@ GROUP BY hour;
 -- Precompute per-flight-per-day header fields for fast UI: Airline + Origin/Destination
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRACKER_FLIGHT_LIST
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH airport AS (
@@ -4076,7 +4076,7 @@ LEFT JOIN best b
 WHERE a.is_local_od_any = 1 OR a.touched_airport_any = 1;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_TRAFFIC_DAILY
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH ap AS (
@@ -4097,7 +4097,7 @@ GROUP BY date, airline_code;
 
 -- Schedule-vs-actual delay rollup (used by Traffic Analysis)
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_DELAY_DAILY
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH ap AS (
@@ -4177,7 +4177,7 @@ GROUP BY date, airline;
 -- 4. Runway Crossings derived tables
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.RUNWAY_CROSSINGS_DETAILED
-  TARGET_LAG = 'DOWNSTREAM'
+  TARGET_LAG = '24 HOUR'
   WAREHOUSE = {warehouse}
 AS
 WITH runway_union AS (
@@ -4584,30 +4584,22 @@ UNION ALL SELECT 'HELPER_FLIGHT_SCHEDULE_RAW', COUNT(*) FROM {database}.{schema}
 -- START AUTOMATED TASKS
 -- =============================================================================
 
--- Start root tasks (CRON scheduled, no predecessors)
--- These are the entry points that trigger the cascade
-
--- Start the ADS-B ingestion task (daily batch cadence, triggers cascade)
+-- Start the ADS-B ingestion task (daily batch cadence)
 ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
+
+-- Start ADS-B enrichment task (adds schedule flight number/key to points)
+ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB RESUME;
 
 -- Note: TASK_FLIGHT_SCHEDULE is resumed in 04_flight_schedule.sql
 -- (only exists if API key was provided during install)
 
--- Start aircraft meta enrichment (daily, independent) - keeps ADSB_DATA.AIRCRAFT_DESC populated
-ALTER TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META RESUME;
-
--- Start derived refresh (daily, monitoring/QA metrics) - updates HELPER_MONITOR_LAST_REFRESH
+-- Start derived refresh (daily)
 ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED RESUME;
 
--- Start dependent tasks (AFTER clause, triggered by predecessors)
--- These must be resumed AFTER their parent tasks
+-- Start aircraft meta enrichment (daily) - keeps ADSB_DATA.AIRCRAFT_DESC populated
+ALTER TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META RESUME;
 
--- Start ADS-B enrichment task (runs after data ingestion)
--- Adds schedule flight number/key to points
-ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB RESUME;
-
--- Resume dynamic tables (incremental refresh with 1-hour target lag)
--- These will auto-refresh between manual task triggers
+-- Resume dynamic tables (incremental refresh)
 ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS RESUME;
 ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS RESUME;
 ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_GATE_TIME RESUME;
