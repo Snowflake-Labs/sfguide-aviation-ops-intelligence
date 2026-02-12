@@ -2,15 +2,25 @@
 
 A Snowflake-native solution for batch aviation analytics using ADS-B flight tracking, flight schedules, and airport infrastructure data. Deploy per-airport analytics solutions with automated pipelines and interactive dashboards.
 
-## ✈️ Key Features
+## 📖 What Does This Application Do?
 
-- **Batch Flight Tracking**: Daily ADS-B ingestion (previous day)
-- **Historical Backfill**: Automated download of historical ADS-B data from GitHub releases
-- **Flight Schedule Integration**: Daily ingestion from Aviationstack API with automated matching
-- **Gate Analytics**: Aircraft-to-gate proximity analysis with dwell time calculations
-- **Runway Crossing Detection**: Identifies taxiing aircraft crossing runways
-- **Infrastructure Visualization**: Dynamic rendering of runways, taxiways, gates, and terminals
-- **Multi-Airport Support**: Deploy separate databases for multiple airports
+The Airport Analytics Platform is a comprehensive aviation operations intelligence solution built entirely on Snowflake. It provides:
+
+### Core Capabilities
+- **Airport Infrastructure Visualization**: Renders interactive maps showing runways, taxiways, gates, terminals, and real-time aircraft positions
+- **Historical Data Analysis**: Downloads and processes historical flight tracking data for trend analysis and reporting
+- **Gate Operations Analytics**: 
+  - Calculates aircraft proximity to gates
+  - Tracks gate occupancy and dwell times
+  - Identifies gate assignment patterns
+- **Runway Safety Monitoring**: Detects aircraft crossing active runways during taxi operations
+- **Multi-Airport Deployments**: Supports deploying separate analytics instances for different airports
+
+### How It Works
+1. **Data Ingestion**: Automated daily tasks pull ADS-B data from external APIs and process flight schedules
+2. **Data Processing**: Snowflake procedures and dynamic tables transform raw data into analytics-ready datasets
+3. **Analytics Engine**: Calculates proximity, crossings, dwell times, and other operational metrics
+4. **Visualization**: Interactive Streamlit dashboards provide real-time insights and historical reporting
 
 ---
 
@@ -42,7 +52,7 @@ A Snowflake-native solution for batch aviation analytics using ADS-B flight trac
 
 ## 🚀 Deployment via GitHub Integration
 
-#### Step 1: Set Up Secrets in Snowflake
+#### Step 1: Create a Database for Installer
 
 Execute these queries in a Snowflake worksheet (replace placeholders):
 
@@ -102,33 +112,67 @@ GRANT USAGE ON STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD TO RO
 
 ---
 
-## 📁 Repository Structure
+## 🎯 What to Do After Deployment
 
-```
-sd_poc/
-├── installer/                    # Installer Streamlit app
-│   ├── streamlit_app.py         # Main installer (4966 lines)
-│   └── airlines.csv             # Airline reference data
-│
-├── dashboard/                    # Dashboard Streamlit app
-│   ├── streamlit_app.py         # Main entry point
-│   ├── utils.py                 # Shared utilities (1243 lines)
-│   └── pages/                   # 8 dashboard pages
-│       ├── 1_Flight_Tracker.py
-│       ├── 2_Ground_Activity.py
-│       ├── 3_Runway_Crossings.py
-│       ├── 4_Traffic_Analysis.py
-│       ├── 5_Gate_Analysis.py
-│       ├── 7_Monitoring.py
-│       └── 8_Performance.py
-│
-└── README.md                    # This deployment guide
-```
+Once you've completed the GitHub Integration steps above, follow these steps to configure and launch your airport analytics:
 
-Official Streamlit in Snowflake docs
+### Step 1: Access the Installer App
 
+1. Navigate to **Streamlit** in your Snowflake UI (left sidebar)
+2. Find and open **Airport Analytics Installer** 
+3. In the app:
+- Select the airport for which you want to install the solution
+- Optionally specify the Aviationstack API Key
+- Specify how many days in the past you want to backfill (for demo we recommend 5-7days)
+- Click "Execute in Snowflake"
+
+### Step 2: Monitor Deployment
+
+The installer will show real-time progress:
+- Infrastructure download and processing
+- Database and schema creation
+- External access integration setup
+- Task and procedure creation
+- Historical data backfill (if enabled)
+
+Deployment typically takes **15-60 minutes** depending on:
+- Airport size and complexity
+- Whether historical backfill is enabled
+- Network speed for data downloads
+
+### Step 4: Launch the Dashboard
+
+Once deployment is complete:
+
+1. Navigate to **Streamlit** in Snowflake
+2. Open **Airport Analytics Dashboard** in `AVIA_INSTALLER.PUBLIC`
+3. **Select your airport from the airport selector** from the dropdown (e.g., `San Diego International Airport (SAN)`)
+4. Explore the dashboard pages:
+
+- **Flight Tracker**: Historical flight positions on interactive map
+- **Ground Activity**: Aircraft movements, taxi patterns, and ground operations
+- **Runway Crossings**: Safety analysis of aircraft crossing active runways
+- **Traffic Analysis**: Flight volume trends, peak times, and traffic patterns
+- **Gate Analysis**: Gate utilization, occupancy rates, and dwell time analytics
+- **Monitoring**: System health, data freshness, and pipeline status
+- **Performance**: Query performance and optimization metrics
+
+## Initial Data
+
+After deployment, data will begin populating:
+
+- **Infrastructure Data**: Available immediately after deployment
+- **Historical Data**: Available within 1 hours if backfill was enabled
+
+**Note**: The dashboard will show limited data until the first task executions complete. Check the **Monitoring** page to track data pipeline status.
+
+---
+
+## 📚 Additional Resources
+
+- **[Streamlit in Snowflake Documentation](https://docs.snowflake.com/en/developer-guide/streamlit/about-streamlit)**: Official Streamlit in Snowflake docs
 - **[Aviationstack API Docs](https://aviationstack.com/documentation)**: Flight schedule API reference
-
 - **[ADSB.lol API](https://api.adsb.lol/)**: ADS-B data source
+- **[Overture Maps](https://overturemaps.org/)**: Open-source geospatial data
 
-- **[Overture Maps](https://overturemaps.org/)**: Open-source geospatial data 
+---
