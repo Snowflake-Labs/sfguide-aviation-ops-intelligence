@@ -4602,10 +4602,12 @@ UNION ALL SELECT 'HELPER_FLIGHT_SCHEDULE_RAW', COUNT(*) FROM {database}.{schema}
 -- Dynamic Tables are set to TARGET_LAG = DOWNSTREAM (no auto-refresh polling).
 -- This ensures event-driven refresh: tables update once per day when data lands.
 
-CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
-  WAREHOUSE = {warehouse}
-  AFTER {database}.{schema}.TASK_REFRESH_DERIVED
+-- Create procedure to refresh all dynamic tables
+CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_REFRESH_ANALYTICS()
+RETURNS STRING
+LANGUAGE SQL
 AS
+$$
 BEGIN
   -- Refresh all Dynamic Tables in dependency order
   
@@ -4629,7 +4631,17 @@ BEGIN
   
   -- Runway analysis
   ALTER DYNAMIC TABLE {database}.{schema}.RUNWAY_CROSSINGS_DETAILED REFRESH;
+  
+  RETURN 'Dynamic tables refreshed successfully';
 END;
+$$;
+
+-- Create task to call the refresh procedure
+CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
+  WAREHOUSE = {warehouse}
+  AFTER {database}.{schema}.TASK_REFRESH_DERIVED
+AS
+  CALL {database}.{schema}.PROC_REFRESH_ANALYTICS();
 
 -- =============================================================================
 -- START AUTOMATED TASKS
