@@ -2089,7 +2089,21 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
 AS
   CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
 
--- Task is created SUSPENDED. To start:
+-- Task DAG: TASK_REFRESH_DERIVED runs after TASK_ENRICH_ADSB completes
+CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_DERIVED
+  WAREHOUSE = {warehouse}
+  AFTER {database}.{schema}.TASK_ENRICH_ADSB
+AS
+  CALL {database}.{schema}.PROC_REFRESH_DERIVED();
+
+-- Task DAG: TASK_REFRESH_ANALYTICS runs after TASK_REFRESH_DERIVED completes
+CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
+  WAREHOUSE = {warehouse}
+  AFTER {database}.{schema}.TASK_REFRESH_DERIVED
+AS
+  CALL {database}.{schema}.PROC_REFRESH_ANALYTICS();
+
+-- Tasks are created SUSPENDED. To start:
 -- ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
 
 -- NOTE: Do NOT run an initial ingestion call during install.
@@ -4568,12 +4582,6 @@ if (schedTaskExists > 0 && schedTaskRunning === 0) {{
 return 'OK';
 $$;
 
-CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_DERIVED
-  WAREHOUSE = {warehouse}
-  AFTER {database}.{schema}.TASK_ENRICH_ADSB
-AS
-  CALL {database}.{schema}.PROC_REFRESH_DERIVED();
-
 -- Verify derived tables
 SELECT 'GATE_ANALYSIS_ADSB_GROUND_POINTS' AS tbl, COUNT(*) AS cnt FROM {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
 UNION ALL SELECT 'GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS', COUNT(*) FROM {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS
@@ -4635,17 +4643,6 @@ BEGIN
   RETURN 'Dynamic tables refreshed successfully';
 END;
 $$;
-
--- Create task to call the refresh procedure
-CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
-  WAREHOUSE = {warehouse}
-  AFTER {database}.{schema}.TASK_REFRESH_DERIVED
-AS
-  CALL {database}.{schema}.PROC_REFRESH_ANALYTICS();
-
--- =============================================================================
--- START AUTOMATED TASKS
--- =============================================================================
 
 -- =============================================================================
 -- START AUTOMATED TASKS
