@@ -2090,7 +2090,7 @@ AS
 -- Set up Task DAG dependencies (now that TASK_INGEST_ADSB exists)
 -- -----------------------------------------------------------------------------
 -- TASK_ENRICH_ADSB was created earlier without dependencies; now add them
-ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB MODIFY AFTER {database}.{schema}.TASK_INGEST_ADSB;
+ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB SET AFTER = {database}.{schema}.TASK_INGEST_ADSB;
 
 -- Task is created SUSPENDED. To start:
 -- ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
