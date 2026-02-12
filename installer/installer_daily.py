@@ -3456,8 +3456,9 @@ DROP VIEW IF EXISTS {database}.{schema}.ADSB_DATA_LOVAL;
 -- These keys avoid reliance on callsign/flight_key for historical data.
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS
-  TARGET_LAG = DOWNSTREAM
+  TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
+  INITIALIZE = ON_SCHEDULE
 AS
 WITH ap AS (
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
@@ -3610,8 +3611,9 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY ground_session_id ORDER BY dwell_seconds
 -- 2b. GATE_UTIL_DAILY (used by Gate Analysis)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_GATE_UTIL_DAILY
-  TARGET_LAG = DOWNSTREAM
+  TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
+  INITIALIZE = ON_SCHEDULE
 AS
 SELECT
   service_date AS date,
@@ -3626,8 +3628,9 @@ GROUP BY date, gate_name;
 -- 2c. GATE_AIRLINE_DWELL_DAILY (used by Gate Analysis)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY
-  TARGET_LAG = DOWNSTREAM
+  TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
+  INITIALIZE = ON_SCHEDULE
 AS
 WITH dim_icao AS (
   SELECT
@@ -3698,8 +3701,9 @@ GROUP BY 1,2,3;
 -- 2d. Gate dwell with airline (pre-joined for dashboard performance)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_DWELL_WITH_AIRLINE
-  TARGET_LAG = DOWNSTREAM
+  TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
+  INITIALIZE = ON_SCHEDULE
 AS
 WITH dim_icao AS (
   SELECT
@@ -3977,8 +3981,9 @@ LEFT JOIN gate_actual ga
 -- 3. Flight Traffic derived tables (used by Traffic Analysis)
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
-  TARGET_LAG = DOWNSTREAM
+  TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
+  INITIALIZE = ON_SCHEDULE
 AS
 WITH ap AS (
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
@@ -3997,8 +4002,9 @@ CROSS JOIN ap
 GROUP BY date;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
-  TARGET_LAG = DOWNSTREAM
+  TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
+  INITIALIZE = ON_SCHEDULE
 AS
 SELECT
   DATE_TRUNC('HOUR', TIMESTAMP) AS hour,
@@ -4012,8 +4018,9 @@ GROUP BY hour;
 -- Precompute per-flight-per-day header fields for fast UI: Airline + Origin/Destination
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRACKER_FLIGHT_LIST
-  TARGET_LAG = DOWNSTREAM
+  TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
+  INITIALIZE = ON_SCHEDULE
 AS
 WITH airport AS (
   SELECT
@@ -4106,8 +4113,9 @@ LEFT JOIN best b
 WHERE a.is_local_od_any = 1 OR a.touched_airport_any = 1;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_TRAFFIC_DAILY
-  TARGET_LAG = DOWNSTREAM
+  TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
+  INITIALIZE = ON_SCHEDULE
 AS
 WITH ap AS (
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
@@ -4127,8 +4135,9 @@ GROUP BY date, airline_code;
 
 -- Schedule-vs-actual delay rollup (used by Traffic Analysis)
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_DELAY_DAILY
-  TARGET_LAG = DOWNSTREAM
+  TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
+  INITIALIZE = ON_SCHEDULE
 AS
 WITH ap AS (
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
@@ -4207,8 +4216,9 @@ GROUP BY date, airline;
 -- 4. Runway Crossings derived tables
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.RUNWAY_CROSSINGS_DETAILED
-  TARGET_LAG = DOWNSTREAM
+  TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
+  INITIALIZE = ON_SCHEDULE
 AS
 WITH runway_union AS (
   SELECT
