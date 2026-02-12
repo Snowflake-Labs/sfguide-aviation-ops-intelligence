@@ -131,4 +131,4 @@ Official Streamlit in Snowflake docs
 
 - **[ADSB.lol API](https://api.adsb.lol/)**: ADS-B data source
 
-- **[Overture Maps](https://overturemaps.org/)**: Open-source geospatial data for airport infrastructure
+- **[Overture Maps](https://overturemaps.org/)**: Open-source geospatial data 

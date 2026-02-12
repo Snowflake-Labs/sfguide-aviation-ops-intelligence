@@ -1663,14 +1663,8 @@ BEGIN
 END;
 $$;
 
--- Enrichment task (daily - aligns with batch ADS-B ingest cadence)
--- Note: This task is initially created without SCHEDULE or AFTER clause because TASK_INGEST_ADSB doesn't exist yet.
--- Dependencies are added later in the installer after TASK_INGEST_ADSB is created.
--- Tasks are created SUSPENDED by default, so this won't execute until we add the AFTER dependency and RESUME.
-CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
-  WAREHOUSE = {warehouse}
-AS
-  CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
+-- Note: TASK_ENRICH_ADSB is created later (after TASK_INGEST_ADSB exists)
+-- so it can use AFTER clause at creation time.
 
 -- -----------------------------------------------------------------------------
 -- Aircraft description enrichment (lookup by ICAO_HEX, then backfill ADSB_DATA)
@@ -2087,10 +2081,13 @@ AS
   CALL {database}.{schema}.PROC_ADSB_INGEST_AND_ETL();
 
 -- -----------------------------------------------------------------------------
--- Set up Task DAG dependencies (now that TASK_INGEST_ADSB exists)
+-- Task DAG: TASK_ENRICH_ADSB runs after TASK_INGEST_ADSB completes
 -- -----------------------------------------------------------------------------
--- TASK_ENRICH_ADSB was created earlier without dependencies; now add them
-ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB SET AFTER = {database}.{schema}.TASK_INGEST_ADSB;
+CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
+  WAREHOUSE = {warehouse}
+  AFTER {database}.{schema}.TASK_INGEST_ADSB
+AS
+  CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
 
 -- Task is created SUSPENDED. To start:
 -- ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
