@@ -1664,11 +1664,11 @@ END;
 $$;
 
 -- Enrichment task (daily - aligns with batch ADS-B ingest cadence)
--- Note: Only depends on TASK_INGEST_ADSB since TASK_FLIGHT_SCHEDULE is optional
--- and created later in the installer (if API key provided)
+-- Note: This task is initially created without dependencies (TASK_INGEST_ADSB doesn't exist yet).
+-- Dependencies are added later in the installer after TASK_INGEST_ADSB is created.
 CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
   WAREHOUSE = {warehouse}
-  AFTER {database}.{schema}.TASK_INGEST_ADSB
+  SCHEDULE = '9999 YEARS'
 AS
   CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
 
@@ -2085,6 +2085,14 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_INGEST_ADSB
   ALLOW_OVERLAPPING_EXECUTION = FALSE
 AS
   CALL {database}.{schema}.PROC_ADSB_INGEST_AND_ETL();
+
+-- -----------------------------------------------------------------------------
+-- Set up Task DAG dependencies (now that TASK_INGEST_ADSB exists)
+-- -----------------------------------------------------------------------------
+-- TASK_ENRICH_ADSB was created earlier without dependencies; now add them
+ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB SUSPEND;
+ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB MODIFY AFTER {database}.{schema}.TASK_INGEST_ADSB;
+ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB SET SCHEDULE = NULL;
 
 -- Task is created SUSPENDED. To start:
 -- ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
