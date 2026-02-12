@@ -4650,25 +4650,24 @@ AS
 -- =============================================================================
 -- START AUTOMATED TASKS
 -- =============================================================================
--- Note: For Task DAG, resume child tasks first, then root task last
+-- CRITICAL: For Task DAG, resume child tasks first (leaf to root), then root task LAST
+-- This prevents "Unable to update graph" errors
 
--- Start the ADS-B ingestion task (daily batch cadence)
-ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
+-- Resume leaf tasks first (deepest in DAG)
+ALTER TASK {database}.{schema}.TASK_REFRESH_ANALYTICS RESUME;
 
--- Start ADS-B enrichment task (adds schedule flight number/key to points)
+-- Resume middle-level tasks (work backwards toward root)
+ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED RESUME;
 ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB RESUME;
+
+-- Resume independent scheduled tasks (not part of INGEST DAG)
+ALTER TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META RESUME;
 
 -- Note: TASK_FLIGHT_SCHEDULE is resumed in 04_flight_schedule.sql
 -- (only exists if API key was provided during install)
 
--- Start derived refresh (daily)
-ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED RESUME;
-
--- Start analytics refresh (manual Dynamic Table refresh after enrichment)
-ALTER TASK {database}.{schema}.TASK_REFRESH_ANALYTICS RESUME;
-
--- Start aircraft meta enrichment (daily) - keeps ADSB_DATA.AIRCRAFT_DESC populated
-ALTER TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META RESUME;
+-- Resume ROOT task LAST (must be last to avoid graph update errors)
+ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
 
 -- Resume dynamic tables (incremental refresh)
 ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS RESUME;
@@ -5088,8 +5087,37 @@ CALL {database}.{schema}.PROC_BACKFILL_FLIGHT_SCHEDULE_WINDOW({backfill_days}, 0
 
 -- -----------------------------------------------------------------------------
 -- START THE TASK
+-- IMPORTANT: This task must be resumed BEFORE the root task (TASK_INGEST_ADSB)
+-- If TASK_INGEST_ADSB is already running, suspend it first before resuming this task
 -- -----------------------------------------------------------------------------
+-- Check if root task is running and suspend it temporarily
+BEGIN
+  -- Check if TASK_INGEST_ADSB is running
+  LET task_state STRING;
+  SELECT state INTO :task_state 
+  FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(
+    TASK_NAME => 'TASK_INGEST_ADSB',
+    SCHEDULED_TIME_RANGE_START => DATEADD('minute', -5, CURRENT_TIMESTAMP())
+  ))
+  LIMIT 1;
+  
+  -- If root task exists and is started, suspend it
+  BEGIN
+    ALTER TASK {database}.{schema}.TASK_INGEST_ADSB SUSPEND;
+  EXCEPTION
+    WHEN OTHER THEN NULL; -- Ignore if task doesn't exist or already suspended
+  END;
+END;
+
+-- Resume the flight schedule task
 ALTER TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE RESUME;
+
+-- Resume the root task (if it was suspended)
+BEGIN
+  ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
+EXCEPTION
+  WHEN OTHER THEN NULL; -- Ignore if task doesn't exist
+END;
 
 -- Note: TASK_ENRICH_ADSB runs in parallel with TASK_FLIGHT_SCHEDULE (both after TASK_INGEST_ADSB)
 -- The enrichment procedure handles cases where flight schedule data is not yet available.
