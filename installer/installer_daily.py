@@ -5343,9 +5343,9 @@ def main():
         api_key = (api_key_override or "").strip() or api_key_default
     else:
         api_key = st.sidebar.text_input(
-            "Aviationstack API Key",
+            "Aviationstack API Key (Optional)",
             type="password",
-            help="Required for flight schedule ingestion. Prefer Streamlit secrets: AVIATIONSTACK_API_KEY",
+            help="Required for flight schedule ingestion.",
         )
         if not api_key:
             st.sidebar.caption("⚠️ Flight schedule requires API key")
