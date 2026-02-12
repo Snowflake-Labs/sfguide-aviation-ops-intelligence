@@ -4657,11 +4657,26 @@ ALTER TASK {database}.{schema}.TASK_REFRESH_ANALYTICS RESUME;
 ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED RESUME;
 ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB RESUME;
 
+-- Resume FLIGHT_SCHEDULE task if it exists (optional, only created when API key provided)
+-- Use stored procedure to handle optional task gracefully
+CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_RESUME_OPTIONAL_TASK(task_name STRING)
+RETURNS STRING
+LANGUAGE SQL
+AS
+$$
+BEGIN
+  EXECUTE IMMEDIATE 'ALTER TASK ' || task_name || ' RESUME';
+  RETURN 'Resumed: ' || task_name;
+EXCEPTION
+  WHEN STATEMENT_ERROR THEN
+    RETURN 'Task does not exist (skipped): ' || task_name;
+END;
+$$;
+
+CALL {database}.{schema}.PROC_RESUME_OPTIONAL_TASK('{database}.{schema}.TASK_FLIGHT_SCHEDULE');
+
 -- Resume independent scheduled tasks (not part of INGEST DAG)
 ALTER TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META RESUME;
-
--- Note: TASK_FLIGHT_SCHEDULE is resumed in 04_flight_schedule.sql
--- (only exists if API key was provided during install)
 
 -- Resume ROOT task LAST (must be last to avoid graph update errors)
 ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
@@ -5083,47 +5098,11 @@ AS
 CALL {database}.{schema}.PROC_BACKFILL_FLIGHT_SCHEDULE_WINDOW({backfill_days}, 0);
 
 -- -----------------------------------------------------------------------------
--- Helper procedure to safely resume child task when root may be running
--- -----------------------------------------------------------------------------
-CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_RESUME_CHILD_TASK(
-  root_task_name STRING,
-  child_task_name STRING
-)
-RETURNS STRING
-LANGUAGE SQL
-AS
-$$
-BEGIN
-  -- Suspend root task if it exists
-  BEGIN
-    EXECUTE IMMEDIATE 'ALTER TASK ' || root_task_name || ' SUSPEND';
-  EXCEPTION
-    WHEN OTHER THEN NULL;
-  END;
-  
-  -- Resume child task
-  EXECUTE IMMEDIATE 'ALTER TASK ' || child_task_name || ' RESUME';
-  
-  -- Resume root task
-  BEGIN
-    EXECUTE IMMEDIATE 'ALTER TASK ' || root_task_name || ' RESUME';
-  EXCEPTION
-    WHEN OTHER THEN NULL;
-  END;
-  
-  RETURN 'Tasks resumed: ' || child_task_name || ' (child), ' || root_task_name || ' (root)';
-END;
-$$;
-
--- -----------------------------------------------------------------------------
 -- START THE TASK
--- IMPORTANT: This task must be resumed BEFORE the root task (TASK_INGEST_ADSB)
--- If TASK_INGEST_ADSB is already running, suspend it first before resuming this task
+-- NOTE: Task will be resumed in 05_derived.sql along with all other tasks
+-- in the correct leaf-to-root order to avoid graph update errors
 -- -----------------------------------------------------------------------------
-CALL {database}.{schema}.PROC_RESUME_CHILD_TASK(
-  '{database}.{schema}.TASK_INGEST_ADSB',
-  '{database}.{schema}.TASK_FLIGHT_SCHEDULE'
-);
+-- Task TASK_FLIGHT_SCHEDULE is created suspended and will be resumed later
 
 -- Note: TASK_ENRICH_ADSB runs in parallel with TASK_FLIGHT_SCHEDULE (both after TASK_INGEST_ADSB)
 -- The enrichment procedure handles cases where flight schedule data is not yet available.
