@@ -21,6 +21,22 @@ if not airports:
     st.write("Run the installer Streamlit app first, then come back here.")
     st.stop()
 
-st.switch_page("pages/0_Live_View.py")
+# Auto-redirect to Flight Tracker (requires Streamlit 1.26.0+)
+# If st.switch_page is not available, users can manually select pages from the sidebar
+try:
+    st.switch_page("pages/1_Flight_Tracker.py")
+except AttributeError:
+    st.title("Airport Analytics Dashboard")
+    st.info("👈 Select a page from the sidebar to begin exploring airport analytics.")
+    st.markdown("""
+    ### Available Pages:
+    - **Flight Tracker**: Historical flight positions and playback
+    - **Ground Activity**: Aircraft movements and taxi patterns
+    - **Runway Crossings**: Safety analysis of runway crossings
+    - **Traffic Analysis**: Flight volume trends and patterns
+    - **Gate Analysis**: Gate utilization and dwell times
+    - **Monitoring**: System health and data pipeline status
+    - **Performance**: Query performance metrics
+    """)
 
 
