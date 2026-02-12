@@ -1664,9 +1664,11 @@ END;
 $$;
 
 -- Enrichment task (daily - aligns with batch ADS-B ingest cadence)
+-- Note: Only depends on TASK_INGEST_ADSB since TASK_FLIGHT_SCHEDULE is optional
+-- and created later in the installer (if API key provided)
 CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
   WAREHOUSE = {warehouse}
-  AFTER {database}.{schema}.TASK_INGEST_ADSB, {database}.{schema}.TASK_FLIGHT_SCHEDULE
+  AFTER {database}.{schema}.TASK_INGEST_ADSB
 AS
   CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
 
@@ -5069,6 +5071,9 @@ CALL {database}.{schema}.PROC_BACKFILL_FLIGHT_SCHEDULE_WINDOW({backfill_days}, 0
 -- START THE TASK
 -- -----------------------------------------------------------------------------
 ALTER TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE RESUME;
+
+-- Note: TASK_ENRICH_ADSB runs in parallel with TASK_FLIGHT_SCHEDULE (both after TASK_INGEST_ADSB)
+-- The enrichment procedure handles cases where flight schedule data is not yet available.
 
 -- Verify
 SELECT 'Flight schedule setup complete. Task is now running.' AS status;
