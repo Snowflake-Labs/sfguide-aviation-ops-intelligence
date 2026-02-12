@@ -3154,6 +3154,10 @@ HANDLER = 'run_retry'
 AS
 $$
 from datetime import datetime, timedelta
+import time
+
+MAX_GATE_ATTEMPTS = 10
+GATE_SLEEP_SECONDS = 30
 
 def _get_status(session, date_str):
     try:
