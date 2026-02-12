@@ -3401,7 +3401,7 @@ WITH airport AS (
     COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid,
     geometry AS airport_geom
   FROM {database}.{schema}.PROPERTIES_AIRPORT
-  LIMIT 1
+  -- LIMIT 1 removed: breaks change tracking; table has only 1 row
 ),
 pts AS (
   SELECT
@@ -3462,7 +3462,7 @@ AS
 WITH ap AS (
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
   FROM {database}.{schema}.PROPERTIES_AIRPORT
-  LIMIT 1
+  -- LIMIT 1 removed: breaks change tracking; table has only 1 row
 ),
 ground AS (
   SELECT
@@ -4224,7 +4224,7 @@ pts AS (
     FLIGHT,
     TO_DATE(CONVERT_TIMEZONE('UTC', 
       (SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') 
-       FROM {database}.{schema}.PROPERTIES_AIRPORT LIMIT 1), 
+       FROM {database}.{schema}.PROPERTIES_AIRPORT), 
       TIMESTAMP)) AS service_date,
     TIMESTAMP AS ts, 
     LOCATION AS geom, 
