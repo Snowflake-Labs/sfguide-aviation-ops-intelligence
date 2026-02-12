@@ -5321,34 +5321,14 @@ def main():
     
     st.sidebar.divider()
     st.sidebar.subheader("🔑 API Key")
-    # Prefer secrets/env for deployments; allow optional override via UI.
-    api_key_from_secrets = None
-    try:
-        if hasattr(st, "secrets") and ("AVIATIONSTACK_API_KEY" in st.secrets):
-            api_key_from_secrets = str(st.secrets.get("AVIATIONSTACK_API_KEY") or "").strip() or None
-    except Exception:
-        api_key_from_secrets = None
-
-    api_key_from_env = (os.getenv("AVIATIONSTACK_API_KEY", "") or "").strip() or None
-    api_key_default = api_key_from_secrets or api_key_from_env
-
-    if api_key_default:
-        st.sidebar.success("✅ Aviationstack API key loaded (secrets/env)")
-        api_key_override = st.sidebar.text_input(
-            "Override Aviationstack API Key (optional)",
-            type="password",
-            value="",
-            help="Leave blank to use Streamlit secrets/env. Get a key at aviationstack.com",
-        )
-        api_key = (api_key_override or "").strip() or api_key_default
-    else:
-        api_key = st.sidebar.text_input(
-            "Aviationstack API Key (Optional)",
-            type="password",
-            help="Required for flight schedule ingestion.",
-        )
-        if not api_key:
-            st.sidebar.caption("⚠️ Flight schedule requires API key")
+    # API key must be manually entered by user - no auto-loading from files/env
+    api_key = st.sidebar.text_input(
+        "Aviationstack API Key (Optional)",
+        type="password",
+        help="Required for flight schedule ingestion. Get a key at aviationstack.com",
+    )
+    if not api_key:
+        st.sidebar.caption("⚠️ Flight schedule ingestion requires API key")
 
     st.sidebar.divider()
     st.sidebar.subheader("🗂️ Historical Backfill")
