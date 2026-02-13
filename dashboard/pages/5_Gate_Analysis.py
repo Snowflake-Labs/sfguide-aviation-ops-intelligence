@@ -10,8 +10,12 @@ from datetime import datetime, timedelta
 import json
 import sys
 import plotly.graph_objects as go
+import altair as alt
 sys.path.append('..')
 import utils
+from config import BAR_CONFIG, AXIS_CONFIG, TOOLTIP_FORMAT
+from config.colors import Hex as COLORS
+import ui_components
 
 # Page configuration
 st.set_page_config(
@@ -32,33 +36,24 @@ db_prefix = f"{db}.{schema}"
 
 # Header
 st.title("🛬 Gate Analysis")
+st.info("🏷️ **IATA Level 2 relevant** — Gate dwell time impacts slot coordination and capacity management")
 utils.render_timezone_caption(session, db_prefix)
 
 # Sidebar filters
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 
     if not selected_db:
         st.warning("No airport databases found yet. Run the installer first.")
         st.stop()
 
-    st.subheader("Filters")
     min_date, max_date = utils.get_date_range(session)
-    try:
-        local_today = datetime.fromisoformat(utils.get_airport_local_today(session, db_prefix)).date()
-    except Exception:
-        local_today = datetime.now().date()
-    start_date, end_date = (
-        (max_date - timedelta(days=7), max_date) if max_date else (local_today - timedelta(days=7), local_today)
+    start_date, end_date = ui_components.render_date_range_picker(
+        min_date,
+        max_date,
+        key_prefix="gate_analysis",
+        default_days_back=7
     )
-    date_range = st.date_input(
-        "Date Range",
-        value=(start_date, end_date)
-    )
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        start_date, end_date = date_range
-    else:
-        start_date = end_date = date_range
 @st.cache_data(ttl=300)
 def get_gate_fill_rate(_session, start_dt, end_dt, _db_prefix):
     """Calculate gate fill rate from GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS vs GATE_ANALYSIS_FLIGHT_GATE_TIME."""
@@ -191,11 +186,13 @@ else:
 
 with st.sidebar:
     airline_selected = st.selectbox("Airline", options=airline_options, index=0)
-    hide_unknown_airlines = st.checkbox("Hide Unknown (UNK)", value=False)
+    # Hide Unknown functionality removed - always show all airlines
+    hide_unknown_airlines = False
 
-# Sections
-st.subheader("🏢 Gate Utilization by Airline (Stacked Minutes by Gate)")
-# Use full gate-by-airline breakdown to build stacked absolute minutes per airline
+# Gate Utilization by Airline
+st.subheader("🏢 Gate Utilization by Airline (Dwell Minutes)")
+
+# Prepare data for comparison
 breakdown_all = get_gate_by_airline_breakdown(session, start_date, end_date)
 if breakdown_all is not None and not breakdown_all.empty:
     breakdown_all = breakdown_all.copy()
@@ -205,40 +202,43 @@ if breakdown_all is not None and not breakdown_all.empty:
     if airline_selected != "All Airlines":
         breakdown_all = breakdown_all[breakdown_all['AIRLINE_NAME'] == airline_selected]
     air_gate_pivot = breakdown_all.pivot_table(index='AIRLINE_NAME', columns='GATE_NAME', values='DWELL_MINUTES', aggfunc='sum', fill_value=0)
-    air_gate_pivot = air_gate_pivot.round(0).sort_index()
-    gate_names = list(air_gate_pivot.columns)
-    base_colors = [
-        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
-        '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#4daf4a', '#984ea3',
-        '#ff7f00', '#377eb8', '#f781bf', '#a65628', '#999999'
-    ]
-    gate_palette = {g: base_colors[i % len(base_colors)] for i, g in enumerate(gate_names)}
-    fig_air = go.Figure()
-    for g in gate_names:
-        fig_air.add_trace(go.Bar(
-            x=air_gate_pivot[g],
-            y=air_gate_pivot.index,
-            name=str(g),
-            orientation='h',
-            marker_color=gate_palette[g],
-            customdata=[str(g)] * len(air_gate_pivot.index),
-            hovertemplate="Gate %{customdata}: %{x:.0f} min<extra></extra>"
-        ))
-    n_rows = len(air_gate_pivot)
-    fig_air.update_layout(
-        barmode='stack',
-        height=min(max(500, 40 * n_rows), 1200),
-        xaxis_title='Dwell Minutes',
-        yaxis_title='Airline',
-        template='plotly_white',
-        bargap=0.1,
-        bargroupgap=0.02,
-        margin=dict(l=160, r=30, t=40, b=40),
-        showlegend=False
+    air_gate_pivot = air_gate_pivot.round(0)
+    
+    # Transform pivot to long format for Altair
+    df_long = air_gate_pivot.reset_index().melt(
+        id_vars='AIRLINE_NAME',
+        var_name='GATE_NAME',
+        value_name='DWELL_MINUTES'
     )
-    st.plotly_chart(fig_air, use_container_width=True)
+    
+    # Sort within each airline so largest segments appear first
+    df_long = df_long.sort_values(
+        ['AIRLINE_NAME', 'DWELL_MINUTES'],
+        ascending=[True, False]
+    )
+    
+    chart = alt.Chart(df_long).mark_bar(size=BAR_CONFIG['horizontal']['size']).encode(
+        x=alt.X('sum(DWELL_MINUTES):Q', title='Dwell Minutes'),
+        y=alt.Y('AIRLINE_NAME:N', 
+                sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
+                title='Airline',
+                axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
+        color=alt.Color('GATE_NAME:N', legend=None),
+        order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
+        tooltip=[
+            alt.Tooltip('GATE_NAME:N', title='Gate'),
+            alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
+        ]
+    ).properties(
+        height=alt.Step(BAR_CONFIG['horizontal']['step'])
+    ).configure_mark(
+        opacity=0.9
+    )
+    
+    st.altair_chart(chart, use_container_width=True)
+
 else:
-    st.info("No airline-gate breakdown available in selected range.")
+    st.info("No utilization data available.")
 
 st.divider()
 
@@ -258,77 +258,89 @@ if breakdown_df is None:
 if hide_unknown_airlines and breakdown_df is not None and not breakdown_df.empty:
     breakdown_df = breakdown_df[breakdown_df['AIRLINE_CODE'].astype(str) != 'UNK']
 
-# Build stacked horizontal bar for dwell minutes by gate
-st.subheader("🧭 Gate Utilization by Gate (Dwell Minutes)")
+st.subheader("🧭 Gate Utilization by Dwell Minutes")
 if not breakdown_df.empty:
     dwell_pivot = breakdown_df.pivot_table(index='GATE_NAME', columns='AIRLINE_CODE', values='DWELL_MINUTES', aggfunc='sum', fill_value=0)
-    dwell_pivot = dwell_pivot.sort_index()
-    fig_dwell = go.Figure()
-    # Use consistent color set per airline code
-    airlines_codes = list(dwell_pivot.columns)
-    palette = {}
-    base_colors = [
-        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
-        '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#4daf4a', '#984ea3',
-        '#ff7f00', '#377eb8', '#f781bf', '#a65628', '#999999'
-    ]
-    for i, code in enumerate(airlines_codes):
-        palette[code] = base_colors[i % len(base_colors)]
-    for code in airlines_codes:
-        fig_dwell.add_trace(go.Bar(
-            x=dwell_pivot[code],
-            y=dwell_pivot.index,
-            name=code_to_name.get(str(code), str(code)),
-            orientation='h',
-            marker_color=palette.get(code, '#1f77b4')
-        ))
-    n_gates = len(dwell_pivot)
-    fig_dwell.update_layout(
-        barmode='stack',
-        height=min(max(800, 28 * n_gates), 2400),
-        xaxis_title='Dwell Minutes',
-        yaxis_title='Gate',
-        template='plotly_white',
-        bargap=0.1,
-        bargroupgap=0.02,
-        margin=dict(l=160, r=20, t=40, b=40),
-        yaxis=dict(tickfont=dict(size=11))
+    
+    # Transform to long format
+    df_dwell_long = dwell_pivot.reset_index().melt(
+        id_vars='GATE_NAME',
+        var_name='AIRLINE_CODE',
+        value_name='DWELL_MINUTES'
     )
-    st.plotly_chart(fig_dwell, use_container_width=True)
+    
+    # Sort within each gate so largest segments appear first
+    df_dwell_long = df_dwell_long.sort_values(
+        ['GATE_NAME', 'DWELL_MINUTES'],
+        ascending=[True, False]
+    )
+    
+    # Add airline names for tooltip
+    df_dwell_long['AIRLINE_NAME'] = df_dwell_long['AIRLINE_CODE'].apply(lambda c: code_to_name.get(str(c), str(c)))
+    
+    chart_dwell = alt.Chart(df_dwell_long).mark_bar(size=BAR_CONFIG['horizontal_compact']['size']).encode(
+        x=alt.X('sum(DWELL_MINUTES):Q', title='Dwell Minutes'),
+        y=alt.Y('GATE_NAME:N',
+                sort=alt.EncodingSortField(field='DWELL_MINUTES', op='sum', order='descending'),
+                title='Gate',
+                axis=alt.Axis(labelFontSize=11)),
+        color=alt.Color('AIRLINE_CODE:N', legend=None),
+        order=alt.Order('DWELL_MINUTES:Q', sort='descending'),
+        tooltip=[
+            alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+            alt.Tooltip('sum(DWELL_MINUTES):Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
+        ]
+    ).properties(
+        height=alt.Step(BAR_CONFIG['horizontal_compact']['step'])
+    ).configure_mark(
+        opacity=0.9
+    )
+    
+    st.altair_chart(chart_dwell, use_container_width=True)
 else:
     st.info("No gate dwell data available.")
 
 st.divider()
 
-# Build stacked horizontal bar for number of flights by gate
-st.subheader("🧮 Gate Utilization by Gate (Number of Flights)")
+st.subheader("🧮 Gate Utilization by Number of Flights")
 if not breakdown_df.empty:
     flights_pivot = breakdown_df.pivot_table(index='GATE_NAME', columns='AIRLINE_CODE', values='FLIGHTS', aggfunc='sum', fill_value=0)
-    flights_pivot = flights_pivot.sort_index()
-    fig_flights = go.Figure()
-    airline_codes = list(flights_pivot.columns)
-    # reuse palette
-    for code in airline_codes:
-        fig_flights.add_trace(go.Bar(
-            x=flights_pivot[code],
-            y=flights_pivot.index,
-            name=code_to_name.get(str(code), str(code)),
-            orientation='h',
-            marker_color=palette.get(code, '#1f77b4')
-        ))
-    n_gates_f = len(flights_pivot)
-    fig_flights.update_layout(
-        barmode='stack',
-        height=min(max(800, 28 * n_gates_f), 2400),
-        xaxis_title='Flights',
-        yaxis_title='Gate',
-        template='plotly_white',
-        bargap=0.1,
-        bargroupgap=0.02,
-        margin=dict(l=160, r=20, t=40, b=40),
-        yaxis=dict(tickfont=dict(size=11))
+    
+    # Transform to long format
+    df_flights_long = flights_pivot.reset_index().melt(
+        id_vars='GATE_NAME',
+        var_name='AIRLINE_CODE',
+        value_name='FLIGHTS'
     )
-    st.plotly_chart(fig_flights, use_container_width=True)
+    
+    # Sort within each gate so largest segments appear first
+    df_flights_long = df_flights_long.sort_values(
+        ['GATE_NAME', 'FLIGHTS'],
+        ascending=[True, False]
+    )
+    
+    # Add airline names for tooltip
+    df_flights_long['AIRLINE_NAME'] = df_flights_long['AIRLINE_CODE'].apply(lambda c: code_to_name.get(str(c), str(c)))
+    
+    chart_flights = alt.Chart(df_flights_long).mark_bar(size=BAR_CONFIG['horizontal_compact']['size']).encode(
+        x=alt.X('sum(FLIGHTS):Q', title='Flights'),
+        y=alt.Y('GATE_NAME:N',
+                sort=alt.EncodingSortField(field='FLIGHTS', op='sum', order='descending'),
+                title='Gate',
+                axis=alt.Axis(labelFontSize=11)),
+        color=alt.Color('AIRLINE_CODE:N', legend=None),
+        order=alt.Order('FLIGHTS:Q', sort='descending'),
+        tooltip=[
+            alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+            alt.Tooltip('sum(FLIGHTS):Q', title='Flights', format=TOOLTIP_FORMAT['integer'])
+        ]
+    ).properties(
+        height=alt.Step(BAR_CONFIG['horizontal_compact']['step'])
+    ).configure_mark(
+        opacity=0.9
+    )
+    
+    st.altair_chart(chart_flights, use_container_width=True)
 else:
     st.info("No gate flights data available.")
 
@@ -340,57 +352,72 @@ if top_df is not None and not top_df.empty:
     display_df = top_df.copy()
     if hide_unknown_airlines:
         display_df = display_df[display_df['AIRLINE_CODE'].astype(str).str.strip().str.upper() != 'UNK']
-    # Prefer DB-provided airline_name (from HELPER_AIRLINE_DIM fallback), then fallback to mapping
+    
+    display_df = display_df.sort_values('DWELL_MINUTES', ascending=False)
+    
     if 'AIRLINE_NAME' not in display_df.columns:
         display_df['AIRLINE_NAME'] = None
     display_df['AIRLINE_NAME'] = display_df['AIRLINE_NAME'].fillna(
         display_df['AIRLINE_CODE'].apply(lambda c: code_to_name.get(str(c), str(c)))
     )
     display_df['LABEL'] = display_df.apply(lambda r: f"{str(r.get('FLIGHT_NUMBER',''))} — {r.get('AIRLINE_NAME','')} — {r.get('DAY','')} ({r.get('GATE_NAME','N/A')})", axis=1)
-    fig_top = go.Figure(go.Bar(
-        x=display_df['DWELL_MINUTES'].round(0),
-        y=display_df['LABEL'],
-        orientation='h',
-        marker_color='#4FC3F7'
-    ))
-    n_rows = len(display_df)
-    fig_top.update_layout(
-        height=min(max(600, 28 * n_rows), 1200),
-        xaxis_title='Dwell Minutes',
-        yaxis_title='Flight (Gate)',
-        template='plotly_white',
-        margin=dict(l=180, r=20, t=40, b=40)
+    
+    chart_top = alt.Chart(display_df).mark_bar(color=COLORS.UTILIZATION, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+        x=alt.X('DWELL_MINUTES:Q', title='Dwell Minutes'),
+        y=alt.Y('LABEL:N', sort='-x', title='Flight (Gate)',
+                axis=alt.Axis(labelLimit=AXIS_CONFIG['label_limit_long'])),
+        tooltip=[
+            alt.Tooltip('FLIGHT_NUMBER:N', title='Flight'),
+            alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+            alt.Tooltip('GATE_NAME:N', title='Gate'),
+            alt.Tooltip('DWELL_MINUTES:Q', title='Dwell Minutes', format=TOOLTIP_FORMAT['integer'])
+        ]
+    ).properties(
+        height=alt.Step(BAR_CONFIG['horizontal']['step'])
     )
-    st.plotly_chart(fig_top, use_container_width=True)
+    
+    st.altair_chart(chart_top, use_container_width=True)
 else:
     st.info("No flights with dwell time found in selected range.")
 
 st.divider()
 
 st.subheader("📊 Gate Usage Heatmap by Day of Week")
+st.caption("**Color Scale:** Teal (low) → Yellow (medium) → Red (high) dwell time. Color intensity shows total time aircraft spent at each gate by day of week.")
 hm_df = get_gate_dow_heatmap(session, start_date, end_date)
 if hm_df is not None and not hm_df.empty:
-    # Map day numbers to names: 0/1.. mapping depends on DB; Snowflake DAYOFWEEK returns 0=Sunday
     day_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     hm_df = hm_df.copy()
     hm_df['DAY_NAME'] = hm_df['DAY_OF_WEEK'].apply(lambda x: day_names[int(x) % 7])
-    # Pivot to matrix: rows = day, cols = gate
-    pivot = hm_df.pivot_table(index='DAY_NAME', columns='GATE_NAME', values='DWELL_MINUTES', aggfunc='sum', fill_value=0)
-    # Reorder rows by week sequence
-    pivot = pivot.reindex(day_names)
-    fig_hm = go.Figure(data=go.Heatmap(
-        z=pivot.values,
-        x=pivot.columns.tolist(),
-        y=pivot.index.tolist(),
-        colorscale='Blues',
-        hovertemplate='Day %{y}<br>Gate %{x}<br>Dwell %{z:.0f} min<extra></extra>'
-    ))
-    fig_hm.update_layout(
-        xaxis_title='Gate',
-        yaxis_title='Day of Week',
-        height=500,
-        template='plotly_white'
+    
+    # Sort gates by natural order (A1, A2, A10 instead of A1, A10, A2)
+    try:
+        import re
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
+        sorted_gates = sorted(hm_df['GATE_NAME'].unique(), key=natural_sort_key)
+    except Exception:
+        sorted_gates = sorted(hm_df['GATE_NAME'].unique())
+    
+    # Ensure day order
+    hm_df['DAY_NAME'] = pd.Categorical(hm_df['DAY_NAME'], categories=day_names, ordered=True)
+    hm_df['GATE_NAME'] = pd.Categorical(hm_df['GATE_NAME'], categories=sorted_gates, ordered=True)
+    
+    chart_hm = alt.Chart(hm_df).mark_rect().encode(
+        x=alt.X('GATE_NAME:O', title='Gate', sort=sorted_gates, axis=alt.Axis(labelAngle=-45)),
+        y=alt.Y('DAY_NAME:O', title='Day of Week', sort=day_names),
+        color=alt.Color('DWELL_MINUTES:Q', 
+                       title='Dwell Time (min)',
+                       scale=alt.Scale(scheme='turbo')),
+        tooltip=[
+            alt.Tooltip('DAY_NAME:O', title='Day'),
+            alt.Tooltip('GATE_NAME:O', title='Gate'),
+            alt.Tooltip('DWELL_MINUTES:Q', title='Dwell Minutes', format='.0f')
+        ]
+    ).properties(
+        height=300
     )
-    st.plotly_chart(fig_hm, use_container_width=True)
+    
+    st.altair_chart(chart_hm, use_container_width=True)
 else:
     st.info("No gate/day-of-week data available for the selected range.")

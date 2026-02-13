@@ -4,6 +4,11 @@ from snowflake.snowpark.context import get_active_session
 import pydeck as pdk
 from datetime import datetime, timedelta
 import utils
+import plotly.graph_objects as go
+import altair as alt
+from config import BAR_CONFIG, TOOLTIP_FORMAT, core, Metrics
+from config.colors import Hex as COLORS, get_intensity_color_3point
+import ui_components
 
 st.set_page_config(page_title="Runway Crossings", page_icon="🛤️", layout="wide")
 utils.apply_custom_css()
@@ -14,8 +19,9 @@ db = utils.get_selected_database()
 schema = 'PUBLIC'
 db_prefix = f"{db}.{schema}"
 
-st.title("🛤️ Runway Crossings Analysis")
-st.caption("Detects aircraft crossing the runway while taxiing on the ground (S→N or N→S). Filters out takeoffs and landings using: max speed ≤45 kts, time on runway ≤120 sec, and straight-line distance ≤220m.")
+st.title("🛤️ On-Ground Runway Crossings")
+st.caption("Detects aircraft crossing the runway while taxiing on the ground (wheels-on-ground only). Filters out takeoffs, landings, and airborne traffic using: max speed ≤45 kts, time on runway ≤120 sec, and straight-line distance ≤220m.")
+st.info("🏷️ **IATA Level 2 relevant** — This metric is operationally sensitive for slot-controlled airports")
 
 utils.render_timezone_caption(session, db_prefix)
 tzid = utils.get_airport_tzid(session, db_prefix)
@@ -30,62 +36,21 @@ min_date, max_date = utils.get_table_date_bounds(
 )
 
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 
 with st.sidebar:
     if not selected_db:
         st.warning("No airport databases found yet. Run the installer first.")
         st.stop()
 
-    st.header("Filters")
-    
-    st.subheader("Direction")
-    dir_south_north = st.checkbox("South → North", value=True, key="dir_sn")
-    dir_north_south = st.checkbox("North → South", value=True, key="dir_ns")
-    
-    st.divider()
-    st.subheader("Metric")
-    metric_type = st.radio(
-        "Display metric:",
-        options=["flight_count", "total_duration"],
-        format_func=lambda x: "Flight Count" if x == "flight_count" else "Total Duration (min)",
-        index=0
-    )
-    hide_unknown_airlines = st.checkbox("Hide Unknown (UNK)", value=False)
-    st.divider()
-    start_d, end_d, _period = utils.render_time_period_filter(
+    start_d, end_d = ui_components.render_date_range_picker(
         min_date,
         max_date,
         key_prefix="runway_crossings",
-        default_period="Last 7 Days",
+        default_days_back=7
     )
     
-    st.divider()
-    st.subheader("Map Layers")
-    show_flights = st.checkbox("Show Flights", value=False, help="Display trajectories of flights that performed crossings")
-    if show_flights:
-        max_flights = st.slider(
-            "Max flights to display",
-            min_value=10,
-            max_value=500,
-            value=100,
-            step=10,
-            help="Limit number of flight paths to prevent overload"
-        )
-        sample_points = st.slider(
-            "Points per flight (%)",
-            min_value=10,
-            max_value=100,
-            value=30,
-            step=10,
-            help="Percentage of points to show per flight (reduces detail but improves performance)"
-        )
-    else:
-        max_flights = 100
-        sample_points = 30
-    
-    # Infrastructure Layers - use new dynamic selector
-    infra_selection = utils.render_infrastructure_selector(
+    infra_selection = ui_components.render_map_layers_selector(
         session, db_prefix, 
         sidebar=True, 
         default_preset="all",
@@ -93,6 +58,33 @@ with st.sidebar:
     )
     selected_infra_layers = infra_selection['layers']
     show_infra_tags = infra_selection['show_tags']
+    
+    st.divider()
+    
+    st.subheader("Direction")
+    dir_south_north = st.checkbox("South → North", value=True, key="dir_sn")
+    dir_north_south = st.checkbox("North → South", value=True, key="dir_ns")
+    
+    st.divider()
+    
+    # Display metric
+    metric_type = ui_components.render_metric_selector(
+        key_prefix="runway_crossings",
+        sidebar=True
+    )
+    
+    # Aggregation
+    aggregation_type = ui_components.render_aggregation_selector(
+        key_prefix="runway_crossings",
+        sidebar=True
+    )
+    
+    # Hide Unknown functionality removed - always show all airlines
+    hide_unknown_airlines = False
+    # Show Flights functionality removed - flights are always hidden
+    show_flights = False
+    max_flights = 100
+    sample_points = 30
 
 # Build direction filter
 directions = []
@@ -105,17 +97,22 @@ if not directions:
     st.warning("⚠️ Please select at least one direction filter.")
     st.stop()
 
-@st.cache_data(ttl=600)
-def get_crossing_summary(_session, start_d, end_d, dirs):
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
+def get_crossing_summary(_session, start_d, end_d, dirs, aggregation_type):
     """Get overall crossing counts and stats"""
     dir_filter = "','".join(dirs)
     local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
+    
+    # Calculate aggregation parameters
+    agg_params = utils.calculate_aggregation_params(start_d, end_d, aggregation_type)
+    divisor = agg_params['divisor']
+    
     q = f"""
     SELECT
-      COUNT(DISTINCT flight_key) AS total_flights,
-      COUNT(*) AS total_crossings,
+      ROUND(COUNT(DISTINCT flight_key) / {divisor}) AS total_flights,
+      ROUND(COUNT(*) / {divisor}) AS total_crossings,
       AVG(duration_s) AS avg_duration_s,
-      SUM(duration_s)/60.0 AS total_duration_min
+      ROUND(SUM(duration_s)/60.0 / {divisor}) AS total_duration_min
     FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
     WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
       AND direction IN ('{dir_filter}')
@@ -125,20 +122,25 @@ def get_crossing_summary(_session, start_d, end_d, dirs):
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=600)
-def get_crossing_aggregates(_session, start_d, end_d, dirs, metric):
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
+def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_type):
     """
     Aggregate crossings by H3 cell for heatmap visualization.
     metric: 'flight_count' or 'total_duration'
+    aggregation_type: 'sum' or 'daily_average'
     """
     dir_filter = "','".join(dirs)
     local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
     
-    if metric == 'flight_count':
-        agg_expr = 'COUNT(DISTINCT flight_key) AS metric_value'
+    # Calculate aggregation parameters
+    agg_params = utils.calculate_aggregation_params(start_d, end_d, aggregation_type)
+    divisor = agg_params['divisor']
+    
+    if metric == Metrics.FLIGHT_COUNT:
+        agg_expr = f'ROUND(COUNT(DISTINCT flight_key) / {divisor}) AS metric_value'
         metric_label = 'flights'
     else:
-        agg_expr = 'SUM(duration_s)/60.0 AS metric_value'
+        agg_expr = f'ROUND(SUM(duration_s)/60.0 / {divisor}) AS metric_value'
         metric_label = 'minutes'
     
     q = f"""
@@ -172,7 +174,7 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric):
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
 def get_crossing_analytics(_session, start_d, end_d, dirs):
     """Get ALL crossing events with flight/airline data for analytics (no limit)"""
     dir_filter = "','".join(dirs)
@@ -194,7 +196,7 @@ def get_crossing_analytics(_session, start_d, end_d, dirs):
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
 def get_crossing_details(_session, start_d, end_d, dirs, limit=100):
     """Get recent crossing events for table display (limited)"""
     dir_filter = "','".join(dirs)
@@ -238,7 +240,7 @@ def get_runway_geometry(_session):
 
 # Infrastructure layers now use utils.get_infrastructure_layers()
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
 def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
     """Get flight trajectories for aircraft that performed crossings with schedule info"""
     dir_filter = "','".join(dirs)
@@ -294,8 +296,8 @@ def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
 
 # Fetch data
 with st.spinner("Loading crossing data..."):
-    summary_df = get_crossing_summary(session, start_d, end_d, directions)
-    agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type)
+    summary_df = get_crossing_summary(session, start_d, end_d, directions, aggregation_type)
+    agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type, aggregation_type)
     analytics_df = get_crossing_analytics(session, start_d, end_d, directions)  # For charts (all data)
     details_df = get_crossing_details(session, start_d, end_d, directions)  # For table (limited to 100)
     runway_df = get_runway_geometry(session)
@@ -310,17 +312,22 @@ if summary_df.empty or summary_df.iloc[0]['TOTAL_CROSSINGS'] == 0:
     st.stop()
 
 summary = summary_df.iloc[0]
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("Total Crossings", f"{int(summary['TOTAL_CROSSINGS']):,}")
-with col2:
-    st.metric("Unique Flights", f"{int(summary['TOTAL_FLIGHTS']):,}")
-with col3:
-    st.metric("Avg Duration", f"{summary['AVG_DURATION_S']:.1f} sec")
-with col4:
-    st.metric("Total Duration", f"{summary['TOTAL_DURATION_MIN']:.1f} min")
+
+# Render KPI metrics using reusable component
+ui_components.render_kpi_metrics(
+    metrics_data={
+        'crossings': summary['TOTAL_CROSSINGS'],
+        'flights': summary['TOTAL_FLIGHTS'],
+        'avg_duration_s': summary['AVG_DURATION_S'],
+        'total_duration_min': summary['TOTAL_DURATION_MIN']
+    },
+    aggregation_type=aggregation_type
+)
 
 st.divider()
+
+# Remove redundant refetch - data already fetched above
+# agg_df is already available from line 312
 
 # Map visualization
 st.subheader("📍 Crossing Density Heatmap")
@@ -449,21 +456,16 @@ else:
         # Group by flight and create altitude-colored segments
         flights_grouped = flight_paths_sampled.groupby('FLIGHT_KEY')
         
-        # Altitude gradient colors (same as Flight Tracker)
-        low_rgb = (151, 231, 239)  # Cyan - low altitude
-        high_rgb = (217, 102, 255)  # Purple - high altitude
-        
         def interp_color(alt, min_alt, max_alt):
-            """Interpolate color based on altitude"""
+            """Interpolate color based on altitude using aviation-standard gradient"""
             if pd.isna(alt) or min_alt == max_alt:
                 t = 0.0
             else:
                 t = (alt - min_alt) / (max_alt - min_alt)
                 t = max(0.0, min(1.0, t))
-            r = int(low_rgb[0] + t * (high_rgb[0] - low_rgb[0]))
-            g = int(low_rgb[1] + t * (high_rgb[1] - low_rgb[1]))
-            b = int(low_rgb[2] + t * (high_rgb[2] - low_rgb[2]))
-            return [r, g, b, 200]
+            color = get_intensity_color_3point(t)
+            color[3] = 200
+            return color
         
         segments = []
         for flight_key, group in flights_grouped:
@@ -546,7 +548,7 @@ else:
     
     st.pydeck_chart(r, use_container_width=True, key="runway_crossings")
     
-    st.caption(f"💡 Hexagon color and height represent {metric_label}. Zoom and tilt for 3D view.")
+    st.caption(f"💡 **Hexagon visualization:** Color (Yellow→Orange→Red) and height both represent {metric_label}. Higher intensity = more crossings/longer duration. Zoom and tilt for 3D view.")
 
 st.divider()
 
@@ -554,35 +556,42 @@ st.divider()
 if not analytics_df.empty:
     # Heatmap: Day of Week x Hour of Day
     st.subheader("📅 Crossing Heatmap (Day of Week × Hour)")
+    st.caption("**Color Scale:** Teal (low) → Yellow (medium) → Red (high) crossing count. Shows temporal patterns of runway crossing activity.")
     
     heat_df = analytics_df.copy()
     local_t_entry = utils.to_airport_local_time(heat_df['T_ENTRY'], tzid)
     heat_df['dow'] = local_t_entry.dt.dayofweek
     heat_df['hour'] = local_t_entry.dt.hour
     
-    # Pivot to create heatmap
-    pivot = heat_df.pivot_table(index='dow', columns='hour', aggfunc='size', fill_value=0)
-    
-    # Reorder days: Mon-Sun
+    # Create day name and hour label
     dow_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    pivot = pivot.reindex([0, 1, 2, 3, 4, 5, 6])
-    pivot.index = dow_names
+    heat_df['DAY_NAME'] = heat_df['dow'].apply(lambda d: dow_names[int(d)])
+    heat_df['HOUR_LABEL'] = heat_df['hour'].apply(lambda h: f"{int(h):02d}:00")
     
-    import plotly.graph_objects as go
-    fig_heat = go.Figure(data=go.Heatmap(
-        z=pivot.values,
-        x=[f"{h:02d}:00" for h in pivot.columns],
-        y=pivot.index.tolist(),
-        colorscale='Blues',
-        hovertemplate='%{y}<br>Hour: %{x}<br>Crossings: %{z}<extra></extra>'
-    ))
-    fig_heat.update_layout(
-        xaxis_title='Hour of Day',
-        yaxis_title='Day of Week',
-        height=400,
-        template='plotly_white'
+    # Aggregate
+    heatmap_agg = heat_df.groupby(['DAY_NAME', 'HOUR_LABEL']).size().reset_index(name='CROSSINGS')
+    
+    # Ensure proper ordering
+    heatmap_agg['DAY_NAME'] = pd.Categorical(heatmap_agg['DAY_NAME'], categories=dow_names, ordered=True)
+    hour_labels = [f"{h:02d}:00" for h in range(24)]
+    heatmap_agg['HOUR_LABEL'] = pd.Categorical(heatmap_agg['HOUR_LABEL'], categories=hour_labels, ordered=True)
+    
+    chart_heat = alt.Chart(heatmap_agg).mark_rect().encode(
+        x=alt.X('HOUR_LABEL:O', title='Hour of Day', sort=hour_labels),
+        y=alt.Y('DAY_NAME:O', title='Day of Week', sort=dow_names),
+        color=alt.Color('CROSSINGS:Q',
+                       title='Crossings',
+                       scale=alt.Scale(scheme='turbo')),
+        tooltip=[
+            alt.Tooltip('DAY_NAME:O', title='Day'),
+            alt.Tooltip('HOUR_LABEL:O', title='Hour'),
+            alt.Tooltip('CROSSINGS:Q', title='Crossings', format=',.0f')
+        ]
+    ).properties(
+        height=300
     )
-    st.plotly_chart(fig_heat, use_container_width=True)
+    
+    st.altair_chart(chart_heat, use_container_width=True)
     
     st.divider()
     
@@ -600,57 +609,42 @@ if not analytics_df.empty:
         col_d1, col_d2, col_d3 = st.columns(3)
         with col_d1:
             st.markdown("**By Flight Count**")
-            fig_d1 = go.Figure(go.Bar(
-                x=dir_agg['DIRECTION'],
-                y=dir_agg['crossing_count'],
-                marker_color=['#4FC3F7', '#66BB6A'],
-                text=dir_agg['crossing_count'],
-                textposition='outside'
-            ))
-            fig_d1.update_layout(
-                xaxis_title='Direction',
-                yaxis_title='Number of Crossings',
-                height=300,
-                template='plotly_white',
-                showlegend=False
-            )
-            st.plotly_chart(fig_d1, use_container_width=True)
+            chart_d1 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS.BLUE).encode(
+                x=alt.X('crossing_count:Q', title='Number of Crossings'),
+                y=alt.Y('DIRECTION:N', title='Direction'),
+                tooltip=[
+                    alt.Tooltip('DIRECTION:N', title='Direction'),
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_large']['step']))
+            
+            st.altair_chart(chart_d1, use_container_width=True)
         
         with col_d2:
             st.markdown("**By Total Time (min)**")
-            fig_d2 = go.Figure(go.Bar(
-                x=dir_agg['DIRECTION'],
-                y=dir_agg['total_duration_min'],
-                marker_color=['#FF9800', '#9C27B0'],
-                text=dir_agg['total_duration_min'].round(2),
-                textposition='outside'
-            ))
-            fig_d2.update_layout(
-                xaxis_title='Direction',
-                yaxis_title='Total Duration (min)',
-                height=300,
-                template='plotly_white',
-                showlegend=False
-            )
-            st.plotly_chart(fig_d2, use_container_width=True)
+            chart_d2 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS.ORANGE).encode(
+                x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
+                y=alt.Y('DIRECTION:N', title='Direction'),
+                tooltip=[
+                    alt.Tooltip('DIRECTION:N', title='Direction'),
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_large']['step']))
+            
+            st.altair_chart(chart_d2, use_container_width=True)
         
         with col_d3:
             st.markdown("**By Avg Time Per Crossing (sec)**")
-            fig_d3 = go.Figure(go.Bar(
-                x=dir_agg['DIRECTION'],
-                y=dir_agg['avg_duration_s'],
-                marker_color=['#E91E63', '#00BCD4'],
-                text=dir_agg['avg_duration_s'],
-                textposition='outside'
-            ))
-            fig_d3.update_layout(
-                xaxis_title='Direction',
-                yaxis_title='Avg Duration (sec)',
-                height=300,
-                template='plotly_white',
-                showlegend=False
-            )
-            st.plotly_chart(fig_d3, use_container_width=True)
+            chart_d3 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS.PINK).encode(
+                x=alt.X('avg_duration_s:Q', title='Avg Duration (sec)'),
+                y=alt.Y('DIRECTION:N', title='Direction'),
+                tooltip=[
+                    alt.Tooltip('DIRECTION:N', title='Direction'),
+                    alt.Tooltip('avg_duration_s:Q', title='Seconds', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_large']['step']))
+            
+            st.altair_chart(chart_d3, use_container_width=True)
     
     st.divider()
     
@@ -681,58 +675,52 @@ if not analytics_df.empty:
             with col_t1:
                 st.markdown("**By Crossing Count**")
                 # Dynamic colors based on categories present
-                colors = []
+                color_domain = type_agg['flight_type'].tolist()
+                color_range = []
                 for ft in type_agg['flight_type']:
                     if ft == 'Arrival':
-                        colors.append('#00BCD4')
+                        color_range.append('#00BCD4')
                     elif ft == 'Departure':
-                        colors.append('#FF5722')
+                        color_range.append('#FF5722')
                     else:
-                        colors.append('#9E9E9E')  # Gray for Unknown
+                        color_range.append('#9E9E9E')  # Gray for Unknown
                 
-                fig_t1 = go.Figure(go.Bar(
-                    x=type_agg['flight_type'],
-                    y=type_agg['crossing_count'],
-                    marker_color=colors,
-                    text=type_agg['crossing_count'],
-                    textposition='outside'
-                ))
-                fig_t1.update_layout(
-                    xaxis_title='Flight Type',
-                    yaxis_title='Number of Crossings',
-                    height=300,
-                    template='plotly_white',
-                    showlegend=False
-                )
-                st.plotly_chart(fig_t1, use_container_width=True)
+                chart_t1 = alt.Chart(type_agg).mark_bar(size=50).encode(
+                    x=alt.X('flight_type:N', title='Flight Type'),
+                    y=alt.Y('crossing_count:Q', title='Number of Crossings'),
+                    color=alt.Color('flight_type:N', scale=alt.Scale(domain=color_domain, range=color_range), legend=None),
+                    tooltip=[
+                        alt.Tooltip('flight_type:N', title='Flight Type'),
+                        alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
+                    ]
+                ).properties(height=300)
+                
+                st.altair_chart(chart_t1, use_container_width=True)
             
             with col_t2:
                 st.markdown("**By Total Time (min)**")
                 # Dynamic colors for duration chart
-                colors_dur = []
+                color_domain_dur = type_agg['flight_type'].tolist()
+                color_range_dur = []
                 for ft in type_agg['flight_type']:
                     if ft == 'Arrival':
-                        colors_dur.append('#3F51B5')
+                        color_range_dur.append('#3F51B5')
                     elif ft == 'Departure':
-                        colors_dur.append('#E91E63')
+                        color_range_dur.append('#E91E63')
                     else:
-                        colors_dur.append('#757575')  # Dark gray for Unknown
+                        color_range_dur.append('#757575')  # Dark gray for Unknown
                 
-                fig_t2 = go.Figure(go.Bar(
-                    x=type_agg['flight_type'],
-                    y=type_agg['total_duration_min'],
-                    marker_color=colors_dur,
-                    text=type_agg['total_duration_min'].round(2),
-                    textposition='outside'
-                ))
-                fig_t2.update_layout(
-                    xaxis_title='Flight Type',
-                    yaxis_title='Total Duration (min)',
-                    height=300,
-                    template='plotly_white',
-                    showlegend=False
-                )
-                st.plotly_chart(fig_t2, use_container_width=True)
+                chart_t2 = alt.Chart(type_agg).mark_bar(size=50).encode(
+                    x=alt.X('flight_type:N', title='Flight Type'),
+                    y=alt.Y('total_duration_min:Q', title='Total Duration (min)'),
+                    color=alt.Color('flight_type:N', scale=alt.Scale(domain=color_domain_dur, range=color_range_dur), legend=None),
+                    tooltip=[
+                        alt.Tooltip('flight_type:N', title='Flight Type'),
+                        alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
+                    ]
+                ).properties(height=300)
+                
+                st.altair_chart(chart_t2, use_container_width=True)
         else:
             st.info("Flight type data not available")
     else:
@@ -771,33 +759,41 @@ if not analytics_df.empty:
                     gate_agg = gate_df.groupby(['GATE_NAME', 'DIRECTION']).size().reset_index(name='count')
                     gate_pivot = gate_agg.pivot(index='GATE_NAME', columns='DIRECTION', values='count').fillna(0)
                     
-                    # Sort by total
                     gate_pivot['total'] = gate_pivot.sum(axis=1)
-                    gate_pivot = gate_pivot.sort_values('total', ascending=True).drop('total', axis=1).tail(15)
+                    gate_pivot = gate_pivot.sort_values('total', ascending=False).drop('total', axis=1).head(15)
                     
                     if not gate_pivot.empty:
-                        fig_gate = go.Figure()
-                        # Add bars for each direction (N→S, S→N)
-                        for i, direction in enumerate(gate_pivot.columns):
-                            colors = ['#00BCD4', '#FF5722', '#4CAF50', '#FFC107']
-                            fig_gate.add_trace(go.Bar(
-                                x=gate_pivot[direction],
-                                y=gate_pivot.index,
-                                name=direction,
-                                orientation='h',
-                                marker_color=colors[i % len(colors)]
-                            ))
-                        
-                        fig_gate.update_layout(
-                            barmode='stack',
-                            xaxis_title='Number of Crossings',
-                            yaxis_title='Gate',
-                            height=450,
-                            template='plotly_white',
-                            margin=dict(l=100, r=20, t=20, b=40),
-                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                        # Transform to long format
+                        df_gate_long = gate_pivot.reset_index().melt(
+                            id_vars='GATE_NAME',
+                            var_name='DIRECTION',
+                            value_name='count'
                         )
-                        st.plotly_chart(fig_gate, use_container_width=True)
+                        
+                        # Sort within each gate so largest segments appear first
+                        df_gate_long = df_gate_long.sort_values(
+                            ['GATE_NAME', 'count'],
+                            ascending=[True, False]
+                        )
+                        
+                        chart_gate = alt.Chart(df_gate_long).mark_bar(size=BAR_CONFIG['horizontal_compact']['size']).encode(
+                            x=alt.X('sum(count):Q', title='Number of Crossings'),
+                            y=alt.Y('GATE_NAME:N',
+                                    sort=alt.EncodingSortField(field='count', op='sum', order='descending'),
+                                    title='Gate'),
+                            color=alt.Color('DIRECTION:N'),
+                            order=alt.Order('count:Q', sort='descending'),
+                            tooltip=[
+                                alt.Tooltip('DIRECTION:N', title='Direction'),
+                                alt.Tooltip('sum(count):Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
+                            ]
+                        ).properties(
+                            height=alt.Step(BAR_CONFIG['horizontal']['step'])
+                        ).configure_mark(
+                            opacity=0.9
+                        )
+                        
+                        st.altair_chart(chart_gate, use_container_width=True)
                         st.caption(f"Top 15 gates by total crossings from flights that crossed runways")
                     else:
                         st.info("No gate assignment data available")
@@ -835,41 +831,33 @@ if not analytics_df.empty:
         col_a1, col_a2 = st.columns(2)
         with col_a1:
             st.markdown("**By Crossing Count**")
-            # Sort by crossing count descending
-            airline_count_sorted = airline_agg.sort_values('crossing_count', ascending=True)  # ascending for horizontal bar (bottom to top)
-            fig_a1 = go.Figure(go.Bar(
-                x=airline_count_sorted['crossing_count'],
-                y=airline_count_sorted['airline_name'],
-                orientation='h',
-                marker_color='#4FC3F7'
-            ))
-            fig_a1.update_layout(
-                xaxis_title='Crossings',
-                yaxis_title='',
-                height=350,
-                template='plotly_white',
-                margin=dict(l=100, r=10, t=10, b=40)
-            )
-            st.plotly_chart(fig_a1, use_container_width=True)
+            airline_count_sorted = airline_agg.sort_values('crossing_count', ascending=False)
+            
+            chart_a1 = alt.Chart(airline_count_sorted).mark_bar(color=COLORS.BLUE, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+                x=alt.X('crossing_count:Q', title='Crossings'),
+                y=alt.Y('airline_name:N', sort='-x', title='Airline'),
+                tooltip=[
+                    alt.Tooltip('airline_name:N', title='Airline'),
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
+            
+            st.altair_chart(chart_a1, use_container_width=True)
         
         with col_a2:
             st.markdown("**By Total Time (min)**")
-            # Sort by duration descending
-            airline_dur_sorted = airline_agg.sort_values('total_duration_min', ascending=True)
-            fig_a2 = go.Figure(go.Bar(
-                x=airline_dur_sorted['total_duration_min'],
-                y=airline_dur_sorted['airline_name'],
-                orientation='h',
-                marker_color='#FF9800'
-            ))
-            fig_a2.update_layout(
-                xaxis_title='Total Duration (min)',
-                yaxis_title='',
-                height=350,
-                template='plotly_white',
-                margin=dict(l=100, r=10, t=10, b=40)
-            )
-            st.plotly_chart(fig_a2, use_container_width=True)
+            airline_dur_sorted = airline_agg.sort_values('total_duration_min', ascending=False)
+            
+            chart_a2 = alt.Chart(airline_dur_sorted).mark_bar(color=COLORS.ORANGE, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+                x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
+                y=alt.Y('airline_name:N', sort='-x', title='Airline'),
+                tooltip=[
+                    alt.Tooltip('airline_name:N', title='Airline'),
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
+            
+            st.altair_chart(chart_a2, use_container_width=True)
     else:
         st.info("No airline data available")
     
@@ -938,41 +926,35 @@ if not analytics_df.empty:
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             st.markdown("**By Crossing Count**")
-            # Sort by crossing count descending (ascending for horizontal bar top-to-bottom)
-            flight_count_sorted = flight_agg.sort_values('crossing_count', ascending=True)
-            fig_f1 = go.Figure(go.Bar(
-                x=flight_count_sorted['crossing_count'],
-                y=flight_count_sorted['LABEL'],
-                orientation='h',
-                marker_color='#66BB6A'
-            ))
-            fig_f1.update_layout(
-                xaxis_title='Crossings',
-                yaxis_title='',
-                height=350,
-                template='plotly_white',
-                margin=dict(l=100, r=10, t=10, b=40)
-            )
-            st.plotly_chart(fig_f1, use_container_width=True)
+            flight_count_sorted = flight_agg.sort_values('crossing_count', ascending=False)
+            
+            chart_f1 = alt.Chart(flight_count_sorted).mark_bar(color=COLORS.GREEN, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+                x=alt.X('crossing_count:Q', title='Crossings'),
+                y=alt.Y('LABEL:N', sort='-x', title='Flight',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal_compact']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('LABEL:N', title='Flight'),
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
+            
+            st.altair_chart(chart_f1, use_container_width=True)
         
         with col_f2:
             st.markdown("**By Total Time (min)**")
-            # Sort by duration descending
-            flight_dur_sorted = flight_agg.sort_values('total_duration_min', ascending=True)
-            fig_f2 = go.Figure(go.Bar(
-                x=flight_dur_sorted['total_duration_min'],
-                y=flight_dur_sorted['LABEL'],
-                orientation='h',
-                marker_color='#9C27B0'
-            ))
-            fig_f2.update_layout(
-                xaxis_title='Total Duration (min)',
-                yaxis_title='',
-                height=350,
-                template='plotly_white',
-                margin=dict(l=100, r=10, t=10, b=40)
-            )
-            st.plotly_chart(fig_f2, use_container_width=True)
+            flight_dur_sorted = flight_agg.sort_values('total_duration_min', ascending=False)
+            
+            chart_f2 = alt.Chart(flight_dur_sorted).mark_bar(color=COLORS.PURPLE, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+                x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
+                y=alt.Y('LABEL:N', sort='-x', title='Flight',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal_compact']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('LABEL:N', title='Flight'),
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
+            
+            st.altair_chart(chart_f2, use_container_width=True)
     else:
         st.info("No flight data available")
 

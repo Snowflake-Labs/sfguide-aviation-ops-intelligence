@@ -18,6 +18,8 @@ import re
 
 sys.path.append("..")
 import utils
+from config.colors import get_intensity_color_3point
+import ui_components
 
 
 st.set_page_config(page_title="Live View", page_icon="🛫", layout="wide")
@@ -28,7 +30,7 @@ session = get_active_session()
 schema = 'PUBLIC'
 
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 
 if not selected_db:
     st.warning("No airport databases found yet. Run the installer first.")
@@ -43,16 +45,19 @@ tzid = utils.get_airport_tzid(session, db_prefix)
 
 # Controls
 with st.sidebar:
-    st.subheader("Live Controls")
+    # No Date Range for Live View (it's real-time)
+    
+    st.divider()
     lookback_min = st.slider("Live window (minutes)", min_value=1, max_value=120, value=60, step=1)
     show_trajectories = st.checkbox("Show trajectories", value=False, help="Display flight trajectory trails")
     if show_trajectories:
         trails_hours = st.select_slider("Trajectory window (hours)", options=[1, 2, 3, 4, 6], value=2)
     else:
         trails_hours = 2  # Default value when not shown
+    
     st.divider()
-
-    infra_selection = utils.render_infrastructure_selector(
+    
+    infra_selection = ui_components.render_map_layers_selector(
         session,
         db_prefix,
         sidebar=True,
@@ -365,10 +370,7 @@ if not points_df.empty:
         
         # Build complete trajectories per flight with altitude-based coloring
         if not altitude_df.empty:
-            # Altitude color gradient: cyan (#97E7EF) to magenta (#D966FF)
-            low_rgb = (151, 231, 239)   # Cyan - low altitude
-            high_rgb = (217, 102, 255)  # Magenta - high altitude
-            
+            # Aviation-standard altitude gradient: Teal (low) -> Yellow -> Red (high)
             def to_float_or_none(val):
                 try:
                     return float(val) if pd.notna(val) else None
@@ -386,12 +388,9 @@ if not points_df.empty:
                 max_alt = 1.0
             
             def interp_color(t: float):
-                """Interpolate between low (cyan) and high (magenta) based on normalized altitude."""
+                """Interpolate between teal (low), yellow (medium), and red (high) based on normalized altitude."""
                 t = 0.0 if t is None else max(0.0, min(1.0, t))
-                r = int(low_rgb[0] + t * (high_rgb[0] - low_rgb[0]))
-                g = int(low_rgb[1] + t * (high_rgb[1] - low_rgb[1]))
-                b = int(low_rgb[2] + t * (high_rgb[2] - low_rgb[2]))
-                return [r, g, b, 200]  # Slightly transparent
+                return get_intensity_color_3point(t)
             
             # Build complete paths per flight (not segments) with average altitude for coloring
             trajectories = []

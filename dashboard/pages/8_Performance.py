@@ -9,6 +9,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 from snowflake.snowpark.context import get_active_session
 import utils
+import ui_components
 
 st.set_page_config(page_title="Performance", page_icon="📊", layout="wide")
 utils.apply_custom_css()
@@ -32,7 +33,7 @@ def get_ops_date_range(_session, _db_prefix: str):
     return None, None
 
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 
 if not selected_db:
     st.warning("No airport databases found yet. Run the installer first.")
@@ -42,38 +43,14 @@ db_prefix = f"{selected_db}.{schema}"
 min_date, max_date = get_ops_date_range(session, db_prefix)
 
 with st.sidebar:
+    start_date, end_date = ui_components.render_date_range_picker(
+        min_date,
+        max_date,
+        key_prefix="performance",
+        default_days_back=7
+    )
+    
     st.divider()
-    st.header("Filters")
-
-    try:
-        local_today = datetime.fromisoformat(utils.get_airport_local_today(session, db_prefix)).date()
-    except Exception:
-        local_today = datetime.now().date()
-    default_end = (max_date if max_date else local_today)
-    default_start = default_end - timedelta(days=7)
-    min_bound = (min_date if min_date else local_today - timedelta(days=365))
-    max_bound = (max_date if max_date else local_today)
-
-    # Clamp defaults into the allowed bounds (avoids StreamlitAPIException)
-    if default_start < min_bound:
-        default_start = min_bound
-    if default_end > max_bound:
-        default_end = max_bound
-    if default_end < default_start:
-        default_end = default_start
-
-    start_date = st.date_input(
-        "Start date",
-        value=default_start,
-        min_value=min_bound,
-        max_value=max_bound,
-    )
-    end_date = st.date_input(
-        "End date",
-        value=default_end,
-        min_value=min_bound,
-        max_value=max_bound,
-    )
 
     @st.cache_data(ttl=600)
     def get_airlines(_session, _db_prefix: str):
