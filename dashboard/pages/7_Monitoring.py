@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from snowflake.snowpark.context import get_active_session
 import utils
+import ui_components
 
 st.set_page_config(page_title="Monitoring", page_icon="🛡️", layout="wide")
 utils.apply_custom_css()
@@ -20,7 +21,7 @@ schema = 'PUBLIC'
 db_prefix = f"{db}.{schema}"
 
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 
 if not selected_db:
     st.warning("No airport databases found yet. Run the installer first.")

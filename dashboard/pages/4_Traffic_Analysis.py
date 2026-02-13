@@ -10,9 +10,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from snowflake.snowpark.context import get_active_session
 from datetime import datetime, timedelta
+import altair as alt
 import sys
 sys.path.append('..')
 import utils
+from config import BAR_CONFIG, TOOLTIP_FORMAT
+from config.colors import Hex as COLORS
+import ui_components
 
 # Page configuration
 st.set_page_config(
@@ -33,7 +37,7 @@ db_prefix = f"{db}.{schema}"
 
 # Header
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 if not selected_db:
     st.warning("No airport databases found yet. Run the installer first.")
     st.stop()
@@ -46,11 +50,11 @@ with st.sidebar:
     
     # Get date range
     min_date, max_date = utils.get_date_range(session)
-    start_date, end_date, analysis_period = utils.render_time_period_filter(
+    start_date, end_date = ui_components.render_date_range_picker(
         min_date,
         max_date,
-        key_prefix="traffic",
-        default_period="Last 7 Days",
+        key_prefix="traffic_analysis",
+        default_days_back=7
     )
     
     st.divider()
@@ -74,7 +78,8 @@ with st.sidebar:
     # Always show airline breakdown and heatmap (toggles removed)
     show_airlines = True
     show_heatmap = True
-    hide_unknown_airlines = st.checkbox("Hide Unknown (UNK)", value=False)
+    # Hide Unknown functionality removed - always show all airlines
+    hide_unknown_airlines = False
 
 # Query functions
 @st.cache_data(ttl=300)
@@ -262,28 +267,21 @@ st.divider()
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("🕐 Traffic by Hour of Day")
+    st.subheader("🕐 Aircraft on Ground by Hour")
+    st.caption("Shows the sum of aircraft present during each hour")
     
     if not hourly_patterns.empty:
-        # Create bar chart
-        fig = go.Figure()
+        # Create bar chart with Altair
+        chart_hourly = alt.Chart(hourly_patterns).mark_bar(color=COLORS.BLUE, size=BAR_CONFIG['vertical']['size']).encode(
+            x=alt.X('HOUR_OF_DAY:Q', title='Hour of Day (24h)', scale=alt.Scale(domain=[0, 23])),
+            y=alt.Y('AVG_AIRCRAFT:Q', title='Average Aircraft Count'),
+            tooltip=[
+                alt.Tooltip('HOUR_OF_DAY:Q', title='Hour', format='02d'),
+                alt.Tooltip('AVG_AIRCRAFT:Q', title='Aircraft', format=TOOLTIP_FORMAT['integer'])
+            ]
+        ).properties(height=400)
         
-        fig.add_trace(go.Bar(
-            x=hourly_patterns['HOUR_OF_DAY'],
-            y=hourly_patterns['AVG_AIRCRAFT'],
-            marker_color='#4FC3F7',
-            name='Aircraft Count'
-        ))
-        
-        fig.update_layout(
-            xaxis_title="Hour of Day (24h)",
-            yaxis_title="Average Aircraft Count",
-            height=400,
-            template='plotly_white',
-            showlegend=False
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        st.altair_chart(chart_hourly, use_container_width=True)
         
         # Find peak hour
         peak_hour = hourly_patterns.loc[hourly_patterns['AVG_AIRCRAFT'].idxmax()]
@@ -297,24 +295,17 @@ with col2:
         day_names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
         dow_patterns['DAY_NAME'] = dow_patterns['DAY_OF_WEEK'].apply(lambda x: day_names[int(x)])
         
-        fig = go.Figure()
+        # Create categorical order for proper weekday sequence
+        chart_dow = alt.Chart(dow_patterns).mark_bar(color=COLORS.LIGHT_GREEN, size=BAR_CONFIG['vertical']['size']).encode(
+            x=alt.X('DAY_NAME:N', title='Day of Week', sort=day_names),
+            y=alt.Y('AIRCRAFT_COUNT:Q', title='Aircraft Count'),
+            tooltip=[
+                alt.Tooltip('DAY_NAME:N', title='Day'),
+                alt.Tooltip('AIRCRAFT_COUNT:Q', title='Aircraft', format=TOOLTIP_FORMAT['integer'])
+            ]
+        ).properties(height=400)
         
-        fig.add_trace(go.Bar(
-            x=dow_patterns['DAY_NAME'],
-            y=dow_patterns['AIRCRAFT_COUNT'],
-            marker_color='#81C784',
-            name='Aircraft Count'
-        ))
-        
-        fig.update_layout(
-            xaxis_title="Day of Week",
-            yaxis_title="Aircraft Count",
-            height=400,
-            template='plotly_white',
-            showlegend=False
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        st.altair_chart(chart_dow, use_container_width=True)
         
         # Find busiest day
         busiest_day = dow_patterns.loc[dow_patterns['AIRCRAFT_COUNT'].idxmax()]
@@ -324,6 +315,7 @@ with col2:
 if show_heatmap and not traffic_data.empty:
     st.divider()
     st.subheader("🔥 Activity Heatmap")
+    st.caption("Color intensity shows aircraft count: darker blue = more aircraft")
     
     # Get data for heatmap
     @st.cache_data(ttl=300)
@@ -344,36 +336,32 @@ if show_heatmap and not traffic_data.empty:
     heatmap_data = get_heatmap_data(session, start_datetime, end_datetime)
     
     if not heatmap_data.empty:
-        # Pivot for heatmap
         day_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
         heatmap_data['DAY_NAME'] = heatmap_data['DAY_OF_WEEK'].apply(lambda x: day_names[int(x)])
+        heatmap_data['HOUR_LABEL'] = heatmap_data['HOUR'].apply(lambda h: f"{int(h):02d}:00")
         
-        heatmap_pivot = heatmap_data.pivot_table(
-            values='AIRCRAFT_COUNT',
-            index='DAY_NAME',
-            columns='HOUR',
-            fill_value=0
+        # Ensure proper ordering
+        heatmap_data['DAY_NAME'] = pd.Categorical(heatmap_data['DAY_NAME'], categories=day_names, ordered=True)
+        hour_labels = [f"{h:02d}:00" for h in range(24)]
+        heatmap_data['HOUR_LABEL'] = pd.Categorical(heatmap_data['HOUR_LABEL'], categories=hour_labels, ordered=True)
+        
+        chart_hm = alt.Chart(heatmap_data).mark_rect().encode(
+            x=alt.X('HOUR_LABEL:O', title='Hour of Day', sort=hour_labels),
+            y=alt.Y('DAY_NAME:O', title='Day of Week', sort=day_names),
+            color=alt.Color('AIRCRAFT_COUNT:Q',
+                           title='Aircraft Count',
+                           scale=alt.Scale(scheme='turbo')),
+            tooltip=[
+                alt.Tooltip('DAY_NAME:O', title='Day'),
+                alt.Tooltip('HOUR_LABEL:O', title='Hour'),
+                alt.Tooltip('AIRCRAFT_COUNT:Q', title='Aircraft', format=',.0f')
+            ]
+        ).properties(
+            height=300
         )
         
-        # Reorder days
-        heatmap_pivot = heatmap_pivot.reindex(day_names)
-        
-        fig = go.Figure(data=go.Heatmap(
-            z=heatmap_pivot.values,
-            x=[f"{h:02d}:00" for h in heatmap_pivot.columns],
-            y=heatmap_pivot.index,
-            colorscale='Blues',
-            hovertemplate='%{y}<br>%{x}<br>Aircraft: %{z}<extra></extra>'
-        ))
-        
-        fig.update_layout(
-            xaxis_title="Hour of Day",
-            yaxis_title="Day of Week",
-            height=400,
-            template='plotly_white'
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        st.caption("**Color Scale:** Teal (low) → Yellow (medium) → Red (high) aircraft count. Color intensity shows traffic concentration by day and hour.")
+        st.altair_chart(chart_hm, use_container_width=True)
 
 # Airline breakdown
 if show_airlines and 'airline_data' in locals() and not airline_data.empty:
@@ -389,39 +377,37 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
     
     with col1:
         # Flights by airline
-        fig = go.Figure(go.Bar(
-            x=airline_data['FLIGHT_COUNT'],
-            y=airline_data['AIRLINE_NAME'],
-            orientation='h',
-            marker_color='#FF6B6B'
-        ))
+        airline_sorted = airline_data.sort_values('FLIGHT_COUNT', ascending=False)
         
-        fig.update_layout(
-            title="Flights by Airline",
-            xaxis_title="Number of Flights",
-            yaxis_title="",
-            height=500,
-            template='plotly_white',
-            yaxis={'categoryorder':'total ascending'}
+        chart_flights = alt.Chart(airline_sorted).mark_bar(color=COLORS.FLIGHT, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+            x=alt.X('FLIGHT_COUNT:Q', title='Number of Flights'),
+            y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
+            tooltip=[
+                alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                alt.Tooltip('FLIGHT_COUNT:Q', title='Flights', format=TOOLTIP_FORMAT['integer'])
+            ]
+        ).properties(
+            title='Flights by Airline',
+            height=alt.Step(BAR_CONFIG['horizontal_compact']['step'])
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.altair_chart(chart_flights, use_container_width=True)
     
     with col2:
-        # Market share pie chart
-        fig = go.Figure(data=[go.Pie(
-            labels=airline_data['AIRLINE_NAME'],
-            values=airline_data['FLIGHT_COUNT'],
-            hole=.3
-        )])
-        
-        fig.update_layout(
-            title="Market Share by Flights",
-            height=500,
-            template='plotly_white'
+        # Market share pie chart with Altair
+        chart_pie = alt.Chart(airline_data).mark_arc(innerRadius=50).encode(
+            theta=alt.Theta('FLIGHT_COUNT:Q'),
+            color=alt.Color('AIRLINE_NAME:N', legend=alt.Legend(title='Airline')),
+            tooltip=[
+                alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                alt.Tooltip('FLIGHT_COUNT:Q', title='Flights', format=',.0f')
+            ]
+        ).properties(
+            title='Market Share by Flights',
+            height=500
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.altair_chart(chart_pie, use_container_width=True)
 
     # Delay analytics by airline
     if delay_stats is not None and not delay_stats.empty:
@@ -430,45 +416,74 @@ if show_airlines and 'airline_data' in locals() and not airline_data.empty:
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("⏱️ Delays by Airline (Total Minutes)")
-            # Ensure full carrier names: if already a long name, keep/title-case; otherwise map code→name
             def _to_full_airline(val: str) -> str:
                 s = str(val).strip()
-                # Heuristic: names often longer than 3 or contain spaces/slashes
                 if len(s) > 3 or (' ' in s) or ('AIR' in s) or ('AIRLINES' in s) or ('LINES' in s):
                     return s.title()
                 return code_to_name.get(s, s)
             delay_stats['AIRLINE_NAME'] = delay_stats['AIRLINE'].apply(_to_full_airline)
             d1 = delay_stats[['AIRLINE_NAME','TOTAL_DELAY_MINUTES']].copy()
             d1 = d1.sort_values('TOTAL_DELAY_MINUTES', ascending=False).head(15)
-            fig_d1 = go.Figure(go.Bar(
-                x=d1['TOTAL_DELAY_MINUTES'],
-                y=d1['AIRLINE_NAME'],
-                orientation='h',
-                marker_color='#EF5350'
-            ))
-            fig_d1.update_layout(xaxis_title='Total Delay Minutes', yaxis_title='Airline', height=450, template='plotly_white')
-            st.plotly_chart(fig_d1, use_container_width=True)
+            
+            chart_d1 = alt.Chart(d1).mark_bar(color=COLORS.DELAY, size=BAR_CONFIG['horizontal']['size']).encode(
+                x=alt.X('TOTAL_DELAY_MINUTES:Q', title='Total Delay Minutes'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                    alt.Tooltip('TOTAL_DELAY_MINUTES:Q', title='Delay Minutes', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal']['step']))
+            
+            st.altair_chart(chart_d1, use_container_width=True)
         with col2:
             st.subheader("🛬 Early Flights by Airline")
             e2 = delay_stats[['AIRLINE_NAME','EARLY_FLIGHTS']].copy().sort_values('EARLY_FLIGHTS', ascending=False).head(15)
-            fig_e2 = go.Figure(go.Bar(x=e2['EARLY_FLIGHTS'], y=e2['AIRLINE_NAME'], orientation='h', marker_color='#43A047'))
-            fig_e2.update_layout(xaxis_title='Early Flights', yaxis_title='Airline', height=450, template='plotly_white')
-            st.plotly_chart(fig_e2, use_container_width=True)
+            
+            chart_e2 = alt.Chart(e2).mark_bar(color=COLORS.EARLY, size=BAR_CONFIG['horizontal']['size']).encode(
+                x=alt.X('EARLY_FLIGHTS:Q', title='Early Flights'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                    alt.Tooltip('EARLY_FLIGHTS:Q', title='Early Flights', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal']['step']))
+            
+            st.altair_chart(chart_e2, use_container_width=True)
 
         # Row 2: Delayed Flights and Early Minutes side-by-side (existing pairing)
         colA, colB = st.columns(2)
         with colA:
             st.subheader("✈️ Delayed Flights by Airline")
             d2 = delay_stats[['AIRLINE_NAME','DELAYED_FLIGHTS']].copy().sort_values('DELAYED_FLIGHTS', ascending=False).head(15)
-            fig_d2 = go.Figure(go.Bar(x=d2['DELAYED_FLIGHTS'], y=d2['AIRLINE_NAME'], orientation='h', marker_color='#F57C00'))
-            fig_d2.update_layout(xaxis_title='Delayed Flights', yaxis_title='Airline', height=450, template='plotly_white')
-            st.plotly_chart(fig_d2, use_container_width=True)
+            
+            chart_d2 = alt.Chart(d2).mark_bar(color=COLORS.DELAYED_FLIGHTS, size=BAR_CONFIG['horizontal']['size']).encode(
+                x=alt.X('DELAYED_FLIGHTS:Q', title='Delayed Flights'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                    alt.Tooltip('DELAYED_FLIGHTS:Q', title='Delayed Flights', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal']['step']))
+            
+            st.altair_chart(chart_d2, use_container_width=True)
         with colB:
             st.subheader("⏰ Early Arrivals by Airline (Minutes)")
             e1 = delay_stats[['AIRLINE_NAME','TOTAL_EARLY_MINUTES']].copy().sort_values('TOTAL_EARLY_MINUTES', ascending=False).head(15)
-            fig_e1 = go.Figure(go.Bar(x=e1['TOTAL_EARLY_MINUTES'], y=e1['AIRLINE_NAME'], orientation='h', marker_color='#66BB6A'))
-            fig_e1.update_layout(xaxis_title='Early Minutes', yaxis_title='Airline', height=450, template='plotly_white')
-            st.plotly_chart(fig_e1, use_container_width=True)
+            
+            chart_e1 = alt.Chart(e1).mark_bar(color=COLORS.EARLY_MINUTES, size=BAR_CONFIG['horizontal']['size']).encode(
+                x=alt.X('TOTAL_EARLY_MINUTES:Q', title='Early Minutes'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                    alt.Tooltip('TOTAL_EARLY_MINUTES:Q', title='Early Minutes', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal']['step']))
+            
+            st.altair_chart(chart_e1, use_container_width=True)
 
 st.divider()
 

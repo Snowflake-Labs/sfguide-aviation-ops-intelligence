@@ -11,7 +11,9 @@ from datetime import datetime, timedelta
 import json
 import plotly.graph_objects as go
 import utils
+from config.colors import get_intensity_color_3point
 import re
+import ui_components
 
 # Page configuration
 st.set_page_config(
@@ -27,7 +29,7 @@ session = get_active_session()
 
 # Sidebar: airport selector should run BEFORE any queries that depend on db/schema
 with st.sidebar:
-    selected_db = utils.render_airport_selector(sidebar=True)
+    selected_db = ui_components.render_airport_selector(sidebar=True)
 
 # Resolve selected DB after selector renders
 if not selected_db:
@@ -67,11 +69,10 @@ if max_date is None:
 
 # Sidebar controls
 with st.sidebar:
-    st.header("Flight Selection")
-    
-    # Date picker
+    # Date picker (single date for flight selection)
+    st.subheader("Date")
     selected_date = st.date_input(
-        "Select Date of the Flight",
+        "Select Date",
         value=max_date if max_date else local_today,
         min_value=min_date if min_date else local_today - timedelta(days=365),
         max_value=max_date if max_date else local_today
@@ -206,7 +207,7 @@ with st.sidebar:
     st.divider()
     
     # Infrastructure Layers - use new dynamic selector
-    infra_selection = utils.render_infrastructure_selector(
+    infra_selection = ui_components.render_map_layers_selector(
         session, db_prefix, 
         sidebar=True, 
         default_preset="all",
@@ -445,15 +446,11 @@ if not flight_data.empty:
         min_alt = 0.0
         max_alt = 1.0
 
-    low_rgb = (151, 231, 239)
-    high_rgb = (217, 102, 255)
-
     def interp_color(t: float):
         t = 0.0 if t is None else max(0.0, min(1.0, t))
-        r = int(low_rgb[0] + t * (high_rgb[0] - low_rgb[0]))
-        g = int(low_rgb[1] + t * (high_rgb[1] - low_rgb[1]))
-        b = int(low_rgb[2] + t * (high_rgb[2] - low_rgb[2]))
-        return [r, g, b, 255]
+        color = get_intensity_color_3point(t)
+        color[3] = 255
+        return color
 
     segments = []
     for i in range(len(flight_data) - 1):
