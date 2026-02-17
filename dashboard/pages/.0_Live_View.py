@@ -66,6 +66,15 @@ with st.sidebar:
     )
     selected_infra_layers = infra_selection["layers"]
     show_infra_tags = infra_selection["show_tags"]
+    
+    st.divider()
+    
+    # Vehicle type filter - default to aircraft only for live view
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="live_view",
+        sidebar=True,
+        default_all=False  # Show only aircraft by default
+    )
 
 
 # Load timetable first (it contains latest positions + enrichment)
@@ -358,6 +367,7 @@ if not points_df.empty:
         JOIN flights f ON f.flight = a.FLIGHT
         CROSS JOIN now_utc
         WHERE a.TIMESTAMP >= DATEADD('hour', -{int(trails_hours)}, now_utc.ts)
+          AND {vehicle_filter['sql_filter']}
           AND a.LOCATION IS NOT NULL
           AND a.ALTITUDE_BARO IS NOT NULL
         ORDER BY a.FLIGHT, a.TIMESTAMP

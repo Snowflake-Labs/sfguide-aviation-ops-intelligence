@@ -204,6 +204,14 @@ with st.sidebar:
         st.warning(f"No flights found for {selected_date}")
         selected_flight = ""
     
+    # Vehicle type filter - default to aircraft only for flight tracking
+    st.divider()
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="flight_tracker",
+        sidebar=True,
+        default_all=False  # Default to aircraft only
+    )
+    
     st.divider()
     
     # Infrastructure Layers - use new dynamic selector
@@ -218,7 +226,7 @@ with st.sidebar:
 
 # Query functions
 @st.cache_data(ttl=300)
-def get_flight_data(_session, flight, date, _db_prefix):
+def get_flight_data(_session, flight, date, _db_prefix, vehicle_sql_filter="1=1"):
     """Get flight tracking data (airport-local day)"""
     f = str(flight or "").strip().upper()
     is_hex = bool(re.fullmatch(r"[0-9A-F]{6}", f))
@@ -239,13 +247,14 @@ def get_flight_data(_session, flight, date, _db_prefix):
     FROM {_db_prefix}.ADSB_DATA_LOCAL
     WHERE {where}
         AND {local_date_expr} = '{date}'::DATE
+        AND {vehicle_sql_filter}
         AND LOCATION IS NOT NULL
     ORDER BY TIMESTAMP ASC
     """
     return _session.sql(query).to_pandas()
 
 @st.cache_data(ttl=300)
-def get_flight_gate_dwell(_session, flight, date, _db_prefix, radius_meters: int = 120):
+def get_flight_gate_dwell(_session, flight, date, _db_prefix, radius_meters: int = 120, vehicle_sql_filter="1=1"):
     """Approximate dwell time near the most-likely gate for the selected flight/date (airport-local day).
     Returns a single-row DataFrame with GATE_NAME, DWELL_MINUTES, START_TS, END_TS, POINTS or empty if none."""
     local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
@@ -255,6 +264,7 @@ def get_flight_gate_dwell(_session, flight, date, _db_prefix, radius_meters: int
     FROM {_db_prefix}.ADSB_DATA_LOCAL
         WHERE FLIGHT = '{flight}'
           AND {local_date_expr} = '{date}'::DATE
+          AND {vehicle_sql_filter}
           AND LOCATION IS NOT NULL
     ),
     gates AS (
@@ -414,7 +424,7 @@ flight_data = pd.DataFrame()
 schedule_info = None
 if selected_flight:
     with st.spinner("Loading flight data..."):
-        flight_data = get_flight_data(session, selected_flight, selected_date, db_prefix)
+        flight_data = get_flight_data(session, selected_flight, selected_date, db_prefix, vehicle_sql_filter=vehicle_filter['sql_filter'])
         if not flight_data.empty:
             schedule_info = get_schedule_info(session, selected_flight, selected_date, db_prefix)
 

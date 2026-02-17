@@ -75,6 +75,15 @@ with st.sidebar:
         help="Absolute deviation from scheduled time to consider earlier/later arrivals"
     )
     
+    st.divider()
+    
+    # Vehicle type filter - default to aircraft only
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="traffic_analysis",
+        sidebar=True,
+        default_all=False  # Default to aircraft only
+    )
+    
     # Always show airline breakdown and heatmap (toggles removed)
     show_airlines = True
     show_heatmap = True
@@ -319,7 +328,7 @@ if show_heatmap and not traffic_data.empty:
     
     # Get data for heatmap
     @st.cache_data(ttl=300)
-    def get_heatmap_data(_session, start_dt, end_dt):
+    def get_heatmap_data(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
         local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
         query = f"""
         SELECT 
@@ -328,12 +337,13 @@ if show_heatmap and not traffic_data.empty:
             COUNT(DISTINCT ICAO_HEX) as aircraft_count
     FROM {db_prefix}.ADSB_DATA_LOCAL
         WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+          AND {vehicle_sql_filter}
         GROUP BY hour, day_of_week
         ORDER BY day_of_week, hour
         """
         return _session.sql(query).to_pandas()
     
-    heatmap_data = get_heatmap_data(session, start_datetime, end_datetime)
+    heatmap_data = get_heatmap_data(session, start_datetime, end_datetime, vehicle_sql_filter=vehicle_filter['sql_filter'])
     
     if not heatmap_data.empty:
         day_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -489,7 +499,7 @@ st.divider()
 
 # Flight Details section moved from Schedule Performance
 @st.cache_data(ttl=300)
-def get_schedule_vs_actual(_session, date):
+def get_schedule_vs_actual(_session, date, vehicle_sql_filter="1=1"):
     query = f"""
     WITH airport AS (
         SELECT UPPER(airport_code) AS airport_code
@@ -516,6 +526,7 @@ def get_schedule_vs_actual(_session, date):
             MIN(TIMESTAMP) AS FIRST_SEEN
     FROM {db_prefix}.ADSB_DATA_LOCAL
         WHERE {utils.get_airport_local_date_sql(db_prefix, "TIMESTAMP")} = '{date}'::DATE
+          AND {vehicle_sql_filter}
           AND FLIGHT IS NOT NULL
         GROUP BY 1
     )
@@ -536,7 +547,7 @@ def get_schedule_vs_actual(_session, date):
     return _session.sql(query).to_pandas()
 
 st.subheader("✈️ Flight Details")
-flight_details = get_schedule_vs_actual(session, end_date)
+flight_details = get_schedule_vs_actual(session, end_date, vehicle_sql_filter=vehicle_filter['sql_filter'])
 if not flight_details.empty:
     # Classify by delay using threshold
     def classify_delay(delta_minutes, threshold):

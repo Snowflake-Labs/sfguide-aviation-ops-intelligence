@@ -98,6 +98,15 @@ with st.sidebar:
         sidebar=True
     )
     
+    st.divider()
+    
+    # Vehicle type filter
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="ground_activity",
+        sidebar=True,
+        default_all=True
+    )
+    
     # Map the selection to the format expected by the rest of the code
     metric_type = "Distinct Aircraft Count" if metric_type_selection == Metrics.FLIGHT_COUNT else "Total Time Spent (minutes)"
 
@@ -132,7 +141,7 @@ def get_schedule_for_flights(_session, date, flight_numbers):
         return pd.DataFrame(columns=['FLIGHT_NUMBER','ORIGIN_AIRPORT','DESTINATION_AIRPORT','SEATS'])
 
 @st.cache_data(ttl=core.CACHE_TTL_SECONDS)
-def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, aggregation_type, sample_percent: int = 10, max_cells: int = 4000):
+def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, aggregation_type, sample_percent: int = 10, max_cells: int = 4000, vehicle_sql_filter="1=1"):
     """
     Get all traffic data aggregated by H3 hexagons using Snowflake's native H3 functions
     Returns H3 cell strings with BOTH distinct flight counts AND observation counts
@@ -169,6 +178,7 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
         FROM {db_prefix}.ADSB_DATA_LOCAL SAMPLE BERNOULLI ({int(sample_percent)})
         CROSS JOIN bbox b
         WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+            AND {vehicle_sql_filter}
             AND LOCATION IS NOT NULL
             AND FLIGHT IS NOT NULL
             AND ST_Y(LOCATION) BETWEEN b.min_lat AND b.max_lat
@@ -224,7 +234,8 @@ with st.spinner("Loading geographic data..."):
         metric_type,
         aggregation_type,
         sample_percent=int(hex_sample_pct),
-        max_cells=int(st.session_state.get('hex_max_cells', 4000))
+        max_cells=int(st.session_state.get('hex_max_cells', 4000)),
+        vehicle_sql_filter=vehicle_filter['sql_filter']
     )
     
     # Apply percentile filter if enabled

@@ -54,19 +54,25 @@ with st.sidebar:
         key_prefix="gate_analysis",
         default_days_back=7
     )
+    
+    # Vehicle type filter
+    vehicle_filter = ui_components.render_vehicle_type_filter(key_prefix="gate_analysis", sidebar=True, default_all=True)
+
 @st.cache_data(ttl=300)
-def get_gate_fill_rate(_session, start_dt, end_dt, _db_prefix):
+def get_gate_fill_rate(_session, start_dt, end_dt, _db_prefix, vehicle_sql_filter="1=1"):
     """Calculate gate fill rate from GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS vs GATE_ANALYSIS_FLIGHT_GATE_TIME."""
     q = f"""
     WITH total AS (
         SELECT COUNT(DISTINCT ground_session_id) AS cnt
         FROM {_db_prefix}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS
         WHERE service_date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+          AND {vehicle_sql_filter}
     ),
     with_gate AS (
         SELECT COUNT(DISTINCT ground_session_id) AS cnt
         FROM {_db_prefix}.GATE_ANALYSIS_FLIGHT_GATE_TIME
         WHERE service_date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+          AND {vehicle_sql_filter}
     )
     SELECT 
         t.cnt AS total_rows,
@@ -92,7 +98,7 @@ def to_airline_name(code: str, name_map: dict) -> str:
         return str(code) if code else 'Unknown'
 
 @st.cache_data(ttl=300)
-def get_airline_utilization(_session, start_dt, end_dt):
+def get_airline_utilization(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
     """Dwell minutes and flights by airline (uses derived table; callsign not required)."""
     q = f"""
     SELECT 
@@ -101,13 +107,14 @@ def get_airline_utilization(_session, start_dt, end_dt):
       SUM(flights) AS flights
     FROM {db_prefix}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY
     WHERE date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+      AND {vehicle_sql_filter}
     GROUP BY airline_code
     ORDER BY dwell_minutes DESC
     """
     return _session.sql(q).to_pandas()
 
 @st.cache_data(ttl=300)
-def get_gate_rankings(_session, start_dt, end_dt):
+def get_gate_rankings(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
     """Top gates by total dwell minutes and distinct flights"""
     q = f"""
     SELECT gate_name,
@@ -115,13 +122,14 @@ def get_gate_rankings(_session, start_dt, end_dt):
            SUM(flights) AS flights
     FROM {db_prefix}.GATE_ANALYSIS_GATE_UTIL_DAILY
     WHERE date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+      AND {vehicle_sql_filter}
     GROUP BY gate_name
     ORDER BY total_dwell_minutes DESC
     """
     return _session.sql(q).to_pandas()
 
 @st.cache_data(ttl=300)
-def get_gate_by_airline_breakdown(_session, start_dt, end_dt):
+def get_gate_by_airline_breakdown(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
     """Breakdown per gate by airline for dwell minutes and flights"""
     q = f"""
     SELECT gate_name,
@@ -130,12 +138,13 @@ def get_gate_by_airline_breakdown(_session, start_dt, end_dt):
            SUM(flights) AS flights
     FROM {db_prefix}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY
     WHERE date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+      AND {vehicle_sql_filter}
     GROUP BY gate_name, airline_code
     """
     return _session.sql(q).to_pandas()
 
 @st.cache_data(ttl=300)
-def get_gate_dow_heatmap(_session, start_dt, end_dt):
+def get_gate_dow_heatmap(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
     """Aggregate dwell minutes by gate and day-of-week for the selected interval."""
     local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "ts")
     q = f"""
@@ -146,12 +155,13 @@ def get_gate_dow_heatmap(_session, start_dt, end_dt):
     FROM {db_prefix}.GATE_ANALYSIS_ADSB_GROUND_POINTS
     WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
       AND closest_gate_name IS NOT NULL
+      AND {vehicle_sql_filter}
     GROUP BY gate_name, day_of_week
     """
     return _session.sql(q).to_pandas()
 
 @st.cache_data(ttl=300)
-def get_top_dwell_flights(_session, start_dt, end_dt, top_n: int = 20):
+def get_top_dwell_flights(_session, start_dt, end_dt, top_n: int = 20, vehicle_sql_filter="1=1"):
     """Top N ground sessions by dwell minutes within the given period (pre-joined table)."""
     q = f"""
     SELECT 
@@ -163,20 +173,21 @@ def get_top_dwell_flights(_session, start_dt, end_dt, top_n: int = 20):
       dwell_minutes
     FROM {db_prefix}.GATE_ANALYSIS_FLIGHT_DWELL_WITH_AIRLINE
     WHERE service_date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+      AND {vehicle_sql_filter}
     ORDER BY dwell_minutes DESC
     LIMIT {int(top_n)}
     """
     return _session.sql(q).to_pandas()
 
 # KPI row now that dates are known
-tr, wg, fr = get_gate_fill_rate(session, start_date, end_date, db_prefix)
+tr, wg, fr = get_gate_fill_rate(session, start_date, end_date, db_prefix, vehicle_filter['sql_filter'])
 colk1, colk2, colk3 = st.columns(3)
 colk1.metric("Air Ops rows", f"{tr:,}")
 colk2.metric("With GATE_ACTUAL", f"{wg:,}")
 colk3.metric("Gate Actual Fill‑Rate", f"{fr:.1f}%")
 
 # Airline dropdown (full names)
-air_df_all = get_airline_utilization(session, start_date, end_date)
+air_df_all = get_airline_utilization(session, start_date, end_date, vehicle_filter['sql_filter'])
 code_to_name = utils.get_airline_name_map(session, start_date, end_date)
 if air_df_all is not None and not air_df_all.empty:
     air_df_all['AIRLINE_NAME'] = air_df_all['AIRLINE_CODE'].apply(lambda c: code_to_name.get(str(c), str(c)))
@@ -193,7 +204,7 @@ with st.sidebar:
 st.subheader("🏢 Gate Utilization by Airline (Dwell Minutes)")
 
 # Prepare data for comparison
-breakdown_all = get_gate_by_airline_breakdown(session, start_date, end_date)
+breakdown_all = get_gate_by_airline_breakdown(session, start_date, end_date, vehicle_filter['sql_filter'])
 if breakdown_all is not None and not breakdown_all.empty:
     breakdown_all = breakdown_all.copy()
     if hide_unknown_airlines:
@@ -243,7 +254,7 @@ else:
 st.divider()
 
 # Gate-level stacked bars by airline proportions
-breakdown_df = get_gate_by_airline_breakdown(session, start_date, end_date)
+breakdown_df = get_gate_by_airline_breakdown(session, start_date, end_date, vehicle_filter['sql_filter'])
 if airline_selected != "All Airlines" and breakdown_df is not None and not breakdown_df.empty:
     # Filter to selected airline name -> map back to codes
     codes_map = {code_to_name.get(str(c), str(c)): c for c in air_df_all['AIRLINE_CODE'].tolist()} if air_df_all is not None and not air_df_all.empty else {}
@@ -347,7 +358,7 @@ else:
 st.divider()
 
 st.subheader("🏅 Top 20 Flights by Dwell Time (Minutes)")
-top_df = get_top_dwell_flights(session, start_date, end_date, top_n=20)
+top_df = get_top_dwell_flights(session, start_date, end_date, top_n=20, vehicle_sql_filter=vehicle_filter['sql_filter'])
 if top_df is not None and not top_df.empty:
     display_df = top_df.copy()
     if hide_unknown_airlines:
@@ -384,7 +395,7 @@ st.divider()
 
 st.subheader("📊 Gate Usage Heatmap by Day of Week")
 st.caption("**Color Scale:** Teal (low) → Yellow (medium) → Red (high) dwell time. Color intensity shows total time aircraft spent at each gate by day of week.")
-hm_df = get_gate_dow_heatmap(session, start_date, end_date)
+hm_df = get_gate_dow_heatmap(session, start_date, end_date, vehicle_filter['sql_filter'])
 if hm_df is not None and not hm_df.empty:
     day_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     hm_df = hm_df.copy()

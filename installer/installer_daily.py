@@ -3437,7 +3437,38 @@ relevant AS (
   FROM flags
   WHERE is_local_od_any = 1 OR touched_airport_any = 1
 )
-SELECT p.*
+SELECT 
+  p.*,
+  -- Add comprehensive vehicle classification
+  CASE 
+    -- Helicopters (A7)
+    WHEN p.CATEGORY = 'A7' THEN 'HELICOPTER'
+    -- Heavy Aircraft (A5 - wide-body)
+    WHEN p.CATEGORY = 'A5' THEN 'HEAVY_AIRCRAFT'
+    -- Large Airliners (A3 - narrow-body jets)
+    WHEN p.CATEGORY = 'A3' THEN 'LARGE_AIRLINER'
+    -- Small Commuter (A2 - regional)
+    WHEN p.CATEGORY = 'A2' THEN 'SMALL_COMMUTER'
+    -- Light Aircraft (A1 - GA)
+    WHEN p.CATEGORY = 'A1' THEN 'LIGHT_AIRCRAFT'
+    -- Medium Aircraft (A0 - catch-all)
+    WHEN p.CATEGORY = 'A0' THEN 'MEDIUM_AIRCRAFT'
+    -- High Performance Military (A6)
+    WHEN p.CATEGORY = 'A6' THEN 'HIGH_PERFORMANCE_MILITARY'
+    -- Ultralights/Experimental (B*)
+    WHEN p.CATEGORY LIKE 'B%' THEN 'ULTRALIGHT_EXPERIMENTAL'
+    -- Tower vehicles
+    WHEN p.TYPE = 'TWR' THEN 'TOWER'
+    -- Service vehicles
+    WHEN p.TYPE IN ('SERV', 'CAR') THEN 'SERVICE_VEHICLE'
+    -- Light surface vehicles (C1)
+    WHEN p.CATEGORY = 'C1' THEN 'LIGHT_SURFACE_VEHICLE'
+    -- Ground vehicles (C2 non-service)
+    WHEN p.CATEGORY = 'C2' AND COALESCE(p.TYPE, '') NOT IN ('TWR', 'SERV', 'CAR') THEN 'GROUND_VEHICLE'
+    -- Unknown surface (C0)
+    WHEN p.CATEGORY = 'C0' THEN 'UNKNOWN_SURFACE'
+    ELSE 'OTHER'
+  END AS VEHICLE_CATEGORY
 FROM pts p
 JOIN relevant r
   ON r.service_date = p.service_date
@@ -3473,7 +3504,8 @@ ground AS (
     TIMESTAMP AS ts,
     LOCATION,
     VELOCITY,
-    ALTITUDE_BARO
+    ALTITUDE_BARO,
+    VEHICLE_CATEGORY
   FROM {database}.{schema}.ADSB_DATA_LOCAL
   CROSS JOIN ap
   WHERE ICAO_HEX IS NOT NULL
@@ -3506,6 +3538,7 @@ agg AS (
     MAX(ts) AS end_ts,
     DATEDIFF('second', MIN(ts), MAX(ts)) AS dwell_seconds,
     MAX(REGISTRATION) AS registration,
+    MAX(VEHICLE_CATEGORY) AS VEHICLE_CATEGORY,
     COUNT(*) AS points
   FROM sessioned
   GROUP BY 1, 2, 3
@@ -3531,7 +3564,8 @@ ground AS (
     TIMESTAMP AS ts,
     LOCATION,
     VELOCITY,
-    ALTITUDE_BARO
+    ALTITUDE_BARO,
+    VEHICLE_CATEGORY
   FROM {database}.{schema}.ADSB_DATA_LOCAL
   CROSS JOIN ap
   -- Altitude on the ground can be noisy (sometimes small positive/negative values).
@@ -3567,6 +3601,7 @@ SELECT
   w.LOCATION,
   w.velocity,
   COALESCE(w.lag_seconds, 0) AS lag_seconds,
+  w.VEHICLE_CATEGORY,
   g.gate_name AS closest_gate_name
 FROM with_session w
 -- Gates from Overture Infrastructure are POINT markers; use a wider tolerance than "jetway line" geometry.
@@ -3588,6 +3623,7 @@ WITH per_gate AS (
     service_date,
     ICAO_HEX,
     MAX(flight) AS flight_number,
+    MAX(VEHICLE_CATEGORY) AS VEHICLE_CATEGORY,
     closest_gate_name AS gate_name,
     SUM(lag_seconds) AS dwell_seconds
   FROM {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
@@ -3603,7 +3639,8 @@ SELECT
   ICAO_HEX,
   flight_number,
   gate_name,
-  dwell_seconds
+  dwell_seconds,
+  VEHICLE_CATEGORY
 FROM per_gate
 QUALIFY ROW_NUMBER() OVER (PARTITION BY ground_session_id ORDER BY dwell_seconds DESC) = 1;
 
@@ -3618,11 +3655,12 @@ AS
 SELECT
   service_date AS date,
   closest_gate_name AS gate_name,
+  VEHICLE_CATEGORY,
   SUM(lag_seconds)/60.0 AS dwell_minutes,
   COUNT(DISTINCT ground_session_id) AS flights
 FROM {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
 WHERE closest_gate_name IS NOT NULL
-GROUP BY date, gate_name;
+GROUP BY date, gate_name, VEHICLE_CATEGORY;
 
 -- -----------------------------------------------------------------------------
 -- 2c. GATE_AIRLINE_DWELL_DAILY (used by Gate Analysis)
@@ -3656,6 +3694,7 @@ by_session AS (
     g.ground_session_id,
     g.ICAO_HEX,
     g.closest_gate_name AS gate_name,
+    g.VEHICLE_CATEGORY,
     SUM(g.lag_seconds)/60.0 AS dwell_minutes,
     -- Pull airline metadata from schedule-enriched ADSB points (more reliable than schedule.registration)
     COALESCE(
@@ -3685,17 +3724,19 @@ by_session AS (
     g.service_date,
     g.ground_session_id,
     g.ICAO_HEX,
-    g.closest_gate_name
+    g.closest_gate_name,
+    g.VEHICLE_CATEGORY
 )
 SELECT
   s.date,
   s.gate_name,
   COALESCE(s.airline_icao, s.airline_iata, 'UNK') AS airline_code,
   MAX(s.airline_name) AS airline_name,
+  s.VEHICLE_CATEGORY,
   SUM(s.dwell_minutes) AS dwell_minutes,
   COUNT(DISTINCT s.ground_session_id) AS flights
 FROM by_session s
-GROUP BY 1,2,3;
+GROUP BY 1,2,3,5;
 
 -- -----------------------------------------------------------------------------
 -- 2d. Gate dwell with airline (pre-joined for dashboard performance)
@@ -3727,7 +3768,8 @@ per_session AS (
   SELECT 
     ground_session_id, 
     icao_hex, 
-    service_date, 
+    service_date,
+    MAX(VEHICLE_CATEGORY) AS VEHICLE_CATEGORY,
     SUM(lag_seconds)/60.0 AS dwell_minutes
   FROM {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
   WHERE closest_gate_name IS NOT NULL
@@ -3769,7 +3811,8 @@ SELECT
   ) AS airline_name,
   p.service_date,
   g.gate_name,
-  ROUND(p.dwell_minutes) AS dwell_minutes
+  ROUND(p.dwell_minutes) AS dwell_minutes,
+  p.VEHICLE_CATEGORY
 FROM per_session p
 LEFT JOIN gate g ON g.ground_session_id = p.ground_session_id
 LEFT JOIN airline a ON a.icao_hex = p.icao_hex AND a.service_date = p.service_date
@@ -3992,6 +4035,7 @@ WITH ap AS (
 )
 SELECT
   TO_DATE(CONVERT_TIMEZONE('UTC', ap.airport_tzid, TIMESTAMP)) AS date,
+  VEHICLE_CATEGORY,
   COUNT(DISTINCT ICAO_HEX) AS unique_aircraft,
   COUNT(DISTINCT FLIGHT) AS unique_flights,
   COUNT(*) AS total_records,
@@ -3999,7 +4043,7 @@ SELECT
   AVG(VELOCITY) AS avg_speed
 FROM {database}.{schema}.ADSB_DATA_LOCAL
 CROSS JOIN ap
-GROUP BY date;
+GROUP BY date, VEHICLE_CATEGORY;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
   TARGET_LAG = '1 HOUR'
@@ -4008,10 +4052,11 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_HOU
 AS
 SELECT
   DATE_TRUNC('HOUR', TIMESTAMP) AS hour,
+  VEHICLE_CATEGORY,
   COUNT(DISTINCT ICAO_HEX) AS aircraft_count,
   COUNT(*) AS data_points
 FROM {database}.{schema}.ADSB_DATA_LOCAL
-GROUP BY hour;
+GROUP BY hour, VEHICLE_CATEGORY;
 
 -- -----------------------------------------------------------------------------
 -- 3b. Flight Tracker dropdown helper (all days)
@@ -4039,6 +4084,7 @@ base AS (
     LOCATION AS location,
     ALTITUDE_BARO AS altitude_baro,
     VELOCITY AS velocity,
+    VEHICLE_CATEGORY,
     NULLIF(TRIM(SCHEDULE_FLIGHT_NUMBER), '') AS schedule_flight_number,
     NULLIF(TRIM(AIRLINE_NAME), '') AS airline_name,
     NULLIF(TRIM(ORIGIN_AIRPORT), '') AS origin_airport,
@@ -4081,7 +4127,8 @@ best AS (
     origin_airport,
     destination_airport,
     is_local_od,
-    match_confidence
+    match_confidence,
+    VEHICLE_CATEGORY
   FROM base
   QUALIFY ROW_NUMBER() OVER (
     PARTITION BY service_date, flight_id
@@ -4104,6 +4151,7 @@ SELECT
   b.origin_airport,
   b.destination_airport,
   b.match_confidence,
+  b.VEHICLE_CATEGORY,
   IFF(a.is_local_od_any = 1, TRUE, FALSE) AS is_local_od,
   IFF(a.touched_airport_any = 1, TRUE, FALSE) AS touched_airport
 FROM agg a
@@ -4232,6 +4280,7 @@ pts AS (
     flight_key, 
     ICAO_HEX,
     FLIGHT,
+    VEHICLE_CATEGORY,
     TO_DATE(CONVERT_TIMEZONE('UTC', 
       (SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') 
        FROM {database}.{schema}.PROPERTIES_AIRPORT), 
@@ -4298,12 +4347,13 @@ events AS (
   JOIN stats s USING (runway_id, flight_key, event_id)
 ),
 pts_metadata AS (
-  -- Extract ICAO_HEX, SERVICE_DATE, FLIGHT per flight_key (take first occurrence)
+  -- Extract ICAO_HEX, SERVICE_DATE, FLIGHT, VEHICLE_CATEGORY per flight_key (take first occurrence)
   SELECT DISTINCT
     flight_key,
     FIRST_VALUE(ICAO_HEX) OVER (PARTITION BY flight_key ORDER BY ts) AS icao_hex,
     FIRST_VALUE(service_date) OVER (PARTITION BY flight_key ORDER BY ts) AS service_date,
-    FIRST_VALUE(FLIGHT) OVER (PARTITION BY flight_key ORDER BY ts) AS flight
+    FIRST_VALUE(FLIGHT) OVER (PARTITION BY flight_key ORDER BY ts) AS flight,
+    FIRST_VALUE(VEHICLE_CATEGORY) OVER (PARTITION BY flight_key ORDER BY ts) AS VEHICLE_CATEGORY
   FROM pts
 ),
 enriched AS (
@@ -4312,6 +4362,7 @@ enriched AS (
     pm.icao_hex,
     pm.service_date,
     pm.flight AS flight_number,
+    pm.VEHICLE_CATEGORY,
     SUBSTR(pm.flight, 1, 3) AS airline_code,
     a.AIRLINE_NAME AS airline_name
   FROM events e
