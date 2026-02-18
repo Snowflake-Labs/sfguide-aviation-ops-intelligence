@@ -3436,11 +3436,33 @@ relevant AS (
   SELECT service_date, flight_id
   FROM flags
   WHERE is_local_od_any = 1 OR touched_airport_any = 1
+),
+-- Behavioral analysis: identify vehicles that never fly (ground equipment with aircraft transponders)
+vehicle_behavior AS (
+  SELECT
+    ICAO_HEX,
+    MAX(ALTITUDE_BARO) AS max_altitude,
+    MAX(VELOCITY) AS max_velocity
+  FROM {database}.{schema}.ADSB_DATA
+  WHERE ICAO_HEX IS NOT NULL
+    AND ALTITUDE_BARO IS NOT NULL
+    AND VELOCITY IS NOT NULL
+  GROUP BY ICAO_HEX
 )
 SELECT 
   p.*,
-  -- Add comprehensive vehicle classification
+  -- Add comprehensive vehicle classification with behavioral override
   CASE 
+    -- BEHAVIORAL OVERRIDE: Ground equipment with aircraft transponders
+    -- If vehicle never exceeds 50ft altitude AND 60 knots speed, it's ground equipment
+    WHEN vb.max_altitude <= 50 AND vb.max_velocity <= 60
+     AND p.CATEGORY IN ('A0', 'A1', 'A2', 'A3', 'A5', 'A6', 'A7')  -- Aircraft categories
+        THEN 'GROUND_VEHICLE'
+    WHEN vb.max_altitude <= 50 AND vb.max_velocity <= 60
+     AND p.CATEGORY LIKE 'B%'  -- Experimental categories
+        THEN 'GROUND_VEHICLE'
+    
+    -- ADS-B CATEGORY-BASED CLASSIFICATION (original logic)
     -- Helicopters (A7)
     WHEN p.CATEGORY = 'A7' THEN 'HELICOPTER'
     -- Heavy Aircraft (A5 - wide-body)
@@ -3472,7 +3494,9 @@ SELECT
 FROM pts p
 JOIN relevant r
   ON r.service_date = p.service_date
- AND r.flight_id = p.flight_id;
+ AND r.flight_id = p.flight_id
+LEFT JOIN vehicle_behavior vb
+  ON p.ICAO_HEX = vb.ICAO_HEX;
 
 -- Keep the canonical name only (avoid confusion).
 DROP VIEW IF EXISTS {database}.{schema}.ADSB_DATA_LOVAL;
