@@ -4920,8 +4920,25 @@ CALL {database}.{schema}.PROC_REFRESH_DERIVED();
 -- Fail fast if something is clearly wrong
 CALL {database}.{schema}.PROC_SMOKE_CHECK('10');
 
+-- =============================================================================
+-- START HISTORICAL BACKFILL (RUNS AT END OF INSTALLATION)
+-- =============================================================================
+-- All procedures and tables are now created. Safe to start backfill tasks.
+
+-- Backfill recent history as a one-time background task (last {int(adsb_history_backfill_days)} UTC days ending yesterday).
+-- Safe to close Streamlit after this starts; progress is tracked in HELPER_ADSB_BACKFILL_STATUS.
+CALL {database}.{schema}.PROC_START_BACKFILL_HISTORY();
+
+-- Start continuous retry for yesterday+today UTC, and trigger enrichment+derived refresh
+-- after a day completes. This closes the "start-day gap" as soon as today's history
+-- becomes available (often the next day).
+CALL {database}.{schema}.PROC_START_BACKFILL_RETRY_UTC();
+
 -- Final verification
-SELECT 'Setup complete! Tasks are now running automatically.' AS status;
+SELECT 'Setup complete! Tasks are now running automatically. Backfill started.' AS status;
+
+-- Check backfill status
+SELECT * FROM {database}.{schema}.HELPER_ADSB_BACKFILL_STATUS ORDER BY data_date;
 """
 
 
@@ -5368,30 +5385,18 @@ def generate_all_sql(
 -- Source: https://github.com/adsblol/globe_history_YYYY (ODbL 1.0 License)
 -- =============================================================================
 
--- Backfill recent history as a one-time background task (last {int(adsb_history_backfill_days)} UTC days ending yesterday).
--- Safe to close Streamlit after this starts; progress is tracked in HELPER_ADSB_BACKFILL_STATUS.
-CALL {database}.{schema}.PROC_START_BACKFILL_HISTORY();
+-- Backfill procedures and tasks are created but NOT started yet.
+-- They will be started automatically at the end of installation (file 05_derived.sql).
 
--- Start continuous retry for yesterday+today UTC, and trigger enrichment+derived refresh
--- after a day completes. This closes the "start-day gap" as soon as today's history
--- becomes available (often the next day).
-CALL {database}.{schema}.PROC_START_BACKFILL_RETRY_UTC();
-
--- Verify results
-SELECT 'HELPER_ADSB_LOL_RAW' AS tbl, COUNT(*) AS cnt FROM {database}.{schema}.HELPER_ADSB_LOL_RAW
-UNION ALL SELECT 'ADSB_DATA', COUNT(*) FROM {database}.{schema}.ADSB_DATA;
-
--- Check backfill status
-SELECT * FROM {database}.{schema}.HELPER_ADSB_BACKFILL_STATUS ORDER BY data_date;
-
--- Check task state / history
-SHOW TASKS LIKE 'TASK_ADSB_BACKFILL_ONCE' IN SCHEMA {database}.{schema};
--- NOTE: INFORMATION_SCHEMA.TASK_HISTORY() can be restricted in some Streamlit execution contexts.
--- If you need history, run this in a worksheet (outside Streamlit), or use the Task Status widget.
+-- NOTE: To manually start backfill after installation:
+-- CALL {database}.{schema}.PROC_START_BACKFILL_HISTORY();
 
 -- NOTE: To backfill a specific day manually:
 -- CALL {database}.{schema}.PROC_DOWNLOAD_TO_STAGE('2025-12-15');
 -- CALL {database}.{schema}.PROC_PROCESS_FROM_STAGE('2025-12-15');
+
+-- Verify backfill status (after file 05 runs):
+-- SELECT * FROM {database}.{schema}.HELPER_ADSB_BACKFILL_STATUS ORDER BY data_date;
 """
     
     # Flight Schedule runs FOURTH (after ADS-B data is loaded)
