@@ -238,6 +238,20 @@ CREATE OR REPLACE NETWORK RULE {database}.{schema}.{schema}_pypi_network_rule
 CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {database}_{schema}_pypi_access_integration
   ALLOWED_NETWORK_RULES = ({database}.{schema}.{schema}_pypi_network_rule)
   ENABLED = TRUE;
+-- =============================================================================
+-- SOLUTION TRACKING TAGS
+-- =============================================================================
+
+CREATE SCHEMA IF NOT EXISTS {database}.TAGS
+  COMMENT = 'Cost attribution tags for Aviation Ops Intelligence solution';
+
+CREATE TAG IF NOT EXISTS {database}.TAGS.SOLUTION
+  ALLOWED_VALUES 'aviation-ops-intelligence'
+  COMMENT = 'Identifies objects belonging to Aviation Ops Intelligence solution';
+
+CREATE TAG IF NOT EXISTS {database}.TAGS.COMPONENT
+  ALLOWED_VALUES 'etl', 'analytics', 'realtime', 'backfill', 'properties'
+  COMMENT = 'Functional component categorization';
 
 -- -----------------------------------------------------------------------------
 -- 1. PROPERTIES_AIRPORT
@@ -291,6 +305,10 @@ SELECT
     ST_X(ST_CENTROID(g.geometry))
   ) AS airport_tzid
 FROM g;
+
+ALTER TABLE {database}.{schema}.PROPERTIES_AIRPORT 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'properties';
 
 -- -----------------------------------------------------------------------------
 -- 2. PROPERTIES_INFRASTRUCTURE (all Overture infrastructure intersecting airport)
@@ -351,6 +369,10 @@ SELECT
   r.geometry
 FROM raw_infra r
 LEFT JOIN tags_flat t ON r.id = t.id;
+
+ALTER TABLE {database}.{schema}.PROPERTIES_INFRASTRUCTURE 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'properties';
 
 -- -----------------------------------------------------------------------------
 -- GET_OSM_TAG UDF: Retrieve any OSM tag from source_tags_json by key
@@ -420,6 +442,10 @@ SELECT
   TRY_TO_GEOGRAPHY(gate_geojson) AS gate_geom
 FROM picked
 WHERE gate_geojson IS NOT NULL;
+
+ALTER TABLE {database}.{schema}.PROPERTIES_GATES 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'properties';
 
 -- -----------------------------------------------------------------------------
 -- 4. PROPERTIES_RUNWAYS (from Overture Maps Infrastructure)
@@ -545,6 +571,10 @@ SELECT runway_id, runway_geog
 FROM {database}.{schema}.TEMP_RUNWAY_POLYGONS
 WHERE runway_geog IS NOT NULL;
 
+ALTER TABLE {database}.{schema}.PROPERTIES_RUNWAYS 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'properties';
+
 -- -----------------------------------------------------------------------------
 -- 5. HELPER_AIRLINE_DIM (standing airline reference)
 -- -----------------------------------------------------------------------------
@@ -588,6 +618,10 @@ SELECT
 FROM {git_repo_stage_base}/installer/airlines.csv
   (FILE_FORMAT => {database}.{schema}.FF_AIRLINES_CSV) t;
 
+ALTER TABLE {database}.{schema}.HELPER_AIRLINE_DIM 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- -----------------------------------------------------------------------------
 -- 7. HELPER_AIRLINE_IATA_ICAO_MAP (IATA↔ICAO translation for callsign matching)
 -- -----------------------------------------------------------------------------
@@ -606,6 +640,10 @@ WHERE AIRLINE_IATA IS NOT NULL
   AND LENGTH(TRIM(AIRLINE_IATA)) IN (2,3)
   AND LENGTH(TRIM(AIRLINE_ICAO)) IN (2,3)
 GROUP BY 1, 2;
+
+ALTER TABLE {database}.{schema}.HELPER_AIRLINE_IATA_ICAO_MAP 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- 8. FLIGHT_SCHEDULE tables (always created, even without API key)
@@ -643,6 +681,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_SCHEDULE_RAW (
     ingested_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
+ALTER TABLE {database}.{schema}.HELPER_FLIGHT_SCHEDULE_RAW 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- Canonical schedule table (Silver layer)
 CREATE TABLE IF NOT EXISTS {database}.{schema}.FLIGHT_SCHEDULE (
     FLIGHT_KEY VARCHAR(128),
@@ -673,6 +715,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.FLIGHT_SCHEDULE (
     CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
+
+ALTER TABLE {database}.{schema}.FLIGHT_SCHEDULE 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- Verify
 SELECT 'PROPERTIES_AIRPORT' AS tbl, COUNT(*) AS cnt FROM {database}.{schema}.PROPERTIES_AIRPORT
@@ -758,6 +804,10 @@ CREATE OR REPLACE TABLE {database}.{schema}.HELPER_ADSB_LOL_RAW (
     ingested_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
+ALTER TABLE {database}.{schema}.HELPER_ADSB_LOL_RAW 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- -----------------------------------------------------------------------------
 -- HELPER aircraft metadata (dimension, populated via adsb.lol lookup by ICAO_HEX)
 -- Purpose: improve AIRCRAFT_DESC coverage when realtime point feed omits `desc`.
@@ -772,6 +822,10 @@ CREATE OR REPLACE TABLE {database}.{schema}.HELPER_AIRCRAFT_META (
     SOURCE VARCHAR(32),
     RAW_JSON VARIANT
 );
+
+ALTER TABLE {database}.{schema}.HELPER_AIRCRAFT_META 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- Canonical ADS-B table (single source of truth for dashboards)
@@ -811,6 +865,10 @@ CREATE OR REPLACE TABLE {database}.{schema}.ADSB_DATA (
     MATCHED_AT TIMESTAMP_NTZ
 );
 
+ALTER TABLE {database}.{schema}.ADSB_DATA 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- Non-destructive schema evolution for upgrades
 ALTER TABLE {database}.{schema}.ADSB_DATA ADD COLUMN IF NOT EXISTS IS_LOCAL_OD BOOLEAN;
 
@@ -833,6 +891,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_LEG (
   COMPUTED_AT TIMESTAMP_NTZ
 );
 
+ALTER TABLE {database}.{schema}.HELPER_FLIGHT_LEG 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES (
   SERVICE_DATE DATE,
   ICAO_HEX STRING,
@@ -854,6 +916,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES (
   CREATED_AT TIMESTAMP_NTZ
 );
 
+ALTER TABLE {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_MATCH_RESULT (
   SERVICE_DATE DATE,
   ICAO_HEX STRING,
@@ -869,6 +935,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_MATCH_RESULT (
   SCORE INT,
   CHOSEN_AT TIMESTAMP_NTZ
 );
+
+ALTER TABLE {database}.{schema}.HELPER_FLIGHT_MATCH_RESULT 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- Recurring callsign prior (Phase 4)
@@ -886,6 +956,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_RECURRING_CALLSIGN_PRIOR (
   LAST_SEEN_DATE DATE,
   UPDATED_AT TIMESTAMP_NTZ
 );
+
+ALTER TABLE {database}.{schema}.HELPER_RECURRING_CALLSIGN_PRIOR 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- Enrichment: associate all points to schedule flight number/key (best-effort)
@@ -1663,6 +1737,10 @@ BEGIN
 END;
 $$;
 
+ALTER PROCEDURE {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(INT)
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- Note: TASK_ENRICH_ADSB is created later (after TASK_INGEST_ADSB exists)
 -- so it can use AFTER clause at creation time.
 
@@ -1788,7 +1866,11 @@ def enrich(session, p_max_hexes: int = 200, p_days_back: int = 2, p_min_age_hour
             errors += 1
 
     return "Enriched aircraft meta for %d hexes (errors=%d)" % (updated, errors)
-$$;
+$;
+
+ALTER PROCEDURE {database}.{schema}.PROC_ENRICH_AIRCRAFT_META(INT, INT, INT)
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_BACKFILL_ADSB_AIRCRAFT_DESC(p_days_back INT)
 RETURNS STRING
@@ -1818,7 +1900,11 @@ BEGIN
   v_rows := SQLROWCOUNT;
   RETURN 'Backfilled ADSB_DATA aircraft fields for last ' || v_days || ' days (rows=' || v_rows || ')';
 END;
-$$;
+$;
+
+ALTER PROCEDURE {database}.{schema}.PROC_BACKFILL_ADSB_AIRCRAFT_DESC(INT)
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- Wrapper so the TASK body is a single CALL (installer statement-splitting safe)
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL()
@@ -1831,7 +1917,11 @@ BEGIN
   CALL {database}.{schema}.PROC_BACKFILL_ADSB_AIRCRAFT_DESC(2);
   RETURN 'Aircraft meta enriched + ADSB_DATA backfilled';
 END;
-$$;
+$;
+
+ALTER PROCEDURE {database}.{schema}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL()
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META
   WAREHOUSE = {warehouse}
@@ -1839,6 +1929,10 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META
   ALLOW_OVERLAPPING_EXECUTION = FALSE
 AS
   CALL {database}.{schema}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL();
+
+ALTER TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'realtime';
 
 -- -----------------------------------------------------------------------------
 -- Ingestion Procedure
@@ -1935,7 +2029,11 @@ def ingest(session):
         df.write.mode('append').save_as_table('{adsb_raw_table}')
     
     return "Inserted " + str(len(rows)) + " records"
-$$;
+$;
+
+ALTER PROCEDURE {database}.{schema}.PROC_INGEST_ADSB_REALTIME()
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- ETL to ADSB_DATA (canonical)
@@ -2011,7 +2109,11 @@ BEGIN
 
     RETURN 'ETL Complete';
 END;
-$$;
+$;
+
+ALTER PROCEDURE {database}.{schema}.PROC_ETL_ADSB_TO_DATA()
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- Cleanup helper: remove accidental duplicates in ADSB_DATA by (ICAO_HEX,TIMESTAMP)
@@ -2051,7 +2153,11 @@ BEGIN
   v_rows := SQLROWCOUNT;
   RETURN 'Deduped ADSB_DATA for last ' || v_days || ' days (deleted_rows=' || v_rows || ')';
 END;
-$$;
+$;
+
+ALTER PROCEDURE {database}.{schema}.PROC_DEDUP_ADSB_DATA(INT)
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- Wrapper procedure for task (combines ingest + ETL)
@@ -2068,7 +2174,11 @@ BEGIN
     CALL {database}.{schema}.PROC_DEDUP_ADSB_DATA(2);
     RETURN 'Ingest and ETL complete';
 END;
-$$;
+$;
+
+ALTER PROCEDURE {database}.{schema}.PROC_ADSB_INGEST_AND_ETL()
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- Scheduled Task (daily batch cadence)
@@ -2080,6 +2190,10 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_INGEST_ADSB
 AS
   CALL {database}.{schema}.PROC_ADSB_INGEST_AND_ETL();
 
+ALTER TASK {database}.{schema}.TASK_INGEST_ADSB
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'realtime';
+
 -- -----------------------------------------------------------------------------
 -- Task DAG: TASK_ENRICH_ADSB runs after TASK_INGEST_ADSB completes
 -- -----------------------------------------------------------------------------
@@ -2089,6 +2203,10 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
 AS
   CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
 
+ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'realtime';
+
 -- Task DAG: TASK_REFRESH_DERIVED runs after TASK_ENRICH_ADSB completes
 CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_DERIVED
   WAREHOUSE = {warehouse}
@@ -2096,12 +2214,20 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_DERIVED
 AS
   CALL {database}.{schema}.PROC_REFRESH_DERIVED();
 
+ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'realtime';
+
 -- Task DAG: TASK_REFRESH_ANALYTICS runs after TASK_REFRESH_DERIVED completes
 CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
   WAREHOUSE = {warehouse}
   AFTER {database}.{schema}.TASK_REFRESH_DERIVED
 AS
   CALL {database}.{schema}.PROC_REFRESH_ANALYTICS();
+
+ALTER TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'realtime';
 
 -- Tasks are created SUSPENDED. To start:
 -- ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
@@ -3498,6 +3624,10 @@ JOIN relevant r
 LEFT JOIN vehicle_behavior vb
   ON p.ICAO_HEX = vb.ICAO_HEX;
 
+ALTER DYNAMIC TABLE {database}.{schema}.ADSB_DATA_LOCAL
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'analytics';
+
 -- Keep the canonical name only (avoid confusion).
 DROP VIEW IF EXISTS {database}.{schema}.ADSB_DATA_LOVAL;
 
@@ -3569,6 +3699,10 @@ agg AS (
 )
 SELECT * FROM agg;
 
+ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'analytics';
+
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
   TARGET_LAG = DOWNSTREAM
   WAREHOUSE = {warehouse}
@@ -3632,6 +3766,10 @@ FROM with_session w
 -- Keep this aligned with dashboard-side dwell approximation (default ~120m).
 LEFT JOIN {database}.{schema}.PROPERTIES_GATES g ON ST_DWITHIN(w.LOCATION, g.gate_geom, 120)
 QUALIFY ROW_NUMBER() OVER (PARTITION BY w.ICAO_HEX, w.service_date, w.ts ORDER BY ST_DISTANCE(w.LOCATION, g.gate_geom) ASC NULLS LAST) = 1;
+
+ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'analytics';
 
 -- -----------------------------------------------------------------------------
 -- 2. Gate Analysis summaries
