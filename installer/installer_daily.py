@@ -5691,7 +5691,7 @@ def main():
         st.subheader("⚡ Executing SQL...")
         
         def split_sql_statements(sql_content):
-            """Split SQL into statements, respecting $$ procedure blocks."""
+            """Split SQL into statements, respecting $ and $$ procedure blocks."""
             statements = []
             current = []
             in_dollar_block = False
@@ -5705,17 +5705,22 @@ def main():
                     if not stripped or stripped.startswith('--'):
                         continue
                 
-                # Check for $$ delimiter BEFORE adding line to current
+                # Check for dollar delimiters ($$ or standalone $ on line by itself)
+                # Toggle block state when we see delimiters
                 if '$$' in line:
+                    # Double dollar delimiter
                     dollar_count = line.count('$$')
                     if dollar_count % 2 == 1:  # Odd number toggles state
                         in_dollar_block = not in_dollar_block
+                elif stripped in ('$', '$;'):
+                    # Single dollar delimiter (used by Python procedures)
+                    in_dollar_block = not in_dollar_block
                 
                 # Add line to current statement
                 current.append(line)
                 
                 # Check if statement is complete
-                # Only end statement if: NOT in $$ block AND line ends with semicolon
+                # Only end statement if: NOT in dollar block AND line ends with semicolon
                 if not in_dollar_block and stripped.endswith(';'):
                     stmt = '\n'.join(current).strip()
                     if stmt and not stmt.startswith('--'):
