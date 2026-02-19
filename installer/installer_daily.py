@@ -1866,7 +1866,7 @@ def enrich(session, p_max_hexes: int = 200, p_days_back: int = 2, p_min_age_hour
             errors += 1
 
     return "Enriched aircraft meta for %d hexes (errors=%d)" % (updated, errors)
-$;
+$$;
 
 ALTER PROCEDURE {database}.{schema}.PROC_ENRICH_AIRCRAFT_META(INT, INT, INT)
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -1900,7 +1900,7 @@ BEGIN
   v_rows := SQLROWCOUNT;
   RETURN 'Backfilled ADSB_DATA aircraft fields for last ' || v_days || ' days (rows=' || v_rows || ')';
 END;
-$;
+$$;
 
 ALTER PROCEDURE {database}.{schema}.PROC_BACKFILL_ADSB_AIRCRAFT_DESC(INT)
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -1917,7 +1917,7 @@ BEGIN
   CALL {database}.{schema}.PROC_BACKFILL_ADSB_AIRCRAFT_DESC(2);
   RETURN 'Aircraft meta enriched + ADSB_DATA backfilled';
 END;
-$;
+$$;
 
 ALTER PROCEDURE {database}.{schema}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL()
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -2029,7 +2029,7 @@ def ingest(session):
         df.write.mode('append').save_as_table('{adsb_raw_table}')
     
     return "Inserted " + str(len(rows)) + " records"
-$;
+$$;
 
 ALTER PROCEDURE {database}.{schema}.PROC_INGEST_ADSB_REALTIME()
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -2109,7 +2109,7 @@ BEGIN
 
     RETURN 'ETL Complete';
 END;
-$;
+$$;
 
 ALTER PROCEDURE {database}.{schema}.PROC_ETL_ADSB_TO_DATA()
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -2153,7 +2153,7 @@ BEGIN
   v_rows := SQLROWCOUNT;
   RETURN 'Deduped ADSB_DATA for last ' || v_days || ' days (deleted_rows=' || v_rows || ')';
 END;
-$;
+$$;
 
 ALTER PROCEDURE {database}.{schema}.PROC_DEDUP_ADSB_DATA(INT)
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -2174,7 +2174,7 @@ BEGIN
     CALL {database}.{schema}.PROC_DEDUP_ADSB_DATA(2);
     RETURN 'Ingest and ETL complete';
 END;
-$;
+$$;
 
 ALTER PROCEDURE {database}.{schema}.PROC_ADSB_INGEST_AND_ETL()
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -5691,7 +5691,7 @@ def main():
         st.subheader("⚡ Executing SQL...")
         
         def split_sql_statements(sql_content):
-            """Split SQL into statements, respecting $ and $$ procedure blocks."""
+            """Split SQL into statements, respecting $$ procedure blocks."""
             statements = []
             current = []
             in_dollar_block = False
@@ -5705,16 +5705,11 @@ def main():
                     if not stripped or stripped.startswith('--'):
                         continue
                 
-                # Check for dollar delimiters ($$ or standalone $ on line by itself)
-                # Toggle block state when we see delimiters
+                # Check for $$ delimiter (used by all procedures now)
                 if '$$' in line:
-                    # Double dollar delimiter
                     dollar_count = line.count('$$')
                     if dollar_count % 2 == 1:  # Odd number toggles state
                         in_dollar_block = not in_dollar_block
-                elif stripped in ('$', '$;'):
-                    # Single dollar delimiter (used by Python procedures)
-                    in_dollar_block = not in_dollar_block
                 
                 # Add line to current statement
                 current.append(line)
