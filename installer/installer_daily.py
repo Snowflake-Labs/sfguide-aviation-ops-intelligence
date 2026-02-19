@@ -5705,24 +5705,17 @@ def main():
                     if not stripped or stripped.startswith('--'):
                         continue
                 
-                # Check for $$ delimiter
+                # Check for $$ delimiter BEFORE adding line to current
                 if '$$' in line:
-                    current.append(line)
                     dollar_count = line.count('$$')
                     if dollar_count % 2 == 1:  # Odd number toggles state
                         in_dollar_block = not in_dollar_block
-                    
-                    # If we just closed a block and line ends with ;, end statement
-                    if not in_dollar_block and stripped.endswith(';'):
-                        stmt = '\n'.join(current).strip()
-                        if stmt:
-                            statements.append(stmt)
-                        current = []
-                    continue
                 
+                # Add line to current statement
                 current.append(line)
                 
-                # If we're not in a $$ block and line ends with ;, it's end of statement
+                # Check if statement is complete
+                # Only end statement if: NOT in $$ block AND line ends with semicolon
                 if not in_dollar_block and stripped.endswith(';'):
                     stmt = '\n'.join(current).strip()
                     if stmt and not stmt.startswith('--'):
