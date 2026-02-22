@@ -101,11 +101,16 @@ with st.sidebar:
     st.divider()
     
     # Vehicle type filter
+    st.sidebar.info("💡 **Tip:** Uncheck 'All aircraft types' or 'All ground types' to select specific vehicle categories")
     vehicle_filter = ui_components.render_vehicle_type_filter(
         key_prefix="ground_activity",
         sidebar=True,
-        default_all=True
+        default_all=False  # Start with no selection for explicit filtering
     )
+    
+    # Default to ground vehicles if nothing selected
+    if not vehicle_filter.get('selected_types'):
+        st.sidebar.warning("⚠️ No vehicles selected. Check boxes above to see data, or select 'All ground types' for ground activity analysis.")
     
     # Map the selection to the format expected by the rest of the code
     metric_type = "Distinct Aircraft Count" if metric_type_selection == Metrics.FLIGHT_COUNT else "Total Time Spent (minutes)"
