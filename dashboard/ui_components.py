@@ -407,6 +407,17 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, d
             disabled=aircraft_all
         )
     
+    # DEBUG: Show checkbox states
+    container.markdown("---")
+    container.markdown("**🐛 DEBUG: Aircraft Filter State**")
+    container.write(f"aircraft_all: {aircraft_all}")
+    container.write(f"heavy: {heavy}")
+    container.write(f"medium: {medium}")
+    container.write(f"large: {large}")
+    container.write(f"small: {small}")
+    container.write(f"light: {light}")
+    container.write(f"helicopter: {helicopter}")
+    
     # Build aircraft categories list
     aircraft_categories = []
     if aircraft_all:
@@ -435,6 +446,8 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, d
             aircraft_categories.append('LIGHT_AIRCRAFT')
         if helicopter:
             aircraft_categories.append('HELICOPTER')
+    
+    container.write(f"aircraft_categories: {aircraft_categories}")
     
     container.markdown("")  # Spacing
     
@@ -476,6 +489,14 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, d
             disabled=ground_all
         )
     
+    # DEBUG: Show ground checkbox states
+    container.markdown("**🐛 DEBUG: Ground Filter State**")
+    container.write(f"ground_all: {ground_all}")
+    container.write(f"towers: {towers}")
+    container.write(f"service: {service}")
+    container.write(f"ground_vehicles: {ground_vehicles}")
+    container.write(f"light_surface: {light_surface}")
+    
     # Build ground categories list
     ground_categories = []
     if ground_all:
@@ -498,8 +519,14 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, d
         if light_surface:
             ground_categories.append('LIGHT_SURFACE_VEHICLE')
     
+    container.write(f"ground_categories: {ground_categories}")
+    
     # Build SQL filter
     all_selected = aircraft_categories + ground_categories
+    
+    # DEBUG: Show final filter
+    container.markdown("**🐛 DEBUG: Final Filter**")
+    container.write(f"all_selected: {all_selected}")
     
     if not all_selected:
         sql_filter = "VEHICLE_CATEGORY = 'NONE'"
@@ -507,6 +534,9 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, d
     else:
         quoted_types = [f"'{t}'" for t in all_selected]
         sql_filter = f"VEHICLE_CATEGORY IN ({','.join(quoted_types)})"
+        
+        container.write(f"sql_filter: {sql_filter}")
+        container.markdown("---")
         
         # Summary
         if aircraft_all and ground_all:
