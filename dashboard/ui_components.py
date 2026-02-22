@@ -368,6 +368,13 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, d
         key=f"{key_prefix}_aircraft_all"
     )
     
+    # Reset individual checkboxes when aircraft_all is unchecked
+    if not aircraft_all:
+        for key in ['heavy', 'medium', 'large', 'small', 'light', 'helicopter']:
+            full_key = f"{key_prefix}_{key}"
+            if full_key in st.session_state and st.session_state[full_key]:
+                st.session_state[full_key] = False
+    
     # Detailed aircraft categories (collapsible)
     with container.expander("Aircraft Categories", expanded=False):
         heavy = st.checkbox(
@@ -461,6 +468,13 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, d
         value=default_ground,
         key=f"{key_prefix}_ground_all"
     )
+    
+    # Reset individual checkboxes when ground_all is unchecked
+    if not ground_all:
+        for key in ['towers', 'service', 'ground_vehicles', 'light_surface']:
+            full_key = f"{key_prefix}_{key}"
+            if full_key in st.session_state and st.session_state[full_key]:
+                st.session_state[full_key] = False
     
     # Detailed ground categories (collapsible)
     with container.expander("Ground Categories", expanded=False):
