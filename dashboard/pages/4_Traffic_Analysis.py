@@ -97,10 +97,11 @@ def get_hourly_traffic(_session, start_dt, end_dt):
     local_hour_expr = utils.get_airport_local_ts_sql(db_prefix, "hour")
     query = f"""
     SELECT {local_hour_expr} AS hour,
-           aircraft_count,
-           data_points
+           SUM(aircraft_count) as aircraft_count,
+           SUM(data_points) as data_points
     FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
     WHERE {local_hour_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+    GROUP BY hour
     ORDER BY hour
     """
     return _session.sql(query).to_pandas()
@@ -110,13 +111,14 @@ def get_daily_traffic(_session, start_dt, end_dt):
     """Get daily flight statistics"""
     query = f"""
     SELECT date,
-           unique_aircraft,
-           unique_flights,
-           total_records,
-           avg_altitude,
-           avg_speed
+           SUM(unique_aircraft) as unique_aircraft,
+           SUM(unique_flights) as unique_flights,
+           SUM(total_records) as total_records,
+           AVG(avg_altitude) as avg_altitude,
+           AVG(avg_speed) as avg_speed
     FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
     WHERE date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+    GROUP BY date
     ORDER BY date
     """
     return _session.sql(query).to_pandas()
