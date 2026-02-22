@@ -78,18 +78,9 @@ with st.sidebar:
         max_value=max_date if max_date else local_today
     )
     
-    # Vehicle type filter - MOVED BEFORE flight list to enable filtering
-    st.divider()
-    vehicle_filter = ui_components.render_vehicle_type_filter(
-        key_prefix="flight_tracker",
-        sidebar=True,
-        default_aircraft=True,  # Aircraft selected by default
-        default_ground=False    # Ground vehicles can be selected manually
-    )
-    
     # Load available flights
     @st.cache_data(ttl=300)
-    def get_flight_list(_session, date, _db_prefix, vehicle_sql_filter="1=1", limit: int = 500):
+    def get_flight_list(_session, date, _db_prefix, limit: int = 500):
         """Return a bounded list of flights for the given date with header fields.
         Reads from FLIGHT_TRACKER_FLIGHT_LIST (dynamic table)."""
         try:
@@ -104,7 +95,6 @@ with st.sidebar:
               VEHICLE_CATEGORY
             FROM {_db_prefix}.FLIGHT_TRACKER_FLIGHT_LIST
             WHERE service_date = '{date}'::DATE
-              AND {vehicle_sql_filter}
             QUALIFY ROW_NUMBER() OVER (ORDER BY points DESC, flight_id ASC) <= {int(limit)}
             """
             return _session.sql(query).to_pandas()
@@ -117,7 +107,7 @@ with st.sidebar:
                 return _pd.DataFrame(columns=['FLIGHT', 'AIRLINE_NAME', 'ORIGIN_AIRPORT', 'DESTINATION_AIRPORT', 'SCHEDULE_FLIGHT_NUMBER', 'POINTS', 'VEHICLE_CATEGORY'])
     
     with st.spinner("Loading available flights..."):
-        flights_df = get_flight_list(session, selected_date, db_prefix, vehicle_filter['sql_filter'], limit=500)
+        flights_df = get_flight_list(session, selected_date, db_prefix, limit=500)
     
     # Enrich labels from FLIGHT_SCHEDULE when missing (UTC/local date boundary tolerant)
     try:
@@ -165,7 +155,7 @@ with st.sidebar:
                 flights_df[c] = flights_df[c].where(flights_df[c].notna() & (flights_df[c].astype(str).str.strip() != ''), flights_df[sched_c])
         flights_df = flights_df.drop(columns=[c for c in flights_df.columns if c.endswith('_SCHED')])
     
-    # Flight dropdown (show airline + OD in label, but keep value as flight id)
+    # Flight dropdown (show airline + OD for aircraft, vehicle type for ground vehicles)
     if flights_df is not None and not flights_df.empty:
         flight_options = [""] + flights_df['FLIGHT'].tolist()
         labels = {}
@@ -175,6 +165,7 @@ with st.sidebar:
         col_o = "ORIGIN_AIRPORT" if "ORIGIN_AIRPORT" in flights_df.columns else "origin_airport"
         col_d = "DESTINATION_AIRPORT" if "DESTINATION_AIRPORT" in flights_df.columns else "destination_airport"
         col_sched = "SCHEDULE_FLIGHT_NUMBER" if "SCHEDULE_FLIGHT_NUMBER" in flights_df.columns else "schedule_flight_number"
+        col_vehicle = "VEHICLE_CATEGORY" if "VEHICLE_CATEGORY" in flights_df.columns else "vehicle_category"
 
         def _clean_txt(x):
             s = ("" if x is None else str(x)).strip()
@@ -186,26 +177,41 @@ with st.sidebar:
         except Exception:
             code_to_name = {}
 
+        # Ground vehicle categories
+        ground_categories = {'TOWER', 'SERVICE_VEHICLE', 'GROUND_VEHICLE', 'LIGHT_SURFACE_VEHICLE', 'UNKNOWN_SURFACE'}
+
         for _, r in flights_df.iterrows():
             fid = _clean_txt(r.get("FLIGHT"))
-            airline = _clean_txt(r.get(col_airline))
-            o = _clean_txt(r.get(col_o))
-            d = _clean_txt(r.get(col_d))
-
-            od = f"{o}→{d}" if o and d else ""
-
-            # If airline missing, derive from callsign prefix using standing airline dim.
-            if not airline and fid:
-                try:
-                    prefix = re.sub(r"[^A-Z]", "", fid.upper())[:3]
-                    # prefer 3-letter ICAO, else 2-letter IATA
-                    airline = code_to_name.get(prefix) or code_to_name.get(prefix[:2]) or ""
-                except Exception:
-                    airline = ""
-
-            # Label format requirement: Callsign | Airline | O→D (no schedule flight number digits).
-            parts = [p for p in [fid, airline, od] if p]
-            labels[fid] = " | ".join(parts)
+            vehicle_category = _clean_txt(r.get(col_vehicle))
+            
+            # Check if this is a ground vehicle
+            is_ground_vehicle = vehicle_category in ground_categories
+            
+            if is_ground_vehicle:
+                # For ground vehicles: show ICAO_HEX | Vehicle Type
+                vehicle_display = vehicle_category.replace('_', ' ').title()
+                labels[fid] = f"{fid} | {vehicle_display}"
+            else:
+                # For aircraft: show Callsign | Airline | O→D
+                airline = _clean_txt(r.get(col_airline))
+                o = _clean_txt(r.get(col_o))
+                d = _clean_txt(r.get(col_d))
+                
+                od = f"{o}→{d}" if o and d else ""
+                
+                # If airline missing, derive from callsign prefix using standing airline dim.
+                if not airline and fid:
+                    try:
+                        prefix = re.sub(r"[^A-Z]", "", fid.upper())[:3]
+                        # prefer 3-letter ICAO, else 2-letter IATA
+                        airline = code_to_name.get(prefix) or code_to_name.get(prefix[:2]) or ""
+                    except Exception:
+                        airline = ""
+                
+                # Label format requirement: Callsign | Airline | O→D (no schedule flight number digits).
+                parts = [p for p in [fid, airline, od] if p]
+                labels[fid] = " | ".join(parts)
+        
         selected_flight = st.selectbox(
             "Choose Flight to track",
             options=flight_options,
