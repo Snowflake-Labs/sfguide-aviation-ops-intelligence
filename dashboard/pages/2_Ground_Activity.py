@@ -194,7 +194,7 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
             ARRAY_AGG(DISTINCT OBJECT_CONSTRUCT(
                 'callsign', FLIGHT,
                 'category', VEHICLE_CATEGORY
-            )) WITHIN GROUP (ORDER BY FLIGHT) as callsigns,
+            )) as callsigns,
             ST_COLLECT(point_geom) as collected_points
         FROM points_with_h3
         WHERE h3_cell IS NOT NULL
