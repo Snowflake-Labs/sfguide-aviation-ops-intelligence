@@ -3561,42 +3561,93 @@ relevant AS (
   FROM flags
   WHERE is_local_od_any = 1 OR within_airport_radius = 1
 )
+WITH pts_enriched AS (
+  SELECT
+    p.*,
+    -- Add VEHICLE_CATEGORY
+    CASE 
+      -- Helicopters (A7)
+      WHEN p.CATEGORY = 'A7' THEN 'HELICOPTER'
+      -- Heavy Aircraft (A5 - wide-body)
+      WHEN p.CATEGORY = 'A5' THEN 'HEAVY_AIRCRAFT'
+      -- Large Airliners (A3 - narrow-body jets)
+      WHEN p.CATEGORY = 'A3' THEN 'LARGE_AIRLINER'
+      -- Small Commuter (A2 - regional)
+      WHEN p.CATEGORY = 'A2' THEN 'SMALL_COMMUTER'
+      -- Light Aircraft (A1 - GA)
+      WHEN p.CATEGORY = 'A1' THEN 'LIGHT_AIRCRAFT'
+      -- Medium Aircraft (A0 - catch-all)
+      WHEN p.CATEGORY = 'A0' THEN 'MEDIUM_AIRCRAFT'
+      -- High Performance Military (A6)
+      WHEN p.CATEGORY = 'A6' THEN 'HIGH_PERFORMANCE_MILITARY'
+      -- Ultralights/Experimental (B*)
+      WHEN p.CATEGORY LIKE 'B%' THEN 'ULTRALIGHT_EXPERIMENTAL'
+      -- Tower vehicles
+      WHEN p.TYPE = 'TWR' THEN 'TOWER'
+      -- Service vehicles
+      WHEN p.TYPE IN ('SERV', 'CAR') THEN 'SERVICE_VEHICLE'
+      -- Light surface vehicles (C1)
+      WHEN p.CATEGORY = 'C1' THEN 'LIGHT_SURFACE_VEHICLE'
+      -- Ground vehicles (C2 non-service)
+      WHEN p.CATEGORY = 'C2' AND COALESCE(p.TYPE, '') NOT IN ('TWR', 'SERV', 'CAR') THEN 'GROUND_VEHICLE'
+      -- Unknown surface (C0)
+      WHEN p.CATEGORY = 'C0' THEN 'UNKNOWN_SURFACE'
+      ELSE 'OTHER'
+    END AS VEHICLE_CATEGORY
+  FROM pts p
+  JOIN relevant r
+    ON r.service_date = p.service_date
+   AND r.flight_id = p.flight_id
+)
 SELECT 
-  p.*,
-  -- Add comprehensive vehicle classification
+  pe.FLIGHT_KEY,
+  pe.ICAO_HEX,
+  pe.REGISTRATION,
+  pe.TYPE,
+  pe.AIRCRAFT_DESC,
+  pe.FLIGHT,
+  pe.TIMESTAMP,
+  pe.LOCATION,
+  pe.TRACK,
+  pe.TRUE_HEADING,
+  pe.VELOCITY,
+  pe.ALTITUDE_BARO,
+  pe.ALTITUDE_GEOM,
+  pe.VERTICAL_RATE,
+  pe.SQUAWK,
+  pe.CATEGORY,
+  pe.SOURCE,
+  pe.INGESTED_AT,
+  pe.SCHEDULE_FLIGHT_KEY,
+  pe.SCHEDULE_FLIGHT_NUMBER,
+  -- NULL out airline fields for ground vehicles to prevent incorrect airline matching
   CASE 
-    -- Helicopters (A7)
-    WHEN p.CATEGORY = 'A7' THEN 'HELICOPTER'
-    -- Heavy Aircraft (A5 - wide-body)
-    WHEN p.CATEGORY = 'A5' THEN 'HEAVY_AIRCRAFT'
-    -- Large Airliners (A3 - narrow-body jets)
-    WHEN p.CATEGORY = 'A3' THEN 'LARGE_AIRLINER'
-    -- Small Commuter (A2 - regional)
-    WHEN p.CATEGORY = 'A2' THEN 'SMALL_COMMUTER'
-    -- Light Aircraft (A1 - GA)
-    WHEN p.CATEGORY = 'A1' THEN 'LIGHT_AIRCRAFT'
-    -- Medium Aircraft (A0 - catch-all)
-    WHEN p.CATEGORY = 'A0' THEN 'MEDIUM_AIRCRAFT'
-    -- High Performance Military (A6)
-    WHEN p.CATEGORY = 'A6' THEN 'HIGH_PERFORMANCE_MILITARY'
-    -- Ultralights/Experimental (B*)
-    WHEN p.CATEGORY LIKE 'B%' THEN 'ULTRALIGHT_EXPERIMENTAL'
-    -- Tower vehicles
-    WHEN p.TYPE = 'TWR' THEN 'TOWER'
-    -- Service vehicles
-    WHEN p.TYPE IN ('SERV', 'CAR') THEN 'SERVICE_VEHICLE'
-    -- Light surface vehicles (C1)
-    WHEN p.CATEGORY = 'C1' THEN 'LIGHT_SURFACE_VEHICLE'
-    -- Ground vehicles (C2 non-service)
-    WHEN p.CATEGORY = 'C2' AND COALESCE(p.TYPE, '') NOT IN ('TWR', 'SERV', 'CAR') THEN 'GROUND_VEHICLE'
-    -- Unknown surface (C0)
-    WHEN p.CATEGORY = 'C0' THEN 'UNKNOWN_SURFACE'
-    ELSE 'OTHER'
-  END AS VEHICLE_CATEGORY
-FROM pts p
-JOIN relevant r
-  ON r.service_date = p.service_date
- AND r.flight_id = p.flight_id;
+    WHEN pe.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+    THEN pe.AIRLINE_NAME
+    ELSE NULL
+  END AS AIRLINE_NAME,
+  CASE 
+    WHEN pe.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+    THEN pe.AIRLINE_IATA
+    ELSE NULL
+  END AS AIRLINE_IATA,
+  CASE 
+    WHEN pe.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+    THEN pe.AIRLINE_ICAO
+    ELSE NULL
+  END AS AIRLINE_ICAO,
+  pe.ORIGIN_AIRPORT,
+  pe.DESTINATION_AIRPORT,
+  pe.IS_LOCAL_OD,
+  pe.SCHEDULED_DEPARTURE,
+  pe.SCHEDULED_ARRIVAL,
+  pe.MATCH_METHOD,
+  pe.MATCH_CONFIDENCE,
+  pe.MATCHED_AT,
+  pe.service_date,
+  pe.flight_id,
+  pe.VEHICLE_CATEGORY
+FROM pts_enriched pe;
 
 ALTER DYNAMIC TABLE {database}.{schema}.ADSB_DATA_LOCAL
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -3832,29 +3883,43 @@ by_session AS (
     g.closest_gate_name AS gate_name,
     g.VEHICLE_CATEGORY,
     SUM(g.lag_seconds)/60.0 AS dwell_minutes,
-    -- Pull airline metadata from schedule-enriched ADSB points (more reliable than schedule.registration)
-    COALESCE(
-      MAX(NULLIF(TRIM(a.AIRLINE_ICAO), '')),
-      MAX(di.airline_icao)
-    ) AS airline_icao,
-    COALESCE(
-      MAX(NULLIF(TRIM(a.AIRLINE_IATA), '')),
-      MAX(dj.airline_iata)
-    ) AS airline_iata,
-    COALESCE(
-      MAX(NULLIF(TRIM(a.AIRLINE_NAME), '')),
-      MAX(di.airline_name),
-      MAX(dj.airline_name)
-    ) AS airline_name
+    -- Only derive airline metadata for actual aircraft, not ground vehicles
+    CASE 
+      WHEN g.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+      THEN COALESCE(
+        MAX(NULLIF(TRIM(a.AIRLINE_ICAO), '')),
+        MAX(di.airline_icao)
+      )
+      ELSE NULL
+    END AS airline_icao,
+    CASE 
+      WHEN g.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+      THEN COALESCE(
+        MAX(NULLIF(TRIM(a.AIRLINE_IATA), '')),
+        MAX(dj.airline_iata)
+      )
+      ELSE NULL
+    END AS airline_iata,
+    CASE 
+      WHEN g.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+      THEN COALESCE(
+        MAX(NULLIF(TRIM(a.AIRLINE_NAME), '')),
+        MAX(di.airline_name),
+        MAX(dj.airline_name)
+      )
+      ELSE NULL
+    END AS airline_name
   FROM {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS g
   LEFT JOIN {database}.{schema}.ADSB_DATA_LOCAL a
     ON a.ICAO_HEX = g.ICAO_HEX
    AND a.TIMESTAMP = g.ts
-  -- Fallback: derive airline from callsign prefix when ADSB enrichment is missing
+  -- Only join dimension tables for aircraft (not ground vehicles)
   LEFT JOIN dim_icao di
     ON di.airline_icao = REGEXP_SUBSTR(UPPER(TRIM(g.flight)), '^[A-Z]{{3}}')
+   AND g.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
   LEFT JOIN dim_iata dj
     ON dj.airline_iata = REGEXP_SUBSTR(UPPER(TRIM(g.flight)), '^[A-Z]{{2}}')
+   AND g.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
   WHERE g.closest_gate_name IS NOT NULL
   GROUP BY
     g.service_date,
@@ -3866,7 +3931,12 @@ by_session AS (
 SELECT
   s.date,
   s.gate_name,
-  COALESCE(s.airline_icao, s.airline_iata, 'UNK') AS airline_code,
+  -- Use VEHICLE_CATEGORY as airline_code for ground vehicles, otherwise use actual airline or UNK
+  CASE 
+    WHEN s.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+    THEN COALESCE(s.airline_icao, s.airline_iata, 'UNK')
+    ELSE s.VEHICLE_CATEGORY
+  END AS airline_code,
   MAX(s.airline_name) AS airline_name,
   s.VEHICLE_CATEGORY,
   SUM(s.dwell_minutes) AS dwell_minutes,
@@ -4309,13 +4379,16 @@ WITH ap AS (
 SELECT
   TO_DATE(CONVERT_TIMEZONE('UTC', ap.airport_tzid, TIMESTAMP)) AS date,
   SUBSTR(FLIGHT, 1, 3) AS airline_code,
+  VEHICLE_CATEGORY,
   COUNT(DISTINCT ICAO_HEX) AS aircraft_count,
   COUNT(DISTINCT FLIGHT) AS flight_count,
   COUNT(*) AS data_points
 FROM {database}.{schema}.ADSB_DATA_LOCAL
 cross join ap
 WHERE FLIGHT IS NOT NULL
-GROUP BY date, airline_code;
+  -- Only include actual aircraft, not ground vehicles
+  AND VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+GROUP BY date, airline_code, VEHICLE_CATEGORY;
 
 -- Schedule-vs-actual delay rollup (used by Traffic Analysis)
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_DELAY_DAILY
