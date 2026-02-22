@@ -3653,9 +3653,6 @@ ALTER DYNAMIC TABLE {database}.{schema}.ADSB_DATA_LOCAL
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
           {database}.TAGS.COMPONENT = 'analytics';
 
--- Keep the canonical name only (avoid confusion).
-DROP VIEW IF EXISTS {database}.{schema}.ADSB_DATA_LOVAL;
-
 -- -----------------------------------------------------------------------------
 -- 1. Gate Analysis derived tables (also reused by Runway Crossings)
 -- -----------------------------------------------------------------------------
