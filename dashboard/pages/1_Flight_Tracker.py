@@ -78,9 +78,21 @@ with st.sidebar:
         max_value=max_date if max_date else local_today
     )
     
-    # Load available flights
+    st.divider()
+    
+    # Vehicle type filter - placed early so it can filter the flight list
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="flight_tracker",
+        sidebar=True,
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
+    )
+    
+    st.divider()
+    
+    # Load available flights (filtered by vehicle type)
     @st.cache_data(ttl=300)
-    def get_flight_list(_session, date, _db_prefix, limit: int = 500):
+    def get_flight_list(_session, date, _db_prefix, vehicle_sql_filter="1=1", limit: int = 500):
         """Return a bounded list of flights for the given date with header fields.
         Reads from FLIGHT_TRACKER_FLIGHT_LIST (dynamic table)."""
         try:
@@ -95,6 +107,7 @@ with st.sidebar:
               VEHICLE_CATEGORY
             FROM {_db_prefix}.FLIGHT_TRACKER_FLIGHT_LIST
             WHERE service_date = '{date}'::DATE
+              AND {vehicle_sql_filter}
             QUALIFY ROW_NUMBER() OVER (ORDER BY points DESC, flight_id ASC) <= {int(limit)}
             """
             return _session.sql(query).to_pandas()
@@ -107,7 +120,7 @@ with st.sidebar:
                 return _pd.DataFrame(columns=['FLIGHT', 'AIRLINE_NAME', 'ORIGIN_AIRPORT', 'DESTINATION_AIRPORT', 'SCHEDULE_FLIGHT_NUMBER', 'POINTS', 'VEHICLE_CATEGORY'])
     
     with st.spinner("Loading available flights..."):
-        flights_df = get_flight_list(session, selected_date, db_prefix, limit=500)
+        flights_df = get_flight_list(session, selected_date, db_prefix, vehicle_filter['sql_filter'], limit=500)
     
     # Enrich labels from FLIGHT_SCHEDULE when missing (UTC/local date boundary tolerant)
     try:
@@ -220,16 +233,6 @@ with st.sidebar:
     else:
         st.warning(f"No flights found for {selected_date}")
         selected_flight = ""
-    
-    st.divider()
-    
-    # Vehicle type filter - placed after flight selection
-    vehicle_filter = ui_components.render_vehicle_type_filter(
-        key_prefix="flight_tracker",
-        sidebar=True,
-        default_aircraft=True,  # Aircraft selected by default
-        default_ground=False    # Ground vehicles can be selected manually
-    )
     
     st.divider()
     
