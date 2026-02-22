@@ -3548,12 +3548,10 @@ flags AS (
       IFF(
         airport.airport_geom IS NOT NULL
         AND p.LOCATION IS NOT NULL
-        AND p.ALTITUDE_BARO IS NOT NULL AND p.ALTITUDE_BARO <= 50
-        AND COALESCE(p.VELOCITY, 0) <= 40
         AND ST_DWITHIN(p.LOCATION, airport.airport_geom, 5000),
         1, 0
       )
-    ) AS touched_airport_any
+    ) AS within_airport_radius
   FROM pts p
   CROSS JOIN airport
   GROUP BY 1, 2
@@ -3561,7 +3559,7 @@ flags AS (
 relevant AS (
   SELECT service_date, flight_id
   FROM flags
-  WHERE is_local_od_any = 1 OR touched_airport_any = 1
+  WHERE is_local_od_any = 1 OR within_airport_radius = 1
 )
 SELECT 
   p.*,
