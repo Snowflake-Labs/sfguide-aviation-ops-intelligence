@@ -3560,8 +3560,8 @@ relevant AS (
   SELECT service_date, flight_id
   FROM flags
   WHERE is_local_od_any = 1 OR within_airport_radius = 1
-)
-WITH pts_enriched AS (
+),
+pts_enriched AS (
   SELECT
     p.*,
     -- Add VEHICLE_CATEGORY
