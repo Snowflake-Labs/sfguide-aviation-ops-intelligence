@@ -93,7 +93,7 @@ with st.sidebar:
 
 # Query functions
 @st.cache_data(ttl=300)
-def get_hourly_traffic(_session, start_dt, end_dt):
+def get_hourly_traffic(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
     """Get hourly flight counts"""
     local_hour_expr = utils.get_airport_local_ts_sql(db_prefix, "hour")
     query = f"""
@@ -102,13 +102,14 @@ def get_hourly_traffic(_session, start_dt, end_dt):
            SUM(data_points) as data_points
     FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
     WHERE {local_hour_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+      AND {vehicle_sql_filter}
     GROUP BY hour
     ORDER BY hour
     """
     return _session.sql(query).to_pandas()
 
 @st.cache_data(ttl=300)
-def get_daily_traffic(_session, start_dt, end_dt):
+def get_daily_traffic(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
     """Get daily flight statistics"""
     query = f"""
     SELECT date,
@@ -119,13 +120,14 @@ def get_daily_traffic(_session, start_dt, end_dt):
            AVG(avg_speed) as avg_speed
     FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
     WHERE date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+      AND {vehicle_sql_filter}
     GROUP BY date
     ORDER BY date
     """
     return _session.sql(query).to_pandas()
 
 @st.cache_data(ttl=300)
-def get_hourly_patterns(_session, start_dt, end_dt):
+def get_hourly_patterns(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
     """Get average traffic by hour of day"""
     local_hour_expr = utils.get_airport_local_ts_sql(db_prefix, "hour")
     query = f"""
@@ -135,13 +137,14 @@ def get_hourly_patterns(_session, start_dt, end_dt):
         SUM(data_points) as total_points
     FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
     WHERE {local_hour_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+      AND {vehicle_sql_filter}
     GROUP BY hour_of_day
     ORDER BY hour_of_day
     """
     return _session.sql(query).to_pandas()
 
 @st.cache_data(ttl=300)
-def get_day_of_week_patterns(_session, start_dt, end_dt):
+def get_day_of_week_patterns(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
     """Get traffic patterns by day of week"""
     query = f"""
     SELECT 
@@ -150,6 +153,7 @@ def get_day_of_week_patterns(_session, start_dt, end_dt):
         SUM(unique_flights) as flight_count
     FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
     WHERE date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+      AND {vehicle_sql_filter}
     GROUP BY day_of_week
     ORDER BY day_of_week
     """
@@ -199,14 +203,14 @@ with st.spinner("Analyzing traffic patterns..."):
     end_datetime = f"{_to_date_str(end_date)} 23:59:59"
     
     if granularity.lower() == "daily":
-        traffic_data = get_hourly_traffic(session, start_datetime, end_datetime)
+        traffic_data = get_hourly_traffic(session, start_datetime, end_datetime, vehicle_filter['sql_filter'])
         time_col = 'HOUR'
     else:
-        traffic_data = get_daily_traffic(session, start_datetime, end_datetime)
+        traffic_data = get_daily_traffic(session, start_datetime, end_datetime, vehicle_filter['sql_filter'])
         time_col = 'DATE'
     
-    hourly_patterns = get_hourly_patterns(session, start_datetime, end_datetime)
-    dow_patterns = get_day_of_week_patterns(session, start_datetime, end_datetime)
+    hourly_patterns = get_hourly_patterns(session, start_datetime, end_datetime, vehicle_filter['sql_filter'])
+    dow_patterns = get_day_of_week_patterns(session, start_datetime, end_datetime, vehicle_filter['sql_filter'])
     
     if show_airlines:
         airline_data = get_airline_traffic(session, start_datetime, end_datetime)
