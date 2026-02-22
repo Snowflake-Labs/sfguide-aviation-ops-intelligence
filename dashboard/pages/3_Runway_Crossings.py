@@ -567,6 +567,7 @@ else:
     
     st.pydeck_chart(r, use_container_width=True, key="runway_crossings")
     
+    metric_label = agg_df['METRIC_LABEL'].iloc[0]
     st.caption(f"💡 **Hexagon visualization:** Color (Yellow→Orange→Red) and height both represent {metric_label}. Higher intensity = more crossings/longer duration. Zoom and tilt for 3D view.")
 
 st.divider()
