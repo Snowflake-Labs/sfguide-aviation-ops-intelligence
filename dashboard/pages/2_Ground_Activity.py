@@ -186,30 +186,41 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
             AND ST_Y(LOCATION) BETWEEN b.min_lat AND b.max_lat
             AND ST_X(LOCATION) BETWEEN b.min_lon AND b.max_lon
     ),
-    h3_with_bounds AS (
+    h3_aggregated AS (
         SELECT 
             h3_cell,
             ROUND(COUNT(DISTINCT FLIGHT) / {divisor}) as distinct_aircraft_count,
             ROUND(COUNT(*) / {divisor}) as observation_count,
-            ARRAY_AGG(DISTINCT OBJECT_CONSTRUCT(
-                'callsign', FLIGHT,
-                'category', VEHICLE_CATEGORY
-            )) as callsigns,
             ST_COLLECT(point_geom) as collected_points
         FROM points_with_h3
         WHERE h3_cell IS NOT NULL
         GROUP BY h3_cell
+    ),
+    h3_callsigns AS (
+        SELECT 
+            h3_cell,
+            ARRAY_AGG(DISTINCT OBJECT_CONSTRUCT(
+                'callsign', FLIGHT,
+                'category', VEHICLE_CATEGORY
+            )) as callsigns
+        FROM (
+            SELECT DISTINCT h3_cell, FLIGHT, VEHICLE_CATEGORY
+            FROM points_with_h3
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY h3_cell ORDER BY FLIGHT) <= 15
+        )
+        GROUP BY h3_cell
     )
     SELECT 
-        h3_cell,
-        distinct_aircraft_count,
-        observation_count,
-        callsigns,
-        ST_XMIN(collected_points) as min_lon,
-        ST_XMAX(collected_points) as max_lon,
-        ST_YMIN(collected_points) as min_lat,
-        ST_YMAX(collected_points) as max_lat
-    FROM h3_with_bounds
+        a.h3_cell,
+        a.distinct_aircraft_count,
+        a.observation_count,
+        c.callsigns,
+        ST_XMIN(a.collected_points) as min_lon,
+        ST_XMAX(a.collected_points) as max_lon,
+        ST_YMIN(a.collected_points) as min_lat,
+        ST_YMAX(a.collected_points) as max_lat
+    FROM h3_aggregated a
+    LEFT JOIN h3_callsigns c ON a.h3_cell = c.h3_cell
     ORDER BY {order_by_expr} DESC
     LIMIT {int(max_cells)}
     """
@@ -333,13 +344,17 @@ if has_data:
                         by_category[cat] = []
                     by_category[cat].append(callsign)
                 
-                # Build HTML
-                callsigns_html = "<br/><br/><b>Callsigns:</b><br/>"
+                # Build HTML (limited to first 10 callsigns per category)
+                callsigns_html = "<br/><br/><b>Callsigns (sample):</b><br/>"
                 for cat, calls in sorted(by_category.items()):
-                    # Limit to first 10 callsigns per category
                     display_calls = calls[:10]
-                    more_text = f" (+{len(calls)-10} more)" if len(calls) > 10 else ""
+                    more_text = f" (+more...)" if len(calls) > 10 else ""
                     callsigns_html += f"<i>{cat}:</i> {', '.join(display_calls)}{more_text}<br/>"
+                
+                # Add note if we hit the 15 callsign limit per hex
+                total_shown = len(callsigns_data)
+                if total_shown >= 15:
+                    callsigns_html += f"<i>(showing 15 of {int(aircraft_count)} total)</i>"
             except:
                 callsigns_html = ""
         
