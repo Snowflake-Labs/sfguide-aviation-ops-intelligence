@@ -409,23 +409,32 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, d
     
     # Build aircraft categories list
     aircraft_categories = []
-    if aircraft_all or heavy:
-        aircraft_categories.append('HEAVY_AIRCRAFT')
-    if aircraft_all or medium:
-        aircraft_categories.append('MEDIUM_AIRCRAFT')
-    if aircraft_all or large:
-        aircraft_categories.append('LARGE_AIRLINER')
-    if aircraft_all or small:
-        aircraft_categories.append('SMALL_COMMUTER')
-    if aircraft_all or light:
-        aircraft_categories.append('LIGHT_AIRCRAFT')
-    if aircraft_all or helicopter:
-        aircraft_categories.append('HELICOPTER')
     if aircraft_all:
+        # If "All aircraft" is checked, include everything
         aircraft_categories.extend([
+            'HEAVY_AIRCRAFT',
+            'MEDIUM_AIRCRAFT',
+            'LARGE_AIRLINER',
+            'SMALL_COMMUTER',
+            'LIGHT_AIRCRAFT',
+            'HELICOPTER',
             'HIGH_PERFORMANCE_MILITARY',
             'ULTRALIGHT_EXPERIMENTAL'
         ])
+    else:
+        # If "All aircraft" is unchecked, only include individually selected categories
+        if heavy:
+            aircraft_categories.append('HEAVY_AIRCRAFT')
+        if medium:
+            aircraft_categories.append('MEDIUM_AIRCRAFT')
+        if large:
+            aircraft_categories.append('LARGE_AIRLINER')
+        if small:
+            aircraft_categories.append('SMALL_COMMUTER')
+        if light:
+            aircraft_categories.append('LIGHT_AIRCRAFT')
+        if helicopter:
+            aircraft_categories.append('HELICOPTER')
     
     container.markdown("")  # Spacing
     
@@ -469,16 +478,25 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, d
     
     # Build ground categories list
     ground_categories = []
-    if ground_all or towers:
-        ground_categories.append('TOWER')
-    if ground_all or service:
-        ground_categories.append('SERVICE_VEHICLE')
-    if ground_all or ground_vehicles:
-        ground_categories.append('GROUND_VEHICLE')
-    if ground_all or light_surface:
-        ground_categories.append('LIGHT_SURFACE_VEHICLE')
     if ground_all:
-        ground_categories.extend(['UNKNOWN_SURFACE'])
+        # If "All ground" is checked, include everything
+        ground_categories.extend([
+            'TOWER',
+            'SERVICE_VEHICLE',
+            'GROUND_VEHICLE',
+            'LIGHT_SURFACE_VEHICLE',
+            'UNKNOWN_SURFACE'
+        ])
+    else:
+        # If "All ground" is unchecked, only include individually selected categories
+        if towers:
+            ground_categories.append('TOWER')
+        if service:
+            ground_categories.append('SERVICE_VEHICLE')
+        if ground_vehicles:
+            ground_categories.append('GROUND_VEHICLE')
+        if light_surface:
+            ground_categories.append('LIGHT_SURFACE_VEHICLE')
     
     # Build SQL filter
     all_selected = aircraft_categories + ground_categories

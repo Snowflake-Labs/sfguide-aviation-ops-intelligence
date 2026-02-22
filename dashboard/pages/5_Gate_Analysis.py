@@ -124,8 +124,6 @@ def get_airline_utilization(_session, start_dt, end_dt, vehicle_sql_filter="1=1"
     GROUP BY airline_code
     ORDER BY dwell_minutes DESC
     """
-    st.write(f"DEBUG: Query filter = {vehicle_sql_filter}")
-    st.write(f"DEBUG: Query = {q}")
     return _session.sql(q).to_pandas()
 
 @st.cache_data(ttl=300)
