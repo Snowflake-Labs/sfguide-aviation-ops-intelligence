@@ -223,6 +223,16 @@ with st.sidebar:
     
     st.divider()
     
+    # Vehicle type filter - placed after flight selection
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="flight_tracker",
+        sidebar=True,
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
+    )
+    
+    st.divider()
+    
     # Infrastructure Layers - use new dynamic selector
     infra_selection = ui_components.render_map_layers_selector(
         session, db_prefix, 
