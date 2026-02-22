@@ -85,6 +85,13 @@ with st.sidebar:
         default_ground=False    # Ground vehicles can be selected manually
     )
     
+    # DEBUG: Show vehicle filter
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**🐛 DEBUG: Vehicle Filter**")
+    st.sidebar.write(f"sql_filter: {vehicle_filter['sql_filter']}")
+    st.sidebar.write(f"selected_types: {vehicle_filter.get('selected_types', [])}")
+    st.sidebar.markdown("---")
+    
     # Always show airline breakdown and heatmap (toggles removed)
     show_airlines = True
     show_heatmap = True
@@ -106,6 +113,8 @@ def get_hourly_traffic(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
     GROUP BY hour
     ORDER BY hour
     """
+    st.write("🐛 DEBUG: get_hourly_traffic query:")
+    st.code(query, language="sql")
     return _session.sql(query).to_pandas()
 
 @st.cache_data(ttl=300)
