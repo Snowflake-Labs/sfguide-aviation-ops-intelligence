@@ -104,9 +104,19 @@ with st.sidebar:
     vehicle_filter = ui_components.render_vehicle_type_filter(
         key_prefix="ground_activity",
         sidebar=True,
-        default_aircraft=True,  # Aircraft selected by default
-        default_ground=False    # Ground vehicles can be selected manually
+        default_aircraft=False,  # Don't default to aircraft for Ground Activity page
+        default_ground=True      # Default to ground vehicles since this is Ground Activity page
     )
+    
+    # DEBUG: Show comprehensive filter info
+    st.sidebar.markdown("### 🔍 DEBUG: Filter State")
+    st.sidebar.write(f"Aircraft All: {vehicle_filter['aircraft_all']}")
+    st.sidebar.write(f"Ground All: {vehicle_filter['ground_all']}")
+    st.sidebar.write(f"Aircraft Categories: {vehicle_filter['aircraft_categories']}")
+    st.sidebar.write(f"Ground Categories: {vehicle_filter['ground_categories']}")
+    st.sidebar.write(f"All Selected: {vehicle_filter['selected_types']}")
+    st.sidebar.markdown("**SQL Filter:**")
+    st.sidebar.code(vehicle_filter['sql_filter'], language='sql')
     
     # Map the selection to the format expected by the rest of the code
     metric_type = "Distinct Aircraft Count" if metric_type_selection == Metrics.FLIGHT_COUNT else "Total Time Spent (minutes)"
