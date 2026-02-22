@@ -174,6 +174,7 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
             ST_Y(LOCATION) AS LAT,
             ST_X(LOCATION) AS LON,
             FLIGHT,
+            VEHICLE_CATEGORY,
             LOCATION as point_geom,
             H3_POINT_TO_CELL_STRING(LOCATION, {h3_resolution}) as h3_cell
         FROM {db_prefix}.ADSB_DATA_LOCAL SAMPLE BERNOULLI ({int(sample_percent)})
@@ -190,6 +191,10 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
             h3_cell,
             ROUND(COUNT(DISTINCT FLIGHT) / {divisor}) as distinct_aircraft_count,
             ROUND(COUNT(*) / {divisor}) as observation_count,
+            ARRAY_AGG(DISTINCT OBJECT_CONSTRUCT(
+                'callsign', FLIGHT,
+                'category', VEHICLE_CATEGORY
+            )) WITHIN GROUP (ORDER BY FLIGHT) as callsigns,
             ST_COLLECT(point_geom) as collected_points
         FROM points_with_h3
         WHERE h3_cell IS NOT NULL
@@ -199,6 +204,7 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
         h3_cell,
         distinct_aircraft_count,
         observation_count,
+        callsigns,
         ST_XMIN(collected_points) as min_lon,
         ST_XMAX(collected_points) as max_lon,
         ST_YMIN(collected_points) as min_lat,
@@ -312,12 +318,37 @@ if has_data:
         dwell_time = row['OBSERVATION_COUNT'] if pd.notna(row['OBSERVATION_COUNT']) else 0
         aircraft_count = row['DISTINCT_AIRCRAFT_COUNT'] if pd.notna(row['DISTINCT_AIRCRAFT_COUNT']) else 0
         
+        # Parse callsigns from JSON array
+        callsigns_html = ""
+        if pd.notna(row['CALLSIGNS']) and row['CALLSIGNS']:
+            import json
+            try:
+                callsigns_data = json.loads(row['CALLSIGNS']) if isinstance(row['CALLSIGNS'], str) else row['CALLSIGNS']
+                # Group by vehicle category
+                by_category = {}
+                for item in callsigns_data:
+                    cat = item.get('category', 'UNKNOWN')
+                    callsign = item.get('callsign', 'N/A')
+                    if cat not in by_category:
+                        by_category[cat] = []
+                    by_category[cat].append(callsign)
+                
+                # Build HTML
+                callsigns_html = "<br/><br/><b>Callsigns:</b><br/>"
+                for cat, calls in sorted(by_category.items()):
+                    # Limit to first 10 callsigns per category
+                    display_calls = calls[:10]
+                    more_text = f" (+{len(calls)-10} more)" if len(calls) > 10 else ""
+                    callsigns_html += f"<i>{cat}:</i> {', '.join(display_calls)}{more_text}<br/>"
+            except:
+                callsigns_html = ""
+        
         if aggregation_type == "daily_average":
             # Show as integer for daily averages (rounded in SQL)
-            return f"<b>Avg daily dwell time (minutes):</b> {int(dwell_time)}<br/><b>Avg daily Aircraft Count:</b> {int(aircraft_count)}"
+            return f"<b>Avg daily dwell time (minutes):</b> {int(dwell_time)}<br/><b>Avg daily Aircraft Count:</b> {int(aircraft_count)}{callsigns_html}"
         else:
             # Show as integer for sum
-            return f"<b>Total dwell time (minutes):</b> {int(dwell_time)}<br/><b>Distinct Aircraft Count:</b> {int(aircraft_count)}"
+            return f"<b>Total dwell time (minutes):</b> {int(dwell_time)}<br/><b>Distinct Aircraft Count:</b> {int(aircraft_count)}{callsigns_html}"
     
     h3_data['tooltip'] = h3_data.apply(create_tooltip, axis=1)
     
