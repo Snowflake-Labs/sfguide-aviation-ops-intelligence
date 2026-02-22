@@ -37,14 +37,6 @@ db_prefix = f"{db}.{schema}"
 # Header
 st.title("🛬 Gate Analysis")
 st.info("🏷️ **IATA Level 2 relevant** — Gate dwell time impacts slot coordination and capacity management")
-
-# Cache clear button
-col1, col2 = st.columns([1, 10])
-with col1:
-    if st.button("🔄 Refresh", help="Clear cache and reload data"):
-        st.cache_data.clear()
-        st.rerun()
-
 utils.render_timezone_caption(session, db_prefix)
 
 # Sidebar filters

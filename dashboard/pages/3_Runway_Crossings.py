@@ -154,6 +154,7 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_
         agg_expr = f'ROUND(SUM(duration_s)/60.0 / {divisor}) AS metric_value'
         metric_label = 'minutes'
     
+    # Get both metrics for tooltip regardless of which one is selected for display
     q = f"""
     WITH base AS (
       SELECT
@@ -171,6 +172,8 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_
     SELECT
       h3_cell,
       {agg_expr},
+      ROUND(COUNT(DISTINCT flight_key) / {divisor}) AS crossing_count,
+      ROUND(SUM(duration_s)/60.0 / {divisor}, 1) AS crossing_time,
       ANY_VALUE(ST_Y(midpoint_geom)) AS lat,
       ANY_VALUE(ST_X(midpoint_geom)) AS lon
     FROM base
@@ -182,6 +185,7 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_
         df = _session.sql(q).to_pandas()
         if df is not None and not df.empty:
             df['METRIC_LABEL'] = metric_label
+            df['AGGREGATION_TYPE'] = aggregation_type
         return df
     except Exception:
         return pd.DataFrame()
@@ -354,10 +358,10 @@ else:
     max_val = agg_df['METRIC_VALUE'].max()
     min_val = agg_df['METRIC_VALUE'].min()
     
-    # Prepare tooltip
-    metric_label = agg_df['METRIC_LABEL'].iloc[0]
+    # Prepare tooltip with both metrics
+    aggregation_label = "Daily Avg" if agg_df['AGGREGATION_TYPE'].iloc[0] == 'daily_average' else "Total"
     agg_df['tooltip'] = agg_df.apply(
-        lambda r: f"Cell: {r['H3_CELL']}<br>Value: {r['METRIC_VALUE']:.1f} {metric_label}", 
+        lambda r: f"<b>Crossings:</b> {int(r['CROSSING_COUNT'])} {aggregation_label.lower()}<br><b>Time:</b> {r['CROSSING_TIME']:.1f} min {aggregation_label.lower()}", 
         axis=1
     )
     
