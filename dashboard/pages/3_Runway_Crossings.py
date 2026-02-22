@@ -21,7 +21,6 @@ db_prefix = f"{db}.{schema}"
 
 st.title("🛤️ On-Ground Runway Crossings")
 st.caption("Detects aircraft crossing the runway while taxiing on the ground (wheels-on-ground only). Filters out takeoffs, landings, and airborne traffic using: max speed ≤45 kts, time on runway ≤120 sec, and straight-line distance ≤220m.")
-st.info("🏷️ **IATA Level 2 relevant** — This metric is operationally sensitive for slot-controlled airports")
 
 utils.render_timezone_caption(session, db_prefix)
 tzid = utils.get_airport_tzid(session, db_prefix)
