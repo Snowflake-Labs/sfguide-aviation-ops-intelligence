@@ -29,7 +29,8 @@ with st.sidebar:
     vehicle_filter = ui_components.render_vehicle_type_filter(
         key_prefix="monitoring",
         sidebar=True,
-        default_all=True
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
     )
 
 if not selected_db:

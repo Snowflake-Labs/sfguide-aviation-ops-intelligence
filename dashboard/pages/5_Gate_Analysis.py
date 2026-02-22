@@ -56,7 +56,12 @@ with st.sidebar:
     )
     
     # Vehicle type filter
-    vehicle_filter = ui_components.render_vehicle_type_filter(key_prefix="gate_analysis", sidebar=True, default_all=True)
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="gate_analysis", 
+        sidebar=True, 
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
+    )
 
 @st.cache_data(ttl=300)
 def get_gate_fill_rate(_session, start_dt, end_dt, _db_prefix, vehicle_sql_filter="1=1"):

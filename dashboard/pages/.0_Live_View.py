@@ -73,7 +73,8 @@ with st.sidebar:
     vehicle_filter = ui_components.render_vehicle_type_filter(
         key_prefix="live_view",
         sidebar=True,
-        default_all=False  # Show only aircraft by default
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
     )
 
 

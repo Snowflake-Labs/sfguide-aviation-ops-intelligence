@@ -81,7 +81,8 @@ with st.sidebar:
     vehicle_filter = ui_components.render_vehicle_type_filter(
         key_prefix="traffic_analysis",
         sidebar=True,
-        default_all=False  # Default to aircraft only
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
     )
     
     # Always show airline breakdown and heatmap (toggles removed)

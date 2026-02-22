@@ -214,7 +214,7 @@ def render_aggregation_selector(key_prefix="", sidebar=True):
         "Aggregation:",
         options=[Aggregation.SUM, Aggregation.DAILY_AVG],
         format_func=lambda x: Labels.AGG_SUM if x == Aggregation.SUM else Labels.AGG_DAILY_AVG,
-        index=1,  # Default to Daily Average
+        index=0,  # Default to Sum
         key=f"{key_prefix}_aggregation"
     )
 
@@ -327,14 +327,16 @@ def render_kpi_metrics(metrics_data, aggregation_type="sum"):
         )
 
 
-def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=True):
+def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, default_aircraft=True, default_ground=False):
     """
     Render hierarchical vehicle type filter with collapsible sections.
     
     Args:
         key_prefix: Unique prefix for widget keys
         sidebar: Whether to render in sidebar
-        default_all: Default state for checkboxes
+        default_all: (deprecated) Default state for both aircraft and ground checkboxes
+        default_aircraft: Default state for aircraft checkbox (default: True)
+        default_ground: Default state for ground checkbox (default: False)
         
     Returns:
         dict: {
@@ -347,6 +349,11 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=True):
     """
     container = st.sidebar if sidebar else st
     
+    # Handle legacy default_all parameter
+    if default_all is not None:
+        default_aircraft = default_all
+        default_ground = default_all
+    
     # Title
     container.markdown("### Vehicle Type Filter")
     
@@ -357,7 +364,7 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=True):
     
     aircraft_all = container.checkbox(
         "All aircraft types", 
-        value=default_all,
+        value=default_aircraft,
         key=f"{key_prefix}_aircraft_all"
     )
     
@@ -429,7 +436,7 @@ def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=True):
     
     ground_all = container.checkbox(
         "All ground types",
-        value=default_all,
+        value=default_ground,
         key=f"{key_prefix}_ground_all"
     )
     
