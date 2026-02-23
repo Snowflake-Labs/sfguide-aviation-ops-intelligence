@@ -98,6 +98,16 @@ with st.sidebar:
         sidebar=True
     )
     
+    st.divider()
+    
+    # Vehicle type filter
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="ground_activity",
+        sidebar=True,
+        default_aircraft=True,   # All aircraft selected by default
+        default_ground=False     # Ground vehicles can be selected manually
+    )
+    
     # Map the selection to the format expected by the rest of the code
     metric_type = "Distinct Aircraft Count" if metric_type_selection == Metrics.FLIGHT_COUNT else "Total Time Spent (minutes)"
 
@@ -132,7 +142,7 @@ def get_schedule_for_flights(_session, date, flight_numbers):
         return pd.DataFrame(columns=['FLIGHT_NUMBER','ORIGIN_AIRPORT','DESTINATION_AIRPORT','SEATS'])
 
 @st.cache_data(ttl=core.CACHE_TTL_SECONDS)
-def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, aggregation_type, sample_percent: int = 10, max_cells: int = 4000):
+def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, aggregation_type, sample_percent: int = 10, max_cells: int = 4000, vehicle_sql_filter="1=1"):
     """
     Get all traffic data aggregated by H3 hexagons using Snowflake's native H3 functions
     Returns H3 cell strings with BOTH distinct flight counts AND observation counts
@@ -164,17 +174,19 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
             ST_Y(LOCATION) AS LAT,
             ST_X(LOCATION) AS LON,
             FLIGHT,
+            VEHICLE_CATEGORY,
             LOCATION as point_geom,
             H3_POINT_TO_CELL_STRING(LOCATION, {h3_resolution}) as h3_cell
         FROM {db_prefix}.ADSB_DATA_LOCAL SAMPLE BERNOULLI ({int(sample_percent)})
         CROSS JOIN bbox b
         WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+            AND {vehicle_sql_filter}
             AND LOCATION IS NOT NULL
             AND FLIGHT IS NOT NULL
             AND ST_Y(LOCATION) BETWEEN b.min_lat AND b.max_lat
             AND ST_X(LOCATION) BETWEEN b.min_lon AND b.max_lon
     ),
-    h3_with_bounds AS (
+    h3_aggregated AS (
         SELECT 
             h3_cell,
             ROUND(COUNT(DISTINCT FLIGHT) / {divisor}) as distinct_aircraft_count,
@@ -183,16 +195,32 @@ def get_h3_hexagon_data(_session, start_dt, end_dt, h3_resolution, metric_type, 
         FROM points_with_h3
         WHERE h3_cell IS NOT NULL
         GROUP BY h3_cell
+    ),
+    h3_callsigns AS (
+        SELECT 
+            h3_cell,
+            ARRAY_AGG(DISTINCT OBJECT_CONSTRUCT(
+                'callsign', FLIGHT,
+                'category', VEHICLE_CATEGORY
+            )) as callsigns
+        FROM (
+            SELECT DISTINCT h3_cell, FLIGHT, VEHICLE_CATEGORY
+            FROM points_with_h3
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY h3_cell ORDER BY FLIGHT) <= 15
+        )
+        GROUP BY h3_cell
     )
     SELECT 
-        h3_cell,
-        distinct_aircraft_count,
-        observation_count,
-        ST_XMIN(collected_points) as min_lon,
-        ST_XMAX(collected_points) as max_lon,
-        ST_YMIN(collected_points) as min_lat,
-        ST_YMAX(collected_points) as max_lat
-    FROM h3_with_bounds
+        a.h3_cell,
+        a.distinct_aircraft_count,
+        a.observation_count,
+        c.callsigns,
+        ST_XMIN(a.collected_points) as min_lon,
+        ST_XMAX(a.collected_points) as max_lon,
+        ST_YMIN(a.collected_points) as min_lat,
+        ST_YMAX(a.collected_points) as max_lat
+    FROM h3_aggregated a
+    LEFT JOIN h3_callsigns c ON a.h3_cell = c.h3_cell
     ORDER BY {order_by_expr} DESC
     LIMIT {int(max_cells)}
     """
@@ -224,7 +252,8 @@ with st.spinner("Loading geographic data..."):
         metric_type,
         aggregation_type,
         sample_percent=int(hex_sample_pct),
-        max_cells=int(st.session_state.get('hex_max_cells', 4000))
+        max_cells=int(st.session_state.get('hex_max_cells', 4000)),
+        vehicle_sql_filter=vehicle_filter['sql_filter']
     )
     
     # Apply percentile filter if enabled
@@ -300,12 +329,41 @@ if has_data:
         dwell_time = row['OBSERVATION_COUNT'] if pd.notna(row['OBSERVATION_COUNT']) else 0
         aircraft_count = row['DISTINCT_AIRCRAFT_COUNT'] if pd.notna(row['DISTINCT_AIRCRAFT_COUNT']) else 0
         
+        # Parse callsigns from JSON array
+        callsigns_html = ""
+        if pd.notna(row['CALLSIGNS']) and row['CALLSIGNS']:
+            import json
+            try:
+                callsigns_data = json.loads(row['CALLSIGNS']) if isinstance(row['CALLSIGNS'], str) else row['CALLSIGNS']
+                # Group by vehicle category
+                by_category = {}
+                for item in callsigns_data:
+                    cat = item.get('category', 'UNKNOWN')
+                    callsign = item.get('callsign', 'N/A')
+                    if cat not in by_category:
+                        by_category[cat] = []
+                    by_category[cat].append(callsign)
+                
+                # Build HTML (limited to first 10 callsigns per category)
+                callsigns_html = "<br/><br/><b>Callsigns (sample):</b><br/>"
+                for cat, calls in sorted(by_category.items()):
+                    display_calls = calls[:10]
+                    more_text = f" (+more...)" if len(calls) > 10 else ""
+                    callsigns_html += f"<i>{cat}:</i> {', '.join(display_calls)}{more_text}<br/>"
+                
+                # Add note if we hit the 15 callsign limit per hex
+                total_shown = len(callsigns_data)
+                if total_shown >= 15:
+                    callsigns_html += f"<i>(showing 15 of {int(aircraft_count)} total)</i>"
+            except:
+                callsigns_html = ""
+        
         if aggregation_type == "daily_average":
             # Show as integer for daily averages (rounded in SQL)
-            return f"<b>Avg daily dwell time (minutes):</b> {int(dwell_time)}<br/><b>Avg daily Aircraft Count:</b> {int(aircraft_count)}"
+            return f"<b>Avg daily dwell time (minutes):</b> {int(dwell_time)}<br/><b>Avg daily Aircraft Count:</b> {int(aircraft_count)}{callsigns_html}"
         else:
             # Show as integer for sum
-            return f"<b>Total dwell time (minutes):</b> {int(dwell_time)}<br/><b>Distinct Aircraft Count:</b> {int(aircraft_count)}"
+            return f"<b>Total dwell time (minutes):</b> {int(dwell_time)}<br/><b>Distinct Aircraft Count:</b> {int(aircraft_count)}{callsigns_html}"
     
     h3_data['tooltip'] = h3_data.apply(create_tooltip, axis=1)
     

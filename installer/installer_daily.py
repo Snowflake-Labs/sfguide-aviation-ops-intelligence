@@ -238,6 +238,20 @@ CREATE OR REPLACE NETWORK RULE {database}.{schema}.{schema}_pypi_network_rule
 CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {database}_{schema}_pypi_access_integration
   ALLOWED_NETWORK_RULES = ({database}.{schema}.{schema}_pypi_network_rule)
   ENABLED = TRUE;
+-- =============================================================================
+-- SOLUTION TRACKING TAGS
+-- =============================================================================
+
+CREATE SCHEMA IF NOT EXISTS {database}.TAGS
+  COMMENT = 'Cost attribution tags for Aviation Ops Intelligence solution';
+
+CREATE TAG IF NOT EXISTS {database}.TAGS.SOLUTION
+  ALLOWED_VALUES 'aviation-ops-intelligence'
+  COMMENT = 'Identifies objects belonging to Aviation Ops Intelligence solution';
+
+CREATE TAG IF NOT EXISTS {database}.TAGS.COMPONENT
+  ALLOWED_VALUES 'etl', 'analytics', 'realtime', 'backfill', 'properties'
+  COMMENT = 'Functional component categorization';
 
 -- -----------------------------------------------------------------------------
 -- 1. PROPERTIES_AIRPORT
@@ -291,6 +305,10 @@ SELECT
     ST_X(ST_CENTROID(g.geometry))
   ) AS airport_tzid
 FROM g;
+
+ALTER TABLE {database}.{schema}.PROPERTIES_AIRPORT 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'properties';
 
 -- -----------------------------------------------------------------------------
 -- 2. PROPERTIES_INFRASTRUCTURE (all Overture infrastructure intersecting airport)
@@ -351,6 +369,10 @@ SELECT
   r.geometry
 FROM raw_infra r
 LEFT JOIN tags_flat t ON r.id = t.id;
+
+ALTER TABLE {database}.{schema}.PROPERTIES_INFRASTRUCTURE 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'properties';
 
 -- -----------------------------------------------------------------------------
 -- GET_OSM_TAG UDF: Retrieve any OSM tag from source_tags_json by key
@@ -420,6 +442,10 @@ SELECT
   TRY_TO_GEOGRAPHY(gate_geojson) AS gate_geom
 FROM picked
 WHERE gate_geojson IS NOT NULL;
+
+ALTER TABLE {database}.{schema}.PROPERTIES_GATES 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'properties';
 
 -- -----------------------------------------------------------------------------
 -- 4. PROPERTIES_RUNWAYS (from Overture Maps Infrastructure)
@@ -545,6 +571,10 @@ SELECT runway_id, runway_geog
 FROM {database}.{schema}.TEMP_RUNWAY_POLYGONS
 WHERE runway_geog IS NOT NULL;
 
+ALTER TABLE {database}.{schema}.PROPERTIES_RUNWAYS 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'properties';
+
 -- -----------------------------------------------------------------------------
 -- 5. HELPER_AIRLINE_DIM (standing airline reference)
 -- -----------------------------------------------------------------------------
@@ -588,6 +618,10 @@ SELECT
 FROM {git_repo_stage_base}/installer/airlines.csv
   (FILE_FORMAT => {database}.{schema}.FF_AIRLINES_CSV) t;
 
+ALTER TABLE {database}.{schema}.HELPER_AIRLINE_DIM 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- -----------------------------------------------------------------------------
 -- 7. HELPER_AIRLINE_IATA_ICAO_MAP (IATA↔ICAO translation for callsign matching)
 -- -----------------------------------------------------------------------------
@@ -606,6 +640,10 @@ WHERE AIRLINE_IATA IS NOT NULL
   AND LENGTH(TRIM(AIRLINE_IATA)) IN (2,3)
   AND LENGTH(TRIM(AIRLINE_ICAO)) IN (2,3)
 GROUP BY 1, 2;
+
+ALTER TABLE {database}.{schema}.HELPER_AIRLINE_IATA_ICAO_MAP 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- 8. FLIGHT_SCHEDULE tables (always created, even without API key)
@@ -643,6 +681,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_SCHEDULE_RAW (
     ingested_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
+ALTER TABLE {database}.{schema}.HELPER_FLIGHT_SCHEDULE_RAW 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- Canonical schedule table (Silver layer)
 CREATE TABLE IF NOT EXISTS {database}.{schema}.FLIGHT_SCHEDULE (
     FLIGHT_KEY VARCHAR(128),
@@ -673,6 +715,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.FLIGHT_SCHEDULE (
     CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
+
+ALTER TABLE {database}.{schema}.FLIGHT_SCHEDULE 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- Verify
 SELECT 'PROPERTIES_AIRPORT' AS tbl, COUNT(*) AS cnt FROM {database}.{schema}.PROPERTIES_AIRPORT
@@ -758,6 +804,10 @@ CREATE OR REPLACE TABLE {database}.{schema}.HELPER_ADSB_LOL_RAW (
     ingested_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
+ALTER TABLE {database}.{schema}.HELPER_ADSB_LOL_RAW 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- -----------------------------------------------------------------------------
 -- HELPER aircraft metadata (dimension, populated via adsb.lol lookup by ICAO_HEX)
 -- Purpose: improve AIRCRAFT_DESC coverage when realtime point feed omits `desc`.
@@ -772,6 +822,10 @@ CREATE OR REPLACE TABLE {database}.{schema}.HELPER_AIRCRAFT_META (
     SOURCE VARCHAR(32),
     RAW_JSON VARIANT
 );
+
+ALTER TABLE {database}.{schema}.HELPER_AIRCRAFT_META 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- Canonical ADS-B table (single source of truth for dashboards)
@@ -811,6 +865,10 @@ CREATE OR REPLACE TABLE {database}.{schema}.ADSB_DATA (
     MATCHED_AT TIMESTAMP_NTZ
 );
 
+ALTER TABLE {database}.{schema}.ADSB_DATA 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- Non-destructive schema evolution for upgrades
 ALTER TABLE {database}.{schema}.ADSB_DATA ADD COLUMN IF NOT EXISTS IS_LOCAL_OD BOOLEAN;
 
@@ -833,6 +891,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_LEG (
   COMPUTED_AT TIMESTAMP_NTZ
 );
 
+ALTER TABLE {database}.{schema}.HELPER_FLIGHT_LEG 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES (
   SERVICE_DATE DATE,
   ICAO_HEX STRING,
@@ -854,6 +916,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES (
   CREATED_AT TIMESTAMP_NTZ
 );
 
+ALTER TABLE {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_MATCH_RESULT (
   SERVICE_DATE DATE,
   ICAO_HEX STRING,
@@ -869,6 +935,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_MATCH_RESULT (
   SCORE INT,
   CHOSEN_AT TIMESTAMP_NTZ
 );
+
+ALTER TABLE {database}.{schema}.HELPER_FLIGHT_MATCH_RESULT 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- Recurring callsign prior (Phase 4)
@@ -886,6 +956,10 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_RECURRING_CALLSIGN_PRIOR (
   LAST_SEEN_DATE DATE,
   UPDATED_AT TIMESTAMP_NTZ
 );
+
+ALTER TABLE {database}.{schema}.HELPER_RECURRING_CALLSIGN_PRIOR 
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
 
 -- -----------------------------------------------------------------------------
 -- Enrichment: associate all points to schedule flight number/key (best-effort)
@@ -1663,6 +1737,10 @@ BEGIN
 END;
 $$;
 
+ALTER PROCEDURE {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(INT)
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- Note: TASK_ENRICH_ADSB is created later (after TASK_INGEST_ADSB exists)
 -- so it can use AFTER clause at creation time.
 
@@ -1790,6 +1868,10 @@ def enrich(session, p_max_hexes: int = 200, p_days_back: int = 2, p_min_age_hour
     return "Enriched aircraft meta for %d hexes (errors=%d)" % (updated, errors)
 $$;
 
+ALTER PROCEDURE {database}.{schema}.PROC_ENRICH_AIRCRAFT_META(INT, INT, INT)
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_BACKFILL_ADSB_AIRCRAFT_DESC(p_days_back INT)
 RETURNS STRING
 LANGUAGE SQL
@@ -1820,6 +1902,10 @@ BEGIN
 END;
 $$;
 
+ALTER PROCEDURE {database}.{schema}.PROC_BACKFILL_ADSB_AIRCRAFT_DESC(INT)
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- Wrapper so the TASK body is a single CALL (installer statement-splitting safe)
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL()
 RETURNS STRING
@@ -1833,12 +1919,20 @@ BEGIN
 END;
 $$;
 
+ALTER PROCEDURE {database}.{schema}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL()
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META
   WAREHOUSE = {warehouse}
   SCHEDULE = 'USING CRON 15 3 * * * UTC'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
 AS
   CALL {database}.{schema}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL();
+
+ALTER TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'realtime';
 
 -- -----------------------------------------------------------------------------
 -- Ingestion Procedure
@@ -1937,6 +2031,10 @@ def ingest(session):
     return "Inserted " + str(len(rows)) + " records"
 $$;
 
+ALTER PROCEDURE {database}.{schema}.PROC_INGEST_ADSB_REALTIME()
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- -----------------------------------------------------------------------------
 -- ETL to ADSB_DATA (canonical)
 -- -----------------------------------------------------------------------------
@@ -2013,6 +2111,10 @@ BEGIN
 END;
 $$;
 
+ALTER PROCEDURE {database}.{schema}.PROC_ETL_ADSB_TO_DATA()
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- -----------------------------------------------------------------------------
 -- Cleanup helper: remove accidental duplicates in ADSB_DATA by (ICAO_HEX,TIMESTAMP)
 -- This is safe: it retains the newest INGESTED_AT per key within the specified window.
@@ -2053,6 +2155,10 @@ BEGIN
 END;
 $$;
 
+ALTER PROCEDURE {database}.{schema}.PROC_DEDUP_ADSB_DATA(INT)
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- -----------------------------------------------------------------------------
 -- Wrapper procedure for task (combines ingest + ETL)
 -- -----------------------------------------------------------------------------
@@ -2070,6 +2176,10 @@ BEGIN
 END;
 $$;
 
+ALTER PROCEDURE {database}.{schema}.PROC_ADSB_INGEST_AND_ETL()
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'etl';
+
 -- -----------------------------------------------------------------------------
 -- Scheduled Task (daily batch cadence)
 -- -----------------------------------------------------------------------------
@@ -2080,6 +2190,10 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_INGEST_ADSB
 AS
   CALL {database}.{schema}.PROC_ADSB_INGEST_AND_ETL();
 
+ALTER TASK {database}.{schema}.TASK_INGEST_ADSB
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'realtime';
+
 -- -----------------------------------------------------------------------------
 -- Task DAG: TASK_ENRICH_ADSB runs after TASK_INGEST_ADSB completes
 -- -----------------------------------------------------------------------------
@@ -2089,6 +2203,10 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
 AS
   CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
 
+ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'realtime';
+
 -- Task DAG: TASK_REFRESH_DERIVED runs after TASK_ENRICH_ADSB completes
 CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_DERIVED
   WAREHOUSE = {warehouse}
@@ -2096,12 +2214,20 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_DERIVED
 AS
   CALL {database}.{schema}.PROC_REFRESH_DERIVED();
 
+ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'realtime';
+
 -- Task DAG: TASK_REFRESH_ANALYTICS runs after TASK_REFRESH_DERIVED completes
 CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
   WAREHOUSE = {warehouse}
   AFTER {database}.{schema}.TASK_REFRESH_DERIVED
 AS
   CALL {database}.{schema}.PROC_REFRESH_ANALYTICS();
+
+ALTER TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'realtime';
 
 -- Tasks are created SUSPENDED. To start:
 -- ALTER TASK {database}.{schema}.TASK_INGEST_ADSB RESUME;
@@ -3422,12 +3548,10 @@ flags AS (
       IFF(
         airport.airport_geom IS NOT NULL
         AND p.LOCATION IS NOT NULL
-        AND p.ALTITUDE_BARO IS NOT NULL AND p.ALTITUDE_BARO <= 50
-        AND COALESCE(p.VELOCITY, 0) <= 40
         AND ST_DWITHIN(p.LOCATION, airport.airport_geom, 5000),
         1, 0
       )
-    ) AS touched_airport_any
+    ) AS within_airport_radius
   FROM pts p
   CROSS JOIN airport
   GROUP BY 1, 2
@@ -3435,16 +3559,99 @@ flags AS (
 relevant AS (
   SELECT service_date, flight_id
   FROM flags
-  WHERE is_local_od_any = 1 OR touched_airport_any = 1
+  WHERE is_local_od_any = 1 OR within_airport_radius = 1
+),
+pts_enriched AS (
+  SELECT
+    p.*,
+    -- Add VEHICLE_CATEGORY
+    CASE 
+      -- Helicopters (A7)
+      WHEN p.CATEGORY = 'A7' THEN 'HELICOPTER'
+      -- Heavy Aircraft (A5 - wide-body)
+      WHEN p.CATEGORY = 'A5' THEN 'HEAVY_AIRCRAFT'
+      -- Large Airliners (A3 - narrow-body jets)
+      WHEN p.CATEGORY = 'A3' THEN 'LARGE_AIRLINER'
+      -- Small Commuter (A2 - regional)
+      WHEN p.CATEGORY = 'A2' THEN 'SMALL_COMMUTER'
+      -- Light Aircraft (A1 - GA)
+      WHEN p.CATEGORY = 'A1' THEN 'LIGHT_AIRCRAFT'
+      -- Medium Aircraft (A0 - catch-all)
+      WHEN p.CATEGORY = 'A0' THEN 'MEDIUM_AIRCRAFT'
+      -- High Performance Military (A6)
+      WHEN p.CATEGORY = 'A6' THEN 'HIGH_PERFORMANCE_MILITARY'
+      -- Ultralights/Experimental (B*)
+      WHEN p.CATEGORY LIKE 'B%' THEN 'ULTRALIGHT_EXPERIMENTAL'
+      -- Tower vehicles
+      WHEN p.TYPE = 'TWR' THEN 'TOWER'
+      -- Service vehicles
+      WHEN p.TYPE IN ('SERV', 'CAR') THEN 'SERVICE_VEHICLE'
+      -- Light surface vehicles (C1)
+      WHEN p.CATEGORY = 'C1' THEN 'LIGHT_SURFACE_VEHICLE'
+      -- Ground vehicles (C2 non-service)
+      WHEN p.CATEGORY = 'C2' AND COALESCE(p.TYPE, '') NOT IN ('TWR', 'SERV', 'CAR') THEN 'GROUND_VEHICLE'
+      -- Unknown surface (C0)
+      WHEN p.CATEGORY = 'C0' THEN 'UNKNOWN_SURFACE'
+      ELSE 'OTHER'
+    END AS VEHICLE_CATEGORY
+  FROM pts p
+  JOIN relevant r
+    ON r.service_date = p.service_date
+   AND r.flight_id = p.flight_id
 )
-SELECT p.*
-FROM pts p
-JOIN relevant r
-  ON r.service_date = p.service_date
- AND r.flight_id = p.flight_id;
+SELECT 
+  pe.FLIGHT_KEY,
+  pe.ICAO_HEX,
+  pe.REGISTRATION,
+  pe.TYPE,
+  pe.AIRCRAFT_DESC,
+  pe.FLIGHT,
+  pe.TIMESTAMP,
+  pe.LOCATION,
+  pe.TRACK,
+  pe.TRUE_HEADING,
+  pe.VELOCITY,
+  pe.ALTITUDE_BARO,
+  pe.ALTITUDE_GEOM,
+  pe.VERTICAL_RATE,
+  pe.SQUAWK,
+  pe.CATEGORY,
+  pe.SOURCE,
+  pe.INGESTED_AT,
+  pe.SCHEDULE_FLIGHT_KEY,
+  pe.SCHEDULE_FLIGHT_NUMBER,
+  -- NULL out airline fields for ground vehicles to prevent incorrect airline matching
+  CASE 
+    WHEN pe.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+    THEN pe.AIRLINE_NAME
+    ELSE NULL
+  END AS AIRLINE_NAME,
+  CASE 
+    WHEN pe.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+    THEN pe.AIRLINE_IATA
+    ELSE NULL
+  END AS AIRLINE_IATA,
+  CASE 
+    WHEN pe.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+    THEN pe.AIRLINE_ICAO
+    ELSE NULL
+  END AS AIRLINE_ICAO,
+  pe.ORIGIN_AIRPORT,
+  pe.DESTINATION_AIRPORT,
+  pe.IS_LOCAL_OD,
+  pe.SCHEDULED_DEPARTURE,
+  pe.SCHEDULED_ARRIVAL,
+  pe.MATCH_METHOD,
+  pe.MATCH_CONFIDENCE,
+  pe.MATCHED_AT,
+  pe.service_date,
+  pe.flight_id,
+  pe.VEHICLE_CATEGORY
+FROM pts_enriched pe;
 
--- Keep the canonical name only (avoid confusion).
-DROP VIEW IF EXISTS {database}.{schema}.ADSB_DATA_LOVAL;
+ALTER DYNAMIC TABLE {database}.{schema}.ADSB_DATA_LOCAL
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'analytics';
 
 -- -----------------------------------------------------------------------------
 -- 1. Gate Analysis derived tables (also reused by Runway Crossings)
@@ -3473,7 +3680,8 @@ ground AS (
     TIMESTAMP AS ts,
     LOCATION,
     VELOCITY,
-    ALTITUDE_BARO
+    ALTITUDE_BARO,
+    VEHICLE_CATEGORY
   FROM {database}.{schema}.ADSB_DATA_LOCAL
   CROSS JOIN ap
   WHERE ICAO_HEX IS NOT NULL
@@ -3506,11 +3714,16 @@ agg AS (
     MAX(ts) AS end_ts,
     DATEDIFF('second', MIN(ts), MAX(ts)) AS dwell_seconds,
     MAX(REGISTRATION) AS registration,
+    MAX(VEHICLE_CATEGORY) AS VEHICLE_CATEGORY,
     COUNT(*) AS points
   FROM sessioned
   GROUP BY 1, 2, 3
 )
 SELECT * FROM agg;
+
+ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'analytics';
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
   TARGET_LAG = DOWNSTREAM
@@ -3531,7 +3744,8 @@ ground AS (
     TIMESTAMP AS ts,
     LOCATION,
     VELOCITY,
-    ALTITUDE_BARO
+    ALTITUDE_BARO,
+    VEHICLE_CATEGORY
   FROM {database}.{schema}.ADSB_DATA_LOCAL
   CROSS JOIN ap
   -- Altitude on the ground can be noisy (sometimes small positive/negative values).
@@ -3567,12 +3781,17 @@ SELECT
   w.LOCATION,
   w.velocity,
   COALESCE(w.lag_seconds, 0) AS lag_seconds,
+  w.VEHICLE_CATEGORY,
   g.gate_name AS closest_gate_name
 FROM with_session w
 -- Gates from Overture Infrastructure are POINT markers; use a wider tolerance than "jetway line" geometry.
 -- Keep this aligned with dashboard-side dwell approximation (default ~120m).
 LEFT JOIN {database}.{schema}.PROPERTIES_GATES g ON ST_DWITHIN(w.LOCATION, g.gate_geom, 120)
 QUALIFY ROW_NUMBER() OVER (PARTITION BY w.ICAO_HEX, w.service_date, w.ts ORDER BY ST_DISTANCE(w.LOCATION, g.gate_geom) ASC NULLS LAST) = 1;
+
+ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
+  SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
+          {database}.TAGS.COMPONENT = 'analytics';
 
 -- -----------------------------------------------------------------------------
 -- 2. Gate Analysis summaries
@@ -3588,6 +3807,7 @@ WITH per_gate AS (
     service_date,
     ICAO_HEX,
     MAX(flight) AS flight_number,
+    MAX(VEHICLE_CATEGORY) AS VEHICLE_CATEGORY,
     closest_gate_name AS gate_name,
     SUM(lag_seconds) AS dwell_seconds
   FROM {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
@@ -3603,7 +3823,8 @@ SELECT
   ICAO_HEX,
   flight_number,
   gate_name,
-  dwell_seconds
+  dwell_seconds,
+  VEHICLE_CATEGORY
 FROM per_gate
 QUALIFY ROW_NUMBER() OVER (PARTITION BY ground_session_id ORDER BY dwell_seconds DESC) = 1;
 
@@ -3618,11 +3839,12 @@ AS
 SELECT
   service_date AS date,
   closest_gate_name AS gate_name,
+  VEHICLE_CATEGORY,
   SUM(lag_seconds)/60.0 AS dwell_minutes,
   COUNT(DISTINCT ground_session_id) AS flights
 FROM {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
 WHERE closest_gate_name IS NOT NULL
-GROUP BY date, gate_name;
+GROUP BY date, gate_name, VEHICLE_CATEGORY;
 
 -- -----------------------------------------------------------------------------
 -- 2c. GATE_AIRLINE_DWELL_DAILY (used by Gate Analysis)
@@ -3656,46 +3878,68 @@ by_session AS (
     g.ground_session_id,
     g.ICAO_HEX,
     g.closest_gate_name AS gate_name,
+    g.VEHICLE_CATEGORY,
     SUM(g.lag_seconds)/60.0 AS dwell_minutes,
-    -- Pull airline metadata from schedule-enriched ADSB points (more reliable than schedule.registration)
-    COALESCE(
-      MAX(NULLIF(TRIM(a.AIRLINE_ICAO), '')),
-      MAX(di.airline_icao)
-    ) AS airline_icao,
-    COALESCE(
-      MAX(NULLIF(TRIM(a.AIRLINE_IATA), '')),
-      MAX(dj.airline_iata)
-    ) AS airline_iata,
-    COALESCE(
-      MAX(NULLIF(TRIM(a.AIRLINE_NAME), '')),
-      MAX(di.airline_name),
-      MAX(dj.airline_name)
-    ) AS airline_name
+    -- Only derive airline metadata for actual aircraft, not ground vehicles
+    CASE 
+      WHEN g.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+      THEN COALESCE(
+        MAX(NULLIF(TRIM(a.AIRLINE_ICAO), '')),
+        MAX(di.airline_icao)
+      )
+      ELSE NULL
+    END AS airline_icao,
+    CASE 
+      WHEN g.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+      THEN COALESCE(
+        MAX(NULLIF(TRIM(a.AIRLINE_IATA), '')),
+        MAX(dj.airline_iata)
+      )
+      ELSE NULL
+    END AS airline_iata,
+    CASE 
+      WHEN g.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+      THEN COALESCE(
+        MAX(NULLIF(TRIM(a.AIRLINE_NAME), '')),
+        MAX(di.airline_name),
+        MAX(dj.airline_name)
+      )
+      ELSE NULL
+    END AS airline_name
   FROM {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS g
   LEFT JOIN {database}.{schema}.ADSB_DATA_LOCAL a
     ON a.ICAO_HEX = g.ICAO_HEX
    AND a.TIMESTAMP = g.ts
-  -- Fallback: derive airline from callsign prefix when ADSB enrichment is missing
+  -- Only join dimension tables for aircraft (not ground vehicles)
   LEFT JOIN dim_icao di
     ON di.airline_icao = REGEXP_SUBSTR(UPPER(TRIM(g.flight)), '^[A-Z]{{3}}')
+   AND g.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
   LEFT JOIN dim_iata dj
     ON dj.airline_iata = REGEXP_SUBSTR(UPPER(TRIM(g.flight)), '^[A-Z]{{2}}')
+   AND g.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
   WHERE g.closest_gate_name IS NOT NULL
   GROUP BY
     g.service_date,
     g.ground_session_id,
     g.ICAO_HEX,
-    g.closest_gate_name
+    g.closest_gate_name,
+    g.VEHICLE_CATEGORY
 )
 SELECT
   s.date,
   s.gate_name,
-  COALESCE(s.airline_icao, s.airline_iata, 'UNK') AS airline_code,
+  -- Use VEHICLE_CATEGORY as airline_code for ground vehicles, otherwise use actual airline or UNK
+  CASE 
+    WHEN s.VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+    THEN COALESCE(s.airline_icao, s.airline_iata, 'UNK')
+    ELSE s.VEHICLE_CATEGORY
+  END AS airline_code,
   MAX(s.airline_name) AS airline_name,
+  s.VEHICLE_CATEGORY,
   SUM(s.dwell_minutes) AS dwell_minutes,
   COUNT(DISTINCT s.ground_session_id) AS flights
 FROM by_session s
-GROUP BY 1,2,3;
+GROUP BY 1,2,3,5;
 
 -- -----------------------------------------------------------------------------
 -- 2d. Gate dwell with airline (pre-joined for dashboard performance)
@@ -3727,7 +3971,8 @@ per_session AS (
   SELECT 
     ground_session_id, 
     icao_hex, 
-    service_date, 
+    service_date,
+    MAX(VEHICLE_CATEGORY) AS VEHICLE_CATEGORY,
     SUM(lag_seconds)/60.0 AS dwell_minutes
   FROM {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
   WHERE closest_gate_name IS NOT NULL
@@ -3769,7 +4014,8 @@ SELECT
   ) AS airline_name,
   p.service_date,
   g.gate_name,
-  ROUND(p.dwell_minutes) AS dwell_minutes
+  ROUND(p.dwell_minutes) AS dwell_minutes,
+  p.VEHICLE_CATEGORY
 FROM per_session p
 LEFT JOIN gate g ON g.ground_session_id = p.ground_session_id
 LEFT JOIN airline a ON a.icao_hex = p.icao_hex AND a.service_date = p.service_date
@@ -3992,6 +4238,7 @@ WITH ap AS (
 )
 SELECT
   TO_DATE(CONVERT_TIMEZONE('UTC', ap.airport_tzid, TIMESTAMP)) AS date,
+  VEHICLE_CATEGORY,
   COUNT(DISTINCT ICAO_HEX) AS unique_aircraft,
   COUNT(DISTINCT FLIGHT) AS unique_flights,
   COUNT(*) AS total_records,
@@ -3999,7 +4246,7 @@ SELECT
   AVG(VELOCITY) AS avg_speed
 FROM {database}.{schema}.ADSB_DATA_LOCAL
 CROSS JOIN ap
-GROUP BY date;
+GROUP BY date, VEHICLE_CATEGORY;
 
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
   TARGET_LAG = '1 HOUR'
@@ -4008,10 +4255,11 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_HOU
 AS
 SELECT
   DATE_TRUNC('HOUR', TIMESTAMP) AS hour,
+  VEHICLE_CATEGORY,
   COUNT(DISTINCT ICAO_HEX) AS aircraft_count,
   COUNT(*) AS data_points
 FROM {database}.{schema}.ADSB_DATA_LOCAL
-GROUP BY hour;
+GROUP BY hour, VEHICLE_CATEGORY;
 
 -- -----------------------------------------------------------------------------
 -- 3b. Flight Tracker dropdown helper (all days)
@@ -4039,6 +4287,7 @@ base AS (
     LOCATION AS location,
     ALTITUDE_BARO AS altitude_baro,
     VELOCITY AS velocity,
+    VEHICLE_CATEGORY,
     NULLIF(TRIM(SCHEDULE_FLIGHT_NUMBER), '') AS schedule_flight_number,
     NULLIF(TRIM(AIRLINE_NAME), '') AS airline_name,
     NULLIF(TRIM(ORIGIN_AIRPORT), '') AS origin_airport,
@@ -4081,7 +4330,8 @@ best AS (
     origin_airport,
     destination_airport,
     is_local_od,
-    match_confidence
+    match_confidence,
+    VEHICLE_CATEGORY
   FROM base
   QUALIFY ROW_NUMBER() OVER (
     PARTITION BY service_date, flight_id
@@ -4104,6 +4354,7 @@ SELECT
   b.origin_airport,
   b.destination_airport,
   b.match_confidence,
+  b.VEHICLE_CATEGORY,
   IFF(a.is_local_od_any = 1, TRUE, FALSE) AS is_local_od,
   IFF(a.touched_airport_any = 1, TRUE, FALSE) AS touched_airport
 FROM agg a
@@ -4125,13 +4376,16 @@ WITH ap AS (
 SELECT
   TO_DATE(CONVERT_TIMEZONE('UTC', ap.airport_tzid, TIMESTAMP)) AS date,
   SUBSTR(FLIGHT, 1, 3) AS airline_code,
+  VEHICLE_CATEGORY,
   COUNT(DISTINCT ICAO_HEX) AS aircraft_count,
   COUNT(DISTINCT FLIGHT) AS flight_count,
   COUNT(*) AS data_points
 FROM {database}.{schema}.ADSB_DATA_LOCAL
 cross join ap
 WHERE FLIGHT IS NOT NULL
-GROUP BY date, airline_code;
+  -- Only include actual aircraft, not ground vehicles
+  AND VEHICLE_CATEGORY IN ('HELICOPTER','HEAVY_AIRCRAFT','LARGE_AIRLINER','MEDIUM_AIRCRAFT','SMALL_COMMUTER','LIGHT_AIRCRAFT','HIGH_PERFORMANCE_MILITARY','ULTRALIGHT_EXPERIMENTAL')
+GROUP BY date, airline_code, VEHICLE_CATEGORY;
 
 -- Schedule-vs-actual delay rollup (used by Traffic Analysis)
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_DELAY_DAILY
@@ -4232,6 +4486,7 @@ pts AS (
     flight_key, 
     ICAO_HEX,
     FLIGHT,
+    VEHICLE_CATEGORY,
     TO_DATE(CONVERT_TIMEZONE('UTC', 
       (SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') 
        FROM {database}.{schema}.PROPERTIES_AIRPORT), 
@@ -4298,12 +4553,13 @@ events AS (
   JOIN stats s USING (runway_id, flight_key, event_id)
 ),
 pts_metadata AS (
-  -- Extract ICAO_HEX, SERVICE_DATE, FLIGHT per flight_key (take first occurrence)
+  -- Extract ICAO_HEX, SERVICE_DATE, FLIGHT, VEHICLE_CATEGORY per flight_key (take first occurrence)
   SELECT DISTINCT
     flight_key,
     FIRST_VALUE(ICAO_HEX) OVER (PARTITION BY flight_key ORDER BY ts) AS icao_hex,
     FIRST_VALUE(service_date) OVER (PARTITION BY flight_key ORDER BY ts) AS service_date,
-    FIRST_VALUE(FLIGHT) OVER (PARTITION BY flight_key ORDER BY ts) AS flight
+    FIRST_VALUE(FLIGHT) OVER (PARTITION BY flight_key ORDER BY ts) AS flight,
+    FIRST_VALUE(VEHICLE_CATEGORY) OVER (PARTITION BY flight_key ORDER BY ts) AS VEHICLE_CATEGORY
   FROM pts
 ),
 enriched AS (
@@ -4312,6 +4568,7 @@ enriched AS (
     pm.icao_hex,
     pm.service_date,
     pm.flight AS flight_number,
+    pm.VEHICLE_CATEGORY,
     SUBSTR(pm.flight, 1, 3) AS airline_code,
     a.AIRLINE_NAME AS airline_name
   FROM events e
@@ -4731,8 +4988,25 @@ CALL {database}.{schema}.PROC_REFRESH_DERIVED();
 -- Fail fast if something is clearly wrong
 CALL {database}.{schema}.PROC_SMOKE_CHECK('10');
 
+-- =============================================================================
+-- START HISTORICAL BACKFILL (RUNS AT END OF INSTALLATION)
+-- =============================================================================
+-- All procedures and tables are now created. Safe to start backfill tasks.
+
+-- Backfill recent history as a one-time background task (last {int(adsb_history_backfill_days)} UTC days ending yesterday).
+-- Safe to close Streamlit after this starts; progress is tracked in HELPER_ADSB_BACKFILL_STATUS.
+CALL {database}.{schema}.PROC_START_BACKFILL_HISTORY();
+
+-- Start continuous retry for yesterday+today UTC, and trigger enrichment+derived refresh
+-- after a day completes. This closes the "start-day gap" as soon as today's history
+-- becomes available (often the next day).
+CALL {database}.{schema}.PROC_START_BACKFILL_RETRY_UTC();
+
 -- Final verification
-SELECT 'Setup complete! Tasks are now running automatically.' AS status;
+SELECT 'Setup complete! Tasks are now running automatically. Backfill started.' AS status;
+
+-- Check backfill status
+SELECT * FROM {database}.{schema}.HELPER_ADSB_BACKFILL_STATUS ORDER BY data_date;
 """
 
 
@@ -5179,30 +5453,18 @@ def generate_all_sql(
 -- Source: https://github.com/adsblol/globe_history_YYYY (ODbL 1.0 License)
 -- =============================================================================
 
--- Backfill recent history as a one-time background task (last {int(adsb_history_backfill_days)} UTC days ending yesterday).
--- Safe to close Streamlit after this starts; progress is tracked in HELPER_ADSB_BACKFILL_STATUS.
-CALL {database}.{schema}.PROC_START_BACKFILL_HISTORY();
+-- Backfill procedures and tasks are created but NOT started yet.
+-- They will be started automatically at the end of installation (file 05_derived.sql).
 
--- Start continuous retry for yesterday+today UTC, and trigger enrichment+derived refresh
--- after a day completes. This closes the "start-day gap" as soon as today's history
--- becomes available (often the next day).
-CALL {database}.{schema}.PROC_START_BACKFILL_RETRY_UTC();
-
--- Verify results
-SELECT 'HELPER_ADSB_LOL_RAW' AS tbl, COUNT(*) AS cnt FROM {database}.{schema}.HELPER_ADSB_LOL_RAW
-UNION ALL SELECT 'ADSB_DATA', COUNT(*) FROM {database}.{schema}.ADSB_DATA;
-
--- Check backfill status
-SELECT * FROM {database}.{schema}.HELPER_ADSB_BACKFILL_STATUS ORDER BY data_date;
-
--- Check task state / history
-SHOW TASKS LIKE 'TASK_ADSB_BACKFILL_ONCE' IN SCHEMA {database}.{schema};
--- NOTE: INFORMATION_SCHEMA.TASK_HISTORY() can be restricted in some Streamlit execution contexts.
--- If you need history, run this in a worksheet (outside Streamlit), or use the Task Status widget.
+-- NOTE: To manually start backfill after installation:
+-- CALL {database}.{schema}.PROC_START_BACKFILL_HISTORY();
 
 -- NOTE: To backfill a specific day manually:
 -- CALL {database}.{schema}.PROC_DOWNLOAD_TO_STAGE('2025-12-15');
 -- CALL {database}.{schema}.PROC_PROCESS_FROM_STAGE('2025-12-15');
+
+-- Verify backfill status (after file 05 runs):
+-- SELECT * FROM {database}.{schema}.HELPER_ADSB_BACKFILL_STATUS ORDER BY data_date;
 """
     
     # Flight Schedule runs FOURTH (after ADS-B data is loaded)
@@ -5516,24 +5778,17 @@ def main():
                     if not stripped or stripped.startswith('--'):
                         continue
                 
-                # Check for $$ delimiter
+                # Check for $$ delimiter (used by all procedures now)
                 if '$$' in line:
-                    current.append(line)
                     dollar_count = line.count('$$')
                     if dollar_count % 2 == 1:  # Odd number toggles state
                         in_dollar_block = not in_dollar_block
-                    
-                    # If we just closed a block and line ends with ;, end statement
-                    if not in_dollar_block and stripped.endswith(';'):
-                        stmt = '\n'.join(current).strip()
-                        if stmt:
-                            statements.append(stmt)
-                        current = []
-                    continue
                 
+                # Add line to current statement
                 current.append(line)
                 
-                # If we're not in a $$ block and line ends with ;, it's end of statement
+                # Check if statement is complete
+                # Only end statement if: NOT in dollar block AND line ends with semicolon
                 if not in_dollar_block and stripped.endswith(';'):
                     stmt = '\n'.join(current).strip()
                     if stmt and not stmt.startswith('--'):
