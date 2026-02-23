@@ -214,7 +214,7 @@ def render_aggregation_selector(key_prefix="", sidebar=True):
         "Aggregation:",
         options=[Aggregation.SUM, Aggregation.DAILY_AVG],
         format_func=lambda x: Labels.AGG_SUM if x == Aggregation.SUM else Labels.AGG_DAILY_AVG,
-        index=1,  # Default to Daily Average
+        index=0,  # Default to Sum
         key=f"{key_prefix}_aggregation"
     )
 
@@ -325,4 +325,215 @@ def render_kpi_metrics(metrics_data, aggregation_type="sum"):
             labels['duration'],
             f"{int(metrics_data.get('total_duration_min', 0)):,} min"
         )
+
+
+def render_vehicle_type_filter(key_prefix="", sidebar=False, default_all=None, default_aircraft=True, default_ground=False):
+    """
+    Render hierarchical vehicle type filter with collapsible sections.
+    
+    Args:
+        key_prefix: Unique prefix for widget keys
+        sidebar: Whether to render in sidebar
+        default_all: (deprecated) Default state for both aircraft and ground checkboxes
+        default_aircraft: Default state for aircraft checkbox (default: True)
+        default_ground: Default state for ground checkbox (default: False)
+        
+    Returns:
+        dict: {
+            'aircraft_all': bool,
+            'aircraft_categories': list of selected aircraft types,
+            'ground_all': bool,
+            'ground_categories': list of selected ground types,
+            'sql_filter': str (ready-to-use SQL WHERE clause)
+        }
+    """
+    container = st.sidebar if sidebar else st
+    
+    # Handle legacy default_all parameter
+    if default_all is not None:
+        default_aircraft = default_all
+        default_ground = default_all
+    
+    # Title
+    container.markdown("### Vehicle Type Filter")
+    
+    # =================================================================
+    # AIRCRAFT SECTION
+    # =================================================================
+    container.markdown("**✈️ Aircraft**")
+    
+    aircraft_all = container.checkbox(
+        "All aircraft types", 
+        value=default_aircraft,
+        key=f"{key_prefix}_aircraft_all"
+    )
+    
+    # Reset individual checkboxes when aircraft_all is unchecked
+    if not aircraft_all:
+        for key in ['heavy', 'medium', 'large', 'small', 'light', 'helicopter']:
+            full_key = f"{key_prefix}_{key}"
+            if full_key in st.session_state and st.session_state[full_key]:
+                st.session_state[full_key] = False
+    
+    # Detailed aircraft categories (collapsible)
+    with container.expander("Aircraft Categories", expanded=False):
+        heavy = st.checkbox(
+            "Heavy (A380, 777)",
+            value=aircraft_all,
+            key=f"{key_prefix}_heavy",
+            disabled=aircraft_all
+        )
+        medium = st.checkbox(
+            "Medium (737, A320)",
+            value=aircraft_all,
+            key=f"{key_prefix}_medium",
+            disabled=aircraft_all
+        )
+        large = st.checkbox(
+            "Large (A321, 38M)",
+            value=aircraft_all,
+            key=f"{key_prefix}_large",
+            disabled=aircraft_all
+        )
+        small = st.checkbox(
+            "Small Commuter",
+            value=aircraft_all,
+            key=f"{key_prefix}_small",
+            disabled=aircraft_all
+        )
+        light = st.checkbox(
+            "Light Aircraft",
+            value=aircraft_all,
+            key=f"{key_prefix}_light",
+            disabled=aircraft_all
+        )
+        helicopter = st.checkbox(
+            "Helicopters",
+            value=aircraft_all,
+            key=f"{key_prefix}_helicopter",
+            disabled=aircraft_all
+        )
+    
+    # Build aircraft categories list
+    aircraft_categories = []
+    if aircraft_all:
+        # If "All aircraft" is checked, include everything
+        aircraft_categories.extend([
+            'HEAVY_AIRCRAFT',
+            'MEDIUM_AIRCRAFT',
+            'LARGE_AIRLINER',
+            'SMALL_COMMUTER',
+            'LIGHT_AIRCRAFT',
+            'HELICOPTER',
+            'HIGH_PERFORMANCE_MILITARY',
+            'ULTRALIGHT_EXPERIMENTAL'
+        ])
+    else:
+        # If "All aircraft" is unchecked, only include individually selected categories
+        if heavy:
+            aircraft_categories.append('HEAVY_AIRCRAFT')
+        if medium:
+            aircraft_categories.append('MEDIUM_AIRCRAFT')
+        if large:
+            aircraft_categories.append('LARGE_AIRLINER')
+        if small:
+            aircraft_categories.append('SMALL_COMMUTER')
+        if light:
+            aircraft_categories.append('LIGHT_AIRCRAFT')
+        if helicopter:
+            aircraft_categories.append('HELICOPTER')
+    
+    container.markdown("")  # Spacing
+    
+    # =================================================================
+    # GROUND OPERATIONS SECTION
+    # =================================================================
+    container.markdown("**🚗 Ground Operations**")
+    
+    ground_all = container.checkbox(
+        "All ground types",
+        value=default_ground,
+        key=f"{key_prefix}_ground_all"
+    )
+    
+    # Reset individual checkboxes when ground_all is unchecked
+    if not ground_all:
+        for key in ['towers', 'service', 'ground_vehicles', 'light_surface']:
+            full_key = f"{key_prefix}_{key}"
+            if full_key in st.session_state and st.session_state[full_key]:
+                st.session_state[full_key] = False
+    
+    # Detailed ground categories (collapsible)
+    with container.expander("Ground Categories", expanded=False):
+        towers = st.checkbox(
+            "Towers",
+            value=ground_all,
+            key=f"{key_prefix}_towers",
+            disabled=ground_all
+        )
+        service = st.checkbox(
+            "Service Vehicles",
+            value=ground_all,
+            key=f"{key_prefix}_service",
+            disabled=ground_all
+        )
+        ground_vehicles = st.checkbox(
+            "Ground Vehicles",
+            value=ground_all,
+            key=f"{key_prefix}_ground_vehicles",
+            disabled=ground_all
+        )
+        light_surface = st.checkbox(
+            "Emergency/Light",
+            value=ground_all,
+            key=f"{key_prefix}_light_surface",
+            disabled=ground_all
+        )
+    
+    # Build ground categories list
+    ground_categories = []
+    if ground_all:
+        # If "All ground" is checked, include everything
+        ground_categories.extend([
+            'TOWER',
+            'SERVICE_VEHICLE',
+            'GROUND_VEHICLE',
+            'LIGHT_SURFACE_VEHICLE',
+            'UNKNOWN_SURFACE'
+        ])
+    else:
+        # If "All ground" is unchecked, only include individually selected categories
+        if towers:
+            ground_categories.append('TOWER')
+        if service:
+            ground_categories.append('SERVICE_VEHICLE')
+        if ground_vehicles:
+            ground_categories.append('GROUND_VEHICLE')
+        if light_surface:
+            ground_categories.append('LIGHT_SURFACE_VEHICLE')
+    
+    # Build SQL filter
+    all_selected = aircraft_categories + ground_categories
+    
+    if not all_selected:
+        sql_filter = "VEHICLE_CATEGORY = 'NONE'"
+        container.warning("⚠️ No vehicles selected")
+    else:
+        quoted_types = [f"'{t}'" for t in all_selected]
+        sql_filter = f"VEHICLE_CATEGORY IN ({','.join(quoted_types)})"
+        
+        # Summary
+        if aircraft_all and ground_all:
+            container.success("✅ All vehicles")
+        else:
+            container.info(f"📊 {len(all_selected)} types selected")
+    
+    return {
+        'aircraft_all': aircraft_all,
+        'aircraft_categories': aircraft_categories,
+        'ground_all': ground_all,
+        'ground_categories': ground_categories,
+        'sql_filter': sql_filter,
+        'selected_types': all_selected
+    }
 

@@ -118,12 +118,6 @@ class Content:
         'h3_resolution_legacy': 'Higher resolution for detailed airport activity analysis. 12 = larger hexagons, 14 = smaller hexagons',
     }
     
-    # Operational tags and badges
-    OPERATIONAL_TAGS = {
-        'level2_relevant': '🏷️ **IATA Level 2 relevant** — This metric is operationally sensitive for slot-controlled airports',
-        'gate_dwell_level2': '🏷️ **IATA Level 2 relevant** — Gate dwell time impacts slot coordination and capacity management',
-    }
-    
     # Standardized vocabulary
     VOCABULARY = {
         'on_ground_operations': 'on-ground operations',

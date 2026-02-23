@@ -21,7 +21,6 @@ db_prefix = f"{db}.{schema}"
 
 st.title("🛤️ On-Ground Runway Crossings")
 st.caption("Detects aircraft crossing the runway while taxiing on the ground (wheels-on-ground only). Filters out takeoffs, landings, and airborne traffic using: max speed ≤45 kts, time on runway ≤120 sec, and straight-line distance ≤220m.")
-st.info("🏷️ **IATA Level 2 relevant** — This metric is operationally sensitive for slot-controlled airports")
 
 utils.render_timezone_caption(session, db_prefix)
 tzid = utils.get_airport_tzid(session, db_prefix)
@@ -58,6 +57,16 @@ with st.sidebar:
     )
     selected_infra_layers = infra_selection['layers']
     show_infra_tags = infra_selection['show_tags']
+    
+    st.divider()
+    
+    # Vehicle type filter
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="runway_crossings",
+        sidebar=True,
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
+    )
     
     st.divider()
     
@@ -98,7 +107,7 @@ if not directions:
     st.stop()
 
 @st.cache_data(ttl=core.CACHE_TTL_SECONDS)
-def get_crossing_summary(_session, start_d, end_d, dirs, aggregation_type):
+def get_crossing_summary(_session, start_d, end_d, dirs, aggregation_type, vehicle_sql_filter="1=1"):
     """Get overall crossing counts and stats"""
     dir_filter = "','".join(dirs)
     local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
@@ -116,6 +125,7 @@ def get_crossing_summary(_session, start_d, end_d, dirs, aggregation_type):
     FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
     WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
       AND direction IN ('{dir_filter}')
+      AND {vehicle_sql_filter}
     """
     try:
         return _session.sql(q).to_pandas()
@@ -123,7 +133,7 @@ def get_crossing_summary(_session, start_d, end_d, dirs, aggregation_type):
         return pd.DataFrame()
 
 @st.cache_data(ttl=core.CACHE_TTL_SECONDS)
-def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_type):
+def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_type, vehicle_sql_filter="1=1"):
     """
     Aggregate crossings by H3 cell for heatmap visualization.
     metric: 'flight_count' or 'total_duration'
@@ -143,6 +153,7 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_
         agg_expr = f'ROUND(SUM(duration_s)/60.0 / {divisor}) AS metric_value'
         metric_label = 'minutes'
     
+    # Get both metrics for tooltip regardless of which one is selected for display
     q = f"""
     WITH base AS (
       SELECT
@@ -155,10 +166,13 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_
       FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
       WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
         AND direction IN ('{dir_filter}')
+        AND {vehicle_sql_filter}
     )
     SELECT
       h3_cell,
       {agg_expr},
+      ROUND(COUNT(DISTINCT flight_key) / {divisor}) AS crossing_count,
+      ROUND(SUM(duration_s)/60.0 / {divisor}, 1) AS crossing_time,
       ANY_VALUE(ST_Y(midpoint_geom)) AS lat,
       ANY_VALUE(ST_X(midpoint_geom)) AS lon
     FROM base
@@ -170,12 +184,13 @@ def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_
         df = _session.sql(q).to_pandas()
         if df is not None and not df.empty:
             df['METRIC_LABEL'] = metric_label
+            df['AGGREGATION_TYPE'] = aggregation_type
         return df
     except Exception:
         return pd.DataFrame()
 
 @st.cache_data(ttl=core.CACHE_TTL_SECONDS)
-def get_crossing_analytics(_session, start_d, end_d, dirs):
+def get_crossing_analytics(_session, start_d, end_d, dirs, vehicle_sql_filter="1=1"):
     """Get ALL crossing events with flight/airline data for analytics (no limit)"""
     dir_filter = "','".join(dirs)
     local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
@@ -190,6 +205,7 @@ def get_crossing_analytics(_session, start_d, end_d, dirs):
     FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
     WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
       AND direction IN ('{dir_filter}')
+      AND {vehicle_sql_filter}
     """
     try:
         return _session.sql(q).to_pandas()
@@ -197,7 +213,7 @@ def get_crossing_analytics(_session, start_d, end_d, dirs):
         return pd.DataFrame()
 
 @st.cache_data(ttl=core.CACHE_TTL_SECONDS)
-def get_crossing_details(_session, start_d, end_d, dirs, limit=100):
+def get_crossing_details(_session, start_d, end_d, dirs, limit=100, vehicle_sql_filter="1=1"):
     """Get recent crossing events for table display (limited)"""
     dir_filter = "','".join(dirs)
     local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
@@ -218,6 +234,7 @@ def get_crossing_details(_session, start_d, end_d, dirs, limit=100):
     FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
     WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
       AND direction IN ('{dir_filter}')
+      AND {vehicle_sql_filter}
     ORDER BY t_entry DESC
     LIMIT {limit}
     """
@@ -241,7 +258,7 @@ def get_runway_geometry(_session):
 # Infrastructure layers now use utils.get_infrastructure_layers()
 
 @st.cache_data(ttl=core.CACHE_TTL_SECONDS)
-def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
+def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10, vehicle_sql_filter="1=1"):
     """Get flight trajectories for aircraft that performed crossings with schedule info"""
     dir_filter = "','".join(dirs)
     local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
@@ -262,6 +279,7 @@ def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
         FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
         WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
           AND direction IN ('{dir_filter}')
+          AND {vehicle_sql_filter}
         GROUP BY 1,2,3
       )
       WHERE rn = 1
@@ -296,13 +314,13 @@ def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10):
 
 # Fetch data
 with st.spinner("Loading crossing data..."):
-    summary_df = get_crossing_summary(session, start_d, end_d, directions, aggregation_type)
-    agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type, aggregation_type)
-    analytics_df = get_crossing_analytics(session, start_d, end_d, directions)  # For charts (all data)
-    details_df = get_crossing_details(session, start_d, end_d, directions)  # For table (limited to 100)
+    summary_df = get_crossing_summary(session, start_d, end_d, directions, aggregation_type, vehicle_filter['sql_filter'])
+    agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type, aggregation_type, vehicle_filter['sql_filter'])
+    analytics_df = get_crossing_analytics(session, start_d, end_d, directions, vehicle_filter['sql_filter'])  # For charts (all data)
+    details_df = get_crossing_details(session, start_d, end_d, directions, vehicle_sql_filter=vehicle_filter['sql_filter'])  # For table (limited to 100)
     runway_df = get_runway_geometry(session)
     # Always fetch flight paths data for charts, but only render paths on map if checkbox is on
-    flight_paths_df = get_crossing_flight_paths(session, start_d, end_d, directions)
+    flight_paths_df = get_crossing_flight_paths(session, start_d, end_d, directions, vehicle_sql_filter=vehicle_filter['sql_filter'])
     # Load infrastructure layers based on selection
     infra_df = utils.get_infrastructure_layers(session, db_prefix, selected_infra_layers, include_tags=show_infra_tags) if selected_infra_layers else pd.DataFrame()
 
@@ -339,10 +357,10 @@ else:
     max_val = agg_df['METRIC_VALUE'].max()
     min_val = agg_df['METRIC_VALUE'].min()
     
-    # Prepare tooltip
-    metric_label = agg_df['METRIC_LABEL'].iloc[0]
+    # Prepare tooltip with both metrics
+    aggregation_label = "Daily Avg" if agg_df['AGGREGATION_TYPE'].iloc[0] == 'daily_average' else "Total"
     agg_df['tooltip'] = agg_df.apply(
-        lambda r: f"Cell: {r['H3_CELL']}<br>Value: {r['METRIC_VALUE']:.1f} {metric_label}", 
+        lambda r: f"<b>Crossings:</b> {int(r['CROSSING_COUNT'])} {aggregation_label.lower()}<br><b>Time:</b> {r['CROSSING_TIME']:.1f} min {aggregation_label.lower()}", 
         axis=1
     )
     
@@ -548,6 +566,7 @@ else:
     
     st.pydeck_chart(r, use_container_width=True, key="runway_crossings")
     
+    metric_label = agg_df['METRIC_LABEL'].iloc[0]
     st.caption(f"💡 **Hexagon visualization:** Color (Yellow→Orange→Red) and height both represent {metric_label}. Higher intensity = more crossings/longer duration. Zoom and tilt for 3D view.")
 
 st.divider()

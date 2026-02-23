@@ -78,9 +78,21 @@ with st.sidebar:
         max_value=max_date if max_date else local_today
     )
     
-    # Load available flights
+    st.divider()
+    
+    # Vehicle type filter - placed early so it can filter the flight list
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="flight_tracker",
+        sidebar=True,
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
+    )
+    
+    st.divider()
+    
+    # Load available flights (filtered by vehicle type)
     @st.cache_data(ttl=300)
-    def get_flight_list(_session, date, _db_prefix, limit: int = 500):
+    def get_flight_list(_session, date, _db_prefix, vehicle_sql_filter="1=1", limit: int = 500):
         """Return a bounded list of flights for the given date with header fields.
         Reads from FLIGHT_TRACKER_FLIGHT_LIST (dynamic table)."""
         try:
@@ -91,22 +103,24 @@ with st.sidebar:
               origin_airport,
               destination_airport,
               schedule_flight_number,
-              points
+              points,
+              VEHICLE_CATEGORY
             FROM {_db_prefix}.FLIGHT_TRACKER_FLIGHT_LIST
             WHERE service_date = '{date}'::DATE
+              AND {vehicle_sql_filter}
             QUALIFY ROW_NUMBER() OVER (ORDER BY points DESC, flight_id ASC) <= {int(limit)}
             """
             return _session.sql(query).to_pandas()
         except Exception:
             try:
                 import pandas as _pd
-                return _pd.DataFrame(columns=['FLIGHT', 'AIRLINE_NAME', 'ORIGIN_AIRPORT', 'DESTINATION_AIRPORT', 'SCHEDULE_FLIGHT_NUMBER', 'POINTS'])
+                return _pd.DataFrame(columns=['FLIGHT', 'AIRLINE_NAME', 'ORIGIN_AIRPORT', 'DESTINATION_AIRPORT', 'SCHEDULE_FLIGHT_NUMBER', 'POINTS', 'VEHICLE_CATEGORY'])
             except Exception:
                 import pandas as _pd
-                return _pd.DataFrame(columns=['FLIGHT', 'AIRLINE_NAME', 'ORIGIN_AIRPORT', 'DESTINATION_AIRPORT', 'SCHEDULE_FLIGHT_NUMBER', 'POINTS'])
+                return _pd.DataFrame(columns=['FLIGHT', 'AIRLINE_NAME', 'ORIGIN_AIRPORT', 'DESTINATION_AIRPORT', 'SCHEDULE_FLIGHT_NUMBER', 'POINTS', 'VEHICLE_CATEGORY'])
     
     with st.spinner("Loading available flights..."):
-        flights_df = get_flight_list(session, selected_date, db_prefix, limit=500)
+        flights_df = get_flight_list(session, selected_date, db_prefix, vehicle_filter['sql_filter'], limit=500)
     
     # Enrich labels from FLIGHT_SCHEDULE when missing (UTC/local date boundary tolerant)
     try:
@@ -154,7 +168,7 @@ with st.sidebar:
                 flights_df[c] = flights_df[c].where(flights_df[c].notna() & (flights_df[c].astype(str).str.strip() != ''), flights_df[sched_c])
         flights_df = flights_df.drop(columns=[c for c in flights_df.columns if c.endswith('_SCHED')])
     
-    # Flight dropdown (show airline + OD in label, but keep value as flight id)
+    # Flight dropdown (show airline + OD for aircraft, vehicle type for ground vehicles)
     if flights_df is not None and not flights_df.empty:
         flight_options = [""] + flights_df['FLIGHT'].tolist()
         labels = {}
@@ -164,6 +178,7 @@ with st.sidebar:
         col_o = "ORIGIN_AIRPORT" if "ORIGIN_AIRPORT" in flights_df.columns else "origin_airport"
         col_d = "DESTINATION_AIRPORT" if "DESTINATION_AIRPORT" in flights_df.columns else "destination_airport"
         col_sched = "SCHEDULE_FLIGHT_NUMBER" if "SCHEDULE_FLIGHT_NUMBER" in flights_df.columns else "schedule_flight_number"
+        col_vehicle = "VEHICLE_CATEGORY" if "VEHICLE_CATEGORY" in flights_df.columns else "vehicle_category"
 
         def _clean_txt(x):
             s = ("" if x is None else str(x)).strip()
@@ -175,26 +190,41 @@ with st.sidebar:
         except Exception:
             code_to_name = {}
 
+        # Ground vehicle categories
+        ground_categories = {'TOWER', 'SERVICE_VEHICLE', 'GROUND_VEHICLE', 'LIGHT_SURFACE_VEHICLE', 'UNKNOWN_SURFACE'}
+
         for _, r in flights_df.iterrows():
             fid = _clean_txt(r.get("FLIGHT"))
-            airline = _clean_txt(r.get(col_airline))
-            o = _clean_txt(r.get(col_o))
-            d = _clean_txt(r.get(col_d))
-
-            od = f"{o}→{d}" if o and d else ""
-
-            # If airline missing, derive from callsign prefix using standing airline dim.
-            if not airline and fid:
-                try:
-                    prefix = re.sub(r"[^A-Z]", "", fid.upper())[:3]
-                    # prefer 3-letter ICAO, else 2-letter IATA
-                    airline = code_to_name.get(prefix) or code_to_name.get(prefix[:2]) or ""
-                except Exception:
-                    airline = ""
-
-            # Label format requirement: Callsign | Airline | O→D (no schedule flight number digits).
-            parts = [p for p in [fid, airline, od] if p]
-            labels[fid] = " | ".join(parts)
+            vehicle_category = _clean_txt(r.get(col_vehicle))
+            
+            # Check if this is a ground vehicle
+            is_ground_vehicle = vehicle_category in ground_categories
+            
+            if is_ground_vehicle:
+                # For ground vehicles: show ICAO_HEX | Vehicle Type
+                vehicle_display = vehicle_category.replace('_', ' ').title()
+                labels[fid] = f"{fid} | {vehicle_display}"
+            else:
+                # For aircraft: show Callsign | Airline | O→D
+                airline = _clean_txt(r.get(col_airline))
+                o = _clean_txt(r.get(col_o))
+                d = _clean_txt(r.get(col_d))
+                
+                od = f"{o}→{d}" if o and d else ""
+                
+                # If airline missing, derive from callsign prefix using standing airline dim.
+                if not airline and fid:
+                    try:
+                        prefix = re.sub(r"[^A-Z]", "", fid.upper())[:3]
+                        # prefer 3-letter ICAO, else 2-letter IATA
+                        airline = code_to_name.get(prefix) or code_to_name.get(prefix[:2]) or ""
+                    except Exception:
+                        airline = ""
+                
+                # Label format requirement: Callsign | Airline | O→D (no schedule flight number digits).
+                parts = [p for p in [fid, airline, od] if p]
+                labels[fid] = " | ".join(parts)
+        
         selected_flight = st.selectbox(
             "Choose Flight to track",
             options=flight_options,
@@ -218,7 +248,7 @@ with st.sidebar:
 
 # Query functions
 @st.cache_data(ttl=300)
-def get_flight_data(_session, flight, date, _db_prefix):
+def get_flight_data(_session, flight, date, _db_prefix, vehicle_sql_filter="1=1"):
     """Get flight tracking data (airport-local day)"""
     f = str(flight or "").strip().upper()
     is_hex = bool(re.fullmatch(r"[0-9A-F]{6}", f))
@@ -239,13 +269,14 @@ def get_flight_data(_session, flight, date, _db_prefix):
     FROM {_db_prefix}.ADSB_DATA_LOCAL
     WHERE {where}
         AND {local_date_expr} = '{date}'::DATE
+        AND {vehicle_sql_filter}
         AND LOCATION IS NOT NULL
     ORDER BY TIMESTAMP ASC
     """
     return _session.sql(query).to_pandas()
 
 @st.cache_data(ttl=300)
-def get_flight_gate_dwell(_session, flight, date, _db_prefix, radius_meters: int = 120):
+def get_flight_gate_dwell(_session, flight, date, _db_prefix, radius_meters: int = 120, vehicle_sql_filter="1=1"):
     """Approximate dwell time near the most-likely gate for the selected flight/date (airport-local day).
     Returns a single-row DataFrame with GATE_NAME, DWELL_MINUTES, START_TS, END_TS, POINTS or empty if none."""
     local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
@@ -255,6 +286,7 @@ def get_flight_gate_dwell(_session, flight, date, _db_prefix, radius_meters: int
     FROM {_db_prefix}.ADSB_DATA_LOCAL
         WHERE FLIGHT = '{flight}'
           AND {local_date_expr} = '{date}'::DATE
+          AND {vehicle_sql_filter}
           AND LOCATION IS NOT NULL
     ),
     gates AS (
@@ -414,7 +446,7 @@ flight_data = pd.DataFrame()
 schedule_info = None
 if selected_flight:
     with st.spinner("Loading flight data..."):
-        flight_data = get_flight_data(session, selected_flight, selected_date, db_prefix)
+        flight_data = get_flight_data(session, selected_flight, selected_date, db_prefix, vehicle_sql_filter=vehicle_filter['sql_filter'])
         if not flight_data.empty:
             schedule_info = get_schedule_info(session, selected_flight, selected_date, db_prefix)
 

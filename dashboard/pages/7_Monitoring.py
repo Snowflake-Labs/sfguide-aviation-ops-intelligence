@@ -23,6 +23,16 @@ db_prefix = f"{db}.{schema}"
 with st.sidebar:
     selected_db = ui_components.render_airport_selector(sidebar=True)
 
+# Vehicle type filter
+with st.sidebar:
+    st.divider()
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="monitoring",
+        sidebar=True,
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
+    )
+
 if not selected_db:
     st.warning("No airport databases found yet. Run the installer first.")
     st.stop()
@@ -47,7 +57,7 @@ def _format_local_ts(value) -> str:
 # =============================================================================
 
 @st.cache_data(ttl=120)
-def get_health_summary(_session, _db_prefix):
+def get_health_summary(_session, _db_prefix, vehicle_sql_filter):
     """Get key health metrics for the summary cards."""
     result = {
         'match_rate': None,
@@ -70,6 +80,7 @@ def get_health_summary(_session, _db_prefix):
                 COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) AS matched_points
             FROM {_db_prefix}.ADSB_DATA_LOCAL
             WHERE {local_date_expr} = {local_today_expr}
+              AND {vehicle_sql_filter}
         ),
         yesterday_stats AS (
             SELECT 
@@ -77,6 +88,7 @@ def get_health_summary(_session, _db_prefix):
                 COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) AS matched_points
             FROM {_db_prefix}.ADSB_DATA_LOCAL
             WHERE {local_date_expr} = DATEADD('day', -1, {local_today_expr})
+              AND {vehicle_sql_filter}
         )
         SELECT 
             t.total_points,
@@ -101,11 +113,13 @@ def get_health_summary(_session, _db_prefix):
             SELECT COUNT(DISTINCT ICAO_HEX) AS cnt
             FROM {_db_prefix}.ADSB_DATA_LOCAL
             WHERE {local_date_expr} = {utils.get_airport_local_date_sql(_db_prefix)}
+              AND {vehicle_sql_filter}
         ),
         yesterday AS (
             SELECT COUNT(DISTINCT ICAO_HEX) AS cnt
             FROM {_db_prefix}.ADSB_DATA_LOCAL
             WHERE {local_date_expr} = DATEADD('day', -1, {utils.get_airport_local_date_sql(_db_prefix)})
+              AND {vehicle_sql_filter}
         )
         SELECT t.cnt AS today_cnt, y.cnt AS yesterday_cnt
         FROM today t, yesterday y
@@ -124,6 +138,7 @@ def get_health_summary(_session, _db_prefix):
         q = f"""
         SELECT DATEDIFF('minute', MAX(TIMESTAMP), SYSDATE()) AS age_min
         FROM {_db_prefix}.ADSB_DATA_LOCAL
+        WHERE {vehicle_sql_filter}
         """
         r = _session.sql(q).collect()
         if r and r[0]['AGE_MIN'] is not None:
@@ -157,7 +172,7 @@ def get_health_summary(_session, _db_prefix):
 # HEALTH SUMMARY CARDS
 # =============================================================================
 
-health = get_health_summary(session, db_prefix)
+health = get_health_summary(session, db_prefix, vehicle_filter['sql_filter'])
 
 st.subheader("📊 Health Summary")
 c1, c2, c3, c4 = st.columns(4)
@@ -221,7 +236,7 @@ st.divider()
 st.subheader("✈️ Flight Matching Health")
 
 @st.cache_data(ttl=300)
-def get_match_rate_trend(_session, _db_prefix, days=14):
+def get_match_rate_trend(_session, _db_prefix, days=14, vehicle_sql_filter="1=1"):
     """Get daily match rate trend (airport-local day)."""
     try:
         local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
@@ -234,6 +249,7 @@ def get_match_rate_trend(_session, _db_prefix, days=14):
             ROUND(100.0 * COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) / NULLIF(COUNT(*), 0), 1) AS match_rate_pct
         FROM {_db_prefix}.ADSB_DATA_LOCAL
         WHERE {local_date_expr} >= DATEADD('day', -{days}, {local_today_expr})
+          AND {vehicle_sql_filter}
         GROUP BY 1
         ORDER BY 1
         """
@@ -243,7 +259,7 @@ def get_match_rate_trend(_session, _db_prefix, days=14):
 
 
 @st.cache_data(ttl=300)
-def get_match_method_distribution(_session, _db_prefix):
+def get_match_method_distribution(_session, _db_prefix, vehicle_sql_filter="1=1"):
     """Get distribution of match methods."""
     try:
         local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
@@ -254,6 +270,7 @@ def get_match_method_distribution(_session, _db_prefix):
             COUNT(*) AS point_count
         FROM {_db_prefix}.ADSB_DATA_LOCAL
         WHERE {local_date_expr} >= DATEADD('day', -7, {local_today_expr})
+          AND {vehicle_sql_filter}
         GROUP BY 1
         ORDER BY 2 DESC
         """
@@ -290,7 +307,7 @@ def get_unmatched_legs(_session, _db_prefix, days=7):
 match_col1, match_col2 = st.columns(2)
 
 with match_col1:
-    match_trend = get_match_rate_trend(session, db_prefix)
+    match_trend = get_match_rate_trend(session, db_prefix, vehicle_sql_filter=vehicle_filter['sql_filter'])
     if match_trend is not None and not match_trend.empty:
         fig = px.line(
             match_trend, 
@@ -306,7 +323,7 @@ with match_col1:
         st.info("No match rate data available yet.")
 
 with match_col2:
-    method_dist = get_match_method_distribution(session, db_prefix)
+    method_dist = get_match_method_distribution(session, db_prefix, vehicle_sql_filter=vehicle_filter['sql_filter'])
     if method_dist is not None and not method_dist.empty:
         # Clean up method names for display
         method_dist['MATCH_METHOD'] = method_dist['MATCH_METHOD'].replace({
@@ -344,7 +361,7 @@ st.divider()
 st.subheader("📈 Data Volume")
 
 @st.cache_data(ttl=300)
-def get_daily_volume(_session, _db_prefix, days=14):
+def get_daily_volume(_session, _db_prefix, days=14, vehicle_sql_filter="1=1"):
     """Get daily ADS-B point counts and aircraft counts (airport-local day)."""
     try:
         local_date_expr = utils.get_airport_local_date_sql(_db_prefix, "TIMESTAMP")
@@ -356,6 +373,7 @@ def get_daily_volume(_session, _db_prefix, days=14):
             COUNT(DISTINCT ICAO_HEX) AS aircraft_count
         FROM {_db_prefix}.ADSB_DATA_LOCAL
         WHERE {local_date_expr} >= DATEADD('day', -{days}, {local_today_expr})
+          AND {vehicle_sql_filter}
         GROUP BY 1
         ORDER BY 1
         """
@@ -365,7 +383,7 @@ def get_daily_volume(_session, _db_prefix, days=14):
 
 
 @st.cache_data(ttl=60)
-def get_hourly_ingestion(_session, _db_prefix, hours=48):
+def get_hourly_ingestion(_session, _db_prefix, hours=48, vehicle_sql_filter="1=1"):
     """Get hourly ADS-B ingestion counts to monitor data loading."""
     try:
         local_ts_expr = utils.get_airport_local_ts_sql(_db_prefix, "TIMESTAMP")
@@ -377,6 +395,7 @@ def get_hourly_ingestion(_session, _db_prefix, hours=48):
             COUNT(DISTINCT ICAO_HEX) AS aircraft_count
         FROM {_db_prefix}.ADSB_DATA_LOCAL
         WHERE {local_ts_expr} >= DATEADD('hour', -{hours}, {local_now_expr})
+          AND {vehicle_sql_filter}
         GROUP BY 1
         ORDER BY 1
         """
@@ -408,7 +427,7 @@ def get_schedule_volume(_session, _db_prefix, days=14):
 
 # Hourly ingestion timeseries (full width for visibility)
 st.caption("📊 Hourly Ingestion (Last 48 Hours)")
-hourly_data = get_hourly_ingestion(session, db_prefix)
+hourly_data = get_hourly_ingestion(session, db_prefix, vehicle_sql_filter=vehicle_filter['sql_filter'])
 if hourly_data is not None and not hourly_data.empty:
     fig_hourly = go.Figure()
     fig_hourly.add_trace(go.Scatter(
@@ -471,7 +490,7 @@ st.divider()
 vol_col1, vol_col2 = st.columns(2)
 
 with vol_col1:
-    daily_vol = get_daily_volume(session, db_prefix)
+    daily_vol = get_daily_volume(session, db_prefix, vehicle_sql_filter=vehicle_filter['sql_filter'])
     if daily_vol is not None and not daily_vol.empty:
         fig = go.Figure()
         fig.add_trace(go.Bar(
@@ -648,7 +667,7 @@ st.divider()
 st.subheader("🕐 Data Freshness")
 
 @st.cache_data(ttl=60)
-def get_freshness_details(_session, _db_prefix):
+def get_freshness_details(_session, _db_prefix, vehicle_sql_filter="1=1"):
     """Get detailed freshness metrics."""
     result = {}
     
@@ -660,6 +679,7 @@ def get_freshness_details(_session, _db_prefix):
             MAX(TIMESTAMP) AS last_adsb_ts,
             DATEDIFF('minute', MAX(TIMESTAMP), SYSDATE()) AS adsb_age_min
         FROM {_db_prefix}.ADSB_DATA_LOCAL
+        WHERE {vehicle_sql_filter}
         """
         r = _session.sql(q).collect()
         if r:
@@ -702,7 +722,7 @@ def get_freshness_details(_session, _db_prefix):
     return result
 
 
-freshness = get_freshness_details(session, db_prefix)
+freshness = get_freshness_details(session, db_prefix, vehicle_sql_filter=vehicle_filter['sql_filter'])
 
 fresh_col1, fresh_col2, fresh_col3 = st.columns(3)
 
