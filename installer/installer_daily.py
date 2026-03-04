@@ -15,6 +15,19 @@ import re
 import subprocess
 import os
 
+try:
+    from sql_runner import (
+        generate_dwell_core_sql,
+        generate_byo_observation_source,
+        build_params,
+        load_sql_file,
+    )
+    _HAS_SQL_RUNNER = True
+except ImportError:
+    _HAS_SQL_RUNNER = False
+    generate_dwell_core_sql = None
+    generate_byo_observation_source = None
+
 
 _RE_SECRET_STRING = re.compile(r"(SECRET_STRING\s*=\s*)'[^']*'(\s*;)", flags=re.IGNORECASE)
 
@@ -5480,9 +5493,21 @@ def generate_all_sql(
             int(adsb_history_backfill_days or 2),
         )
     
-    # Derived analytics runs LAST (needs both Flight Schedule and ADS-B data)
+    # Derived analytics (monitoring, tasks, refresh, backfill)
+    # Creates ADSB_DATA_LOCAL + gate/traffic/runway DTs + tasks + refresh procs.
     files['05_derived.sql'] = generate_derived_sql(airport, database, schema, warehouse, adsb_history_backfill_days)
-    
+
+    # DWELL_CORE modular layer (core contract + airport adapter + compat)
+    # Must run AFTER 05_derived because:
+    #   - DWELL_CORE.OBSERVATION is a view on ADSB_DATA_LOCAL (created in 05_derived)
+    #   - Compat layer re-creates gate/traffic DTs to read from DWELL_CORE,
+    #     overwriting the inline versions from 05_derived with modular versions.
+    if _HAS_SQL_RUNNER and generate_dwell_core_sql is not None:
+        try:
+            files['06_dwell_core.sql'] = generate_dwell_core_sql(database, schema, warehouse)
+        except Exception:
+            pass  # Graceful fallback: inline derived SQL still creates all objects
+
     return files
 
 
@@ -5880,7 +5905,7 @@ def main():
     else:
         st.markdown(f"""
         1. Download the SQL files
-        2. Run them in Snowflake worksheets in order (01_, 02_, 03_, 04_, 05_)
+        2. Run them in Snowflake worksheets in order (01_, 02_, 03_, 04_, 05_, 06_)
         3. **Everything runs automatically** - no manual steps needed!
         4. Deploy the dashboard Streamlit app pointing to `{database}.PUBLIC`
         """)
