@@ -5,10 +5,15 @@
 -- All aviation-specific column references are contained here; core never
 -- references ADSB_DATA_LOCAL or aviation field names directly.
 --
--- This view is the adapter's "input plug" into the DWELL_CORE pipeline.
+-- Must be a Dynamic Table (not a view) because ADSB_DATA_LOCAL is a Dynamic
+-- Table and Snowflake does not allow DTs to read through views that reference
+-- other DTs.
 -- =============================================================================
 
-CREATE OR REPLACE VIEW ${DATABASE}.DWELL_CORE.OBSERVATION_SOURCE AS
+CREATE OR REPLACE DYNAMIC TABLE ${DATABASE}.DWELL_CORE.OBSERVATION_SOURCE
+  TARGET_LAG = DOWNSTREAM
+  WAREHOUSE = ${WAREHOUSE}
+AS
 WITH one_site AS (
   SELECT site_id, site_tzid
   FROM ${DATABASE}.DWELL_CORE.SITE
