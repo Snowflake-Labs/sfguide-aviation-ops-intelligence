@@ -87,7 +87,7 @@ CREATE OR REPLACE GIT REPOSITORY AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO
 ```sql
 CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_INSTALLER
   ROOT_LOCATION = '@avia_ops_repo/branches/main/installer'
-  MAIN_FILE = 'installer_daily.py'
+  MAIN_FILE = 'installer_airport.py'
   QUERY_WAREHOUSE = MY_WH  -- Replace with your warehouse
   TITLE = 'Airport Analytics Installer'
   COMMENT = 'Installer for Airport Analytics Platform - generates and deploys airport infrastructure';
