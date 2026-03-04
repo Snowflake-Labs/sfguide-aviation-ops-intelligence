@@ -28,11 +28,14 @@ installer/sql/
 │   └── 04_observation_source.sql    # ADSB_DATA_LOCAL → OBSERVATION_SOURCE
 ├── policies/                        # Policy documentation + overrides
 │   └── airport_defaults.sql         # Documents standard airport thresholds
-├── compat/                          # Phase 4: backward-compatible PUBLIC objects
-│   ├── gate_analysis.sql            # GATE_ANALYSIS_* dynamic tables
-│   ├── flight_traffic.sql           # FLIGHT_TRAFFIC_FACT_* dynamic tables
-│   ├── flight_tracker.sql           # FLIGHT_TRACKER_FLIGHT_LIST + HELPER views
-│   └── runway_crossings.sql         # RUNWAY_CROSSINGS_DETAILED
+├── compat/
+│   └── airport/                     # Phase 4: backward-compatible PUBLIC objects (airport)
+│       ├── gate_analysis.sql        # GATE_ANALYSIS_* dynamic tables
+│       ├── flight_traffic.sql       # FLIGHT_TRAFFIC_FACT_* dynamic tables
+│       ├── flight_tracker.sql       # FLIGHT_TRACKER_FLIGHT_LIST + HELPER views
+│       ├── landing_timetable.sql    # HELPER_LANDING_LIVE_TIMETABLE
+│       ├── runway_crossings.sql     # RUNWAY_CROSSINGS_DETAILED
+│       └── zz_post_install.sql      # REFRESH / RESUME for compat DTs
 └── smoke_tests/                     # Phase 5: verification
     ├── 01_core.sql                  # Core contract validation (domain-agnostic)
     └── 02_airport.sql               # Airport PUBLIC objects validation
@@ -47,7 +50,7 @@ The SQL modules execute in a strict 5-phase order:
 | 1 | `core/base` | Create DWELL_CORE schema and empty contract tables |
 | 2 | `adapters/<name>` | Seed SITE, ZONE, POLICY; create OBSERVATION_SOURCE |
 | 3 | `core/transforms` | Create OBSERVATION view + Dynamic Tables that consume OBSERVATION_SOURCE |
-| 4 | `compat` | (Airport only) Re-create PUBLIC Dynamic Tables backed by DWELL_CORE |
+| 4 | `compat/{adapter}` | Re-create PUBLIC Dynamic Tables backed by DWELL_CORE (e.g. `compat/airport/`) |
 | 5 | `smoke_tests` | Verify objects exist and pass sanity checks |
 
 This ordering ensures adapters populate base tables _before_ transforms try to read them,
@@ -90,9 +93,9 @@ The adapter (or BYO mapping) must create `DWELL_CORE.OBSERVATION_SOURCE` as a vi
 | `observed_ts_local` | TIMESTAMP_NTZ | Yes | Local timestamp (derived from site timezone) |
 | `service_date_local` | DATE | Yes | Local calendar date (for sessionization) |
 | `location` | GEOGRAPHY | Yes | Position |
-| `speed` | FLOAT | No | Speed (domain units; NULL OK) |
+| `speed` | FLOAT | No | Speed in **knots** (matches `POLICY.ground_speed_max_kts`; NULL OK) |
 | `heading` | FLOAT | No | Heading/course (NULL OK) |
-| `altitude` | NUMBER | No | Altitude (NULL OK — presence logic adapts) |
+| `altitude` | NUMBER | No | Altitude in **feet** (matches `POLICY.ground_altitude_max_ft`; NULL OK) |
 | `source` | STRING | No | Data source label |
 | `asset_category` | STRING | No | Asset type/category |
 | `attrs` | VARIANT | No | Domain-specific fields (callsign, registration, etc.) |
@@ -217,6 +220,11 @@ sql = generate_dwell_core_sql(
             "lat_col": "LAT",
             "lon_col": "LON",
             "speed_col": "SPEED_KPH",
+            "speed_unit": "KPH",
+            "speed_multiplier": 0.539957,    # kph → knots
+            "altitude_col": "ALT_M",
+            "altitude_unit": "M",
+            "altitude_multiplier": 3.28084,  # meters → feet
             "asset_category_col": "VEHICLE_TYPE",
         },
         "site_config": {
@@ -238,6 +246,29 @@ sql = generate_dwell_core_sql(
 ```
 
 This generates SITE, POLICY, and OBSERVATION_SOURCE SQL without any file-based adapter.
+
+### BYO Column Mapping — Unit Conversion
+
+The core contract expects **speed in knots** and **altitude in feet** (matching `POLICY` column names).
+If your telemetry uses different units, provide conversion via the mapping keys below.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `speed_col` | string | Source column name for speed |
+| `speed_expr` | string | Raw SQL expression (overrides `speed_col`); e.g. `"src.SPEED_KPH * 0.539957"` |
+| `speed_multiplier` | number | Factor applied to `speed_col` (e.g. `0.539957` for kph→kts) |
+| `speed_unit` | string | Declared source unit (e.g. `"KPH"`, `"MPS"`). If not `"KTS"`, requires `speed_expr` or `speed_multiplier` |
+| `altitude_col` | string | Source column name for altitude |
+| `altitude_expr` | string | Raw SQL expression (overrides `altitude_col`); e.g. `"src.ALT_M * 3.28084"` |
+| `altitude_multiplier` | number | Factor applied to `altitude_col` (e.g. `3.28084` for m→ft) |
+| `altitude_unit` | string | Declared source unit (e.g. `"M"`). If not `"FT"`, requires `altitude_expr` or `altitude_multiplier` |
+
+**Resolution priority** (same for both speed and altitude):
+
+1. `*_expr` — full SQL expression, maximum flexibility
+2. `*_multiplier` × `*_col` — simple numeric conversion
+3. `*_col` — pass-through (assumed to already be in canonical units)
+4. `NULL` — if no column provided
 
 ## Execution Order (Full Airport Install)
 
