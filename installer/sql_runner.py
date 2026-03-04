@@ -371,8 +371,11 @@ WHEN NOT MATCHED THEN INSERT (
   src.session_gap_minutes, src.facility_radius_m, src.zone_assign_radius_m, src.attrs
 );
 
--- 3. Create OBSERVATION_SOURCE
-CREATE OR REPLACE VIEW {database}.DWELL_CORE.OBSERVATION_SOURCE AS
+-- 3. Create OBSERVATION_SOURCE (DT required: downstream OBSERVATION is a DT)
+CREATE OR REPLACE DYNAMIC TABLE {database}.DWELL_CORE.OBSERVATION_SOURCE
+  TARGET_LAG = DOWNSTREAM
+  WAREHOUSE = {warehouse}
+AS
 SELECT
   '{site_id}'                                                              AS site_id,
   src.{asset_id}                                                           AS asset_id,

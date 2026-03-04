@@ -1,15 +1,18 @@
 -- =============================================================================
--- DWELL_CORE.OBSERVATION: Stable contract view over adapter-provided source
+-- DWELL_CORE.OBSERVATION: Stable contract layer over adapter-provided source
 --
--- Core transforms (PRESENCE_POINT, DWELL_SESSION, etc.) read from this view.
+-- Core transforms (PRESENCE_POINT, DWELL_SESSION, etc.) read from this table.
 -- The underlying data comes from DWELL_CORE.OBSERVATION_SOURCE, which is
 -- created by the active adapter (airport, port, BYO, etc.).
 --
--- This view enforces the canonical column contract without referencing any
--- domain-specific table or column name.
+-- Must be a Dynamic Table (not a view) because OBSERVATION_SOURCE is a DT
+-- and Snowflake does not allow DTs to read through views that reference DTs.
 -- =============================================================================
 
-CREATE OR REPLACE VIEW ${DATABASE}.DWELL_CORE.OBSERVATION AS
+CREATE OR REPLACE DYNAMIC TABLE ${DATABASE}.DWELL_CORE.OBSERVATION
+  TARGET_LAG = DOWNSTREAM
+  WAREHOUSE = ${WAREHOUSE}
+AS
 SELECT
   site_id,
   asset_id,
