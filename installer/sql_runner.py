@@ -198,12 +198,24 @@ def generate_dwell_core_sql(
 
 
 def generate_compat_sql(
-    database: str, schema: str, warehouse: str
+    database: str, schema: str, warehouse: str,
+    adapter: str = "airport",
 ) -> str:
-    """Generate only the backward-compatibility layer SQL."""
+    """Generate only the backward-compatibility layer SQL.
+
+    Loads from ``compat/{adapter}`` if the directory exists,
+    otherwise falls back to ``compat/`` for the ``airport`` adapter.
+    """
     params = build_params(database, schema, warehouse)
     parts = []
-    for fname, sql in load_sql_module("compat", params):
+    compat_dir = os.path.join(_SQL_DIR, "compat", adapter)
+    if os.path.isdir(compat_dir):
+        subdir = f"compat/{adapter}"
+    elif adapter == "airport":
+        subdir = "compat"
+    else:
+        return ""
+    for fname, sql in load_sql_module(subdir, params):
         parts.append(sql)
     return "\n".join(parts)
 
@@ -211,6 +223,94 @@ def generate_compat_sql(
 # ---------------------------------------------------------------------------
 # BYO (Bring-Your-Own) telemetry adapter
 # ---------------------------------------------------------------------------
+
+def _resolve_byo_measure_expr(
+    cm: dict, measure: str, default_unit: str,
+) -> str:
+    """Resolve a BYO speed/altitude expression with optional unit conversion.
+
+    Resolution priority:
+      1. {measure}_expr  (raw SQL expression — full control)
+      2. {measure}_multiplier * {measure}_col  (e.g. 0.539957 for kph->kts)
+      3. src.{measure}_col  (pass-through, assumed to be in canonical units)
+      4. NULL
+
+    Raises ValueError if a non-canonical unit is declared without a conversion path.
+    """
+    expr_key = f"{measure}_expr"
+    col_key = f"{measure}_col"
+    mult_key = f"{measure}_multiplier"
+    unit_key = f"{measure}_unit"
+
+    if cm.get(expr_key):
+        return str(cm[expr_key])
+
+    col = cm.get(col_key)
+    if not col:
+        return "NULL"
+
+    declared_unit = (cm.get(unit_key) or "").upper()
+    multiplier = cm.get(mult_key)
+
+    if declared_unit and declared_unit != default_unit and not multiplier:
+        raise ValueError(
+            f"column_mapping['{unit_key}'] is '{declared_unit}' but no "
+            f"'{mult_key}' or '{expr_key}' provided; "
+            f"DWELL_CORE.POLICY expects {default_unit}"
+        )
+
+    if multiplier is not None:
+        return f"(src.{col} * {float(multiplier)})"
+    return f"src.{col}"
+
+
+def _byo_validation_sql(
+    source_relation: str, required_cols: list,
+) -> str:
+    """Generate Snowflake SQL that validates the BYO source relation and columns.
+
+    Uses a scripting block with INFORMATION_SCHEMA queries so errors are
+    actionable ("column X not found in Y") rather than opaque compilation errors.
+    """
+    parts = source_relation.split(".")
+    if len(parts) != 3:
+        return (
+            f"-- WARNING: cannot validate '{source_relation}' "
+            f"(expected DB.SCHEMA.TABLE format)\n"
+        )
+    src_db, src_schema, src_table = [p.strip('"') for p in parts]
+
+    col_checks = ""
+    for col in required_cols:
+        safe_col = col.replace("'", "''")
+        col_checks += f"""
+    SELECT COUNT(*) INTO :v_cnt
+    FROM {src_db}.INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA  = '{src_schema.upper()}'
+      AND TABLE_NAME    = '{src_table.upper()}'
+      AND COLUMN_NAME   = '{safe_col.upper()}';
+    IF (v_cnt = 0) THEN
+      RETURN 'BYO validation failed: column {safe_col} not found in {source_relation}';
+    END IF;
+"""
+
+    return f"""-- 0. Validate BYO source relation and required columns
+DECLARE
+  v_cnt NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO :v_cnt
+    FROM {src_db}.INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_SCHEMA = '{src_schema.upper()}'
+      AND TABLE_NAME   = '{src_table.upper()}';
+    IF (v_cnt = 0) THEN
+      RETURN 'BYO validation failed: relation {source_relation} does not exist';
+    END IF;
+{col_checks}
+    RETURN 'BYO validation passed';
+END;
+
+"""
+
 
 def generate_byo_observation_source(
     database: str,
@@ -224,23 +324,32 @@ def generate_byo_observation_source(
     """Generate SQL for a BYO telemetry OBSERVATION_SOURCE.
 
     Creates:
-      1. DWELL_CORE.SITE row for the BYO site
-      2. DWELL_CORE.POLICY row with provided or default thresholds
-      3. DWELL_CORE.OBSERVATION_SOURCE view mapping BYO columns to canonical shape
+      1. Validation of source relation and required columns
+      2. DWELL_CORE.SITE row for the BYO site
+      3. DWELL_CORE.POLICY row with provided or default thresholds
+      4. DWELL_CORE.OBSERVATION_SOURCE DT mapping BYO columns to canonical shape
 
     Args:
         source_relation: Fully qualified table/view name
             (e.g. "MY_DB.MY_SCHEMA.VEHICLE_POSITIONS").
         column_mapping: Dict with keys:
-            - asset_id_col (required): column name for asset identifier
-            - ts_col (required): column name for UTC timestamp
+            Required:
+            - asset_id_col: column name for asset identifier
+            - ts_col: column name for UTC timestamp
             - geography_col: column name for GEOGRAPHY location (use this OR lat/lon)
             - lat_col / lon_col: column names for latitude/longitude
-            - speed_col: column for speed (optional)
-            - heading_col: column for heading/course (optional)
-            - altitude_col: column for altitude (optional)
-            - asset_category_col: column for asset type/category (optional)
-            - attrs_expression: SQL expression for attrs VARIANT (optional)
+            Optional:
+            - speed_col: column for speed
+            - speed_expr: raw SQL expression for speed (overrides speed_col)
+            - speed_multiplier: factor applied to speed_col (e.g. 0.539957 for kph->kts)
+            - speed_unit: declared unit (e.g. "KPH"); if not "KTS", requires conversion
+            - altitude_col: column for altitude
+            - altitude_expr: raw SQL expression for altitude (overrides altitude_col)
+            - altitude_multiplier: factor applied to altitude_col (e.g. 0.3048 for m->ft)
+            - altitude_unit: declared unit (e.g. "M"); if not "FT", requires conversion
+            - heading_col: column for heading/course
+            - asset_category_col: column for asset type/category
+            - attrs_expression: SQL expression for attrs VARIANT
         site_config: Dict with keys:
             - site_id (required): stable unique identifier
             - site_name (required): human-readable name
@@ -251,7 +360,7 @@ def generate_byo_observation_source(
             - ground_altitude_max_ft, ground_speed_max_kts,
               session_gap_minutes, facility_radius_m, zone_assign_radius_m
     """
-    # --- Validate required inputs ---
+    # --- Python-side validation of required keys ---
     errors = []
     if not column_mapping:
         errors.append("column_mapping is required")
@@ -292,9 +401,10 @@ def generate_byo_observation_source(
     else:
         location_expr = f"ST_MAKEPOINT(src.{cm['lon_col']}, src.{cm['lat_col']})"
 
-    speed_expr = f"src.{cm['speed_col']}" if cm.get("speed_col") else "NULL"
+    speed_expr = _resolve_byo_measure_expr(cm, "speed", "KTS")
+    altitude_expr = _resolve_byo_measure_expr(cm, "altitude", "FT")
+
     heading_expr = f"src.{cm['heading_col']}" if cm.get("heading_col") else "NULL"
-    altitude_expr = f"src.{cm['altitude_col']}" if cm.get("altitude_col") else "NULL"
     category_expr = (
         f"src.{cm['asset_category_col']}" if cm.get("asset_category_col") else "NULL"
     )
@@ -318,12 +428,25 @@ def generate_byo_observation_source(
     fac_rad = po.get("facility_radius_m", 5000)
     zone_rad = po.get("zone_assign_radius_m", 120)
 
+    # Collect columns that need INFORMATION_SCHEMA validation
+    required_cols = [asset_id, ts_col]
+    if has_geo:
+        required_cols.append(cm["geography_col"])
+    else:
+        required_cols.extend([cm["lat_col"], cm["lon_col"]])
+    for opt_key in ("speed_col", "heading_col", "altitude_col", "asset_category_col"):
+        if cm.get(opt_key):
+            required_cols.append(cm[opt_key])
+
+    validation_sql = _byo_validation_sql(source_relation, required_cols)
+
     return f"""-- =============================================================================
 -- BYO Telemetry: SITE + POLICY + OBSERVATION_SOURCE
 -- Source: {source_relation}
 -- =============================================================================
 
--- 0. Validate source relation and required columns exist
+{validation_sql}
+-- 0b. Secondary validation (compile-time column check)
 SELECT src.{asset_id}, src.{ts_col}, {location_expr}
 FROM {source_relation} src
 WHERE FALSE;
