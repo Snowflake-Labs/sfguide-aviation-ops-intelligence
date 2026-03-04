@@ -70,6 +70,16 @@ def load_sql_modules_ordered(
     return results
 
 
+def load_module_sql(subdir: str, params: Dict[str, str]) -> str:
+    """Load all .sql files from a module directory and concatenate into a single SQL string."""
+    parts = []
+    for fname, sql in load_sql_module(subdir, params):
+        parts.append(f"\n-- >>> {subdir}/{fname}\n")
+        parts.append(sql)
+        parts.append(f"\n-- <<< {subdir}/{fname}\n")
+    return "\n".join(parts)
+
+
 def build_params(
     database: str,
     schema: str,
