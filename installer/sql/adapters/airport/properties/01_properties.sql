@@ -328,8 +328,7 @@ ALTER TABLE ${DATABASE}.${SCHEMA}.PROPERTIES_RUNWAYS
 -- -----------------------------------------------------------------------------
 -- 5. HELPER_AIRLINE_DIM (standing airline reference)
 -- -----------------------------------------------------------------------------
--- NOTE: we load `installer/airlines.csv` via SQL from the Git repo stage
--- (e.g., @sd_poc_repo/branches/<branch>/installer/airlines.csv).
+-- NOTE: we load airlines.csv via SQL from the Git repo stage.
 -- This keeps the install fully SQL-based (no Python-side file loading).
 CREATE OR REPLACE TABLE ${DATABASE}.${SCHEMA}.HELPER_AIRLINE_DIM (
   AIRLINE_ID INT,
@@ -365,7 +364,7 @@ SELECT
   t.$5::STRING AS airline_callsign,
   t.$6::STRING AS country,
   t.$7::STRING AS is_active
-FROM ${GIT_REPO_STAGE_BASE}/installer/airlines.csv
+FROM ${GIT_REPO_STAGE_BASE}/installer/sql/adapters/airport/data/airlines.csv
   (FILE_FORMAT => ${DATABASE}.${SCHEMA}.FF_AIRLINES_CSV) t;
 
 ALTER TABLE ${DATABASE}.${SCHEMA}.HELPER_AIRLINE_DIM 

@@ -127,4 +127,3 @@ SELECT 'Setup complete! Tasks are now running automatically. Backfill started.' 
 
 -- Check backfill status
 SELECT * FROM ${DATABASE}.${SCHEMA}.HELPER_ADSB_BACKFILL_STATUS ORDER BY data_date;
-"""

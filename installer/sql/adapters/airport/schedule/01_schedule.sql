@@ -1,4 +1,4 @@
-    return f"""-- =============================================================================
+-- =============================================================================
 -- FLIGHT SCHEDULE INGESTION FOR ${AIRPORT_NAME} (${AIRPORT_IATA})
 -- Database: ${DATABASE}.${SCHEMA}
 -- Source: aviationstack API
@@ -380,4 +380,3 @@ CALL ${DATABASE}.${SCHEMA}.PROC_BACKFILL_FLIGHT_SCHEDULE_WINDOW(${BACKFILL_DAYS}
 
 -- Verify
 SELECT 'Flight schedule setup complete. Task is now running.' AS status;
-"""
