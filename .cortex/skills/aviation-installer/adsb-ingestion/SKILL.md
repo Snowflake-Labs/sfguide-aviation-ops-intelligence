@@ -26,7 +26,7 @@ Creates all ADS-B ingestion infrastructure: network rules, external access integ
 
 | Privilege | Scope | Reason |
 |-----------|-------|--------|
-| CREATE NETWORK RULE | Database | Creates rules for adsb.lol, GitHub, PyPI APIs |
+| CREATE NETWORK RULE | Database | Creates rules for adsb.lol and GitHub APIs |
 | CREATE INTEGRATION | Account | Creates external access integrations |
 | CREATE SECRET | Schema | Creates secrets for API keys |
 | CREATE PROCEDURE | Schema | Creates 15+ ingestion/ETL procedures |
@@ -44,7 +44,7 @@ Creates all ADS-B ingestion infrastructure: network rules, external access integ
 
 ## Error Logging
 
-When any step fails, log to `logs/` as `aviation-adsb-ingestion_{YYYY-MM-DD}_{HH-MM}.md`. Continue where possible. If no issues, do not create a log file.
+When any step fails, log to `.cortex/skills/logs/` as `aviation-adsb-ingestion_{YYYY-MM-DD}_{HH-MM}.md`. Continue where possible. If no issues, do not create a log file.
 
 ## Workflow
 
@@ -55,24 +55,24 @@ When any step fails, log to `logs/` as `aviation-adsb-ingestion_{YYYY-MM-DD}_{HH
 > - `references/03b-aircraft-meta-enrichment.md` — PROC_ENRICH_AIRCRAFT_META + backfill + task
 > - `references/04-ingestion-procedures.md` — Realtime ingestion procedures
 > - `references/05-tasks-and-dag.md` — Task DAG definitions
-> - `references/06a-backfill-infra.md` — Backfill network rules, EAI, stage, tables
-> - `references/06b-backfill-download-extract.md` — PROC_DOWNLOAD_TO_STAGE + PROC_EXTRACT_TO_NDJSON
-> - `references/06c-backfill-load-filter.md` — PROC_LOAD_NDJSON_TO_INTERIM + PROC_FILTER_AND_INSERT_SQL
-> - `references/06d-backfill-orchestrators.md` — Orchestrator procedures, tags, usage reference
+> - `references/06a-backfill-infra.md` — Backfill stage, tables
+> - `references/06b-backfill-download.md` — PROC_DOWNLOAD_TO_STAGE
+> - `references/06c-backfill-extract.md` — PROC_EXTRACT_TO_NDJSON
+> - `references/06d-backfill-load-filter.md` — PROC_LOAD_NDJSON_TO_INTERIM + PROC_FILTER_AND_INSERT_SQL
+> - `references/06e-backfill-orchestrators.md` — PROC_PROCESS_FROM_STAGE, PROC_BACKFILL_ADSB_HISTORY, PROC_START_BACKFILL_HISTORY
+> - `references/06f-backfill-retry-cleanup.md` — Retry wrappers, cleanup, tags, usage reference
 >
 > **Execute ALL SQL from each file. Do NOT skip or optimize away any queries.**
 
 ### Step 1: Create Network Rules
 
-Create 3 network rules in `{TARGET_DB}.{SCHEMA}`:
-- `{SCHEMA}_pypi_network_rule` — allows pypi.org, pythonhosted.org (for Python procedure packages)
+Create 2 network rules in `{TARGET_DB}.{SCHEMA}`:
 - `{SCHEMA}_adsb_lol_rule` — allows api.adsb.lol:443
 - `{SCHEMA}_github_rule` — allows api.github.com, github.com, objects.githubusercontent.com, release-assets.githubusercontent.com
 
 ### Step 2: Create External Access Integrations
 
-Create 3 EAIs (account-level objects, require ACCOUNTADMIN):
-- `{TARGET_DB}_{SCHEMA}_pypi_access_integration` — for pip install in Python procedures
+Create 2 EAIs (account-level objects, require ACCOUNTADMIN):
 - `{EAI_ADSB_LOL}` (e.g., `AIRPORT_SAN_PUBLIC_ADSB_LOL_EAI`) — for realtime position fetch
 - `{EAI_GITHUB}` (e.g., `AIRPORT_SAN_PUBLIC_GITHUB_EAI`) — for historical ADS-B archive download
 
@@ -168,7 +168,7 @@ Expected: 0 rows (data arrives after tasks run). Verify objects exist by checkin
 
 ## Stopping Points
 
-- After Step 2: Confirm all 3 EAIs exist (`SHOW INTEGRATIONS LIKE '%{IATA}%'`)
+- After Step 2: Confirm all 2 EAIs exist (`SHOW INTEGRATIONS LIKE '%{IATA}%'`)
 - After Step 5: Test ingestion manually: `CALL {TARGET_DB}.{SCHEMA}.PROC_INGEST_ADSB_REALTIME()`
 - After Step 10: Confirm tasks exist (SUSPENDED state expected): `SHOW TASKS IN {TARGET_DB}.{SCHEMA}`
 

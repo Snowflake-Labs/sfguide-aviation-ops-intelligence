@@ -1,0 +1,1013 @@
+import streamlit as st
+import pandas as pd
+from snowflake.snowpark.context import get_active_session
+import pydeck as pdk
+from datetime import datetime, timedelta
+import utils
+import plotly.graph_objects as go
+import altair as alt
+from config import BAR_CONFIG, TOOLTIP_FORMAT, core, Metrics
+from config.colors import Hex as COLORS, get_intensity_color_3point
+import ui_components
+
+st.set_page_config(page_title="Runway Crossings", page_icon="🛤️", layout="wide")
+utils.apply_custom_css()
+session = get_active_session()
+
+# Get the selected database
+db = utils.get_selected_database()
+schema = 'PUBLIC'
+db_prefix = f"{db}.{schema}"
+
+st.title("🛤️ On-Ground Runway Crossings")
+st.caption("Detects aircraft crossing the runway while taxiing on the ground (wheels-on-ground only). Filters out takeoffs, landings, and airborne traffic using: max speed ≤45 kts, time on runway ≤120 sec, and straight-line distance ≤220m.")
+
+utils.render_timezone_caption(session, db_prefix)
+tzid = utils.get_airport_tzid(session, db_prefix)
+
+table_fqn = f"{db_prefix}.RUNWAY_CROSSINGS_DETAILED"
+min_date, max_date = utils.get_table_date_bounds(
+    session,
+    table_fqn,
+    "t_entry",
+    db_prefix=db_prefix,
+    use_airport_tz=True,
+)
+
+with st.sidebar:
+    selected_db = ui_components.render_airport_selector(sidebar=True)
+
+with st.sidebar:
+    if not selected_db:
+        st.warning("No airport databases found yet. Run the installer first.")
+        st.stop()
+
+    start_d, end_d = ui_components.render_date_range_picker(
+        min_date,
+        max_date,
+        key_prefix="runway_crossings",
+        default_days_back=7
+    )
+    
+    infra_selection = ui_components.render_map_layers_selector(
+        session, db_prefix, 
+        sidebar=True, 
+        default_preset="all",
+        key_prefix="runway_crossings"
+    )
+    selected_infra_layers = infra_selection['layers']
+    show_infra_tags = infra_selection['show_tags']
+    
+    st.divider()
+    
+    # Vehicle type filter
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="runway_crossings",
+        sidebar=True,
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
+    )
+    
+    st.divider()
+    
+    st.subheader("Direction")
+    dir_south_north = st.checkbox("South → North", value=True, key="dir_sn")
+    dir_north_south = st.checkbox("North → South", value=True, key="dir_ns")
+    
+    st.divider()
+    
+    # Display metric
+    metric_type = ui_components.render_metric_selector(
+        key_prefix="runway_crossings",
+        sidebar=True
+    )
+    
+    # Aggregation
+    aggregation_type = ui_components.render_aggregation_selector(
+        key_prefix="runway_crossings",
+        sidebar=True
+    )
+    
+    # Hide Unknown functionality removed - always show all airlines
+    hide_unknown_airlines = False
+    # Show Flights functionality removed - flights are always hidden
+    show_flights = False
+    max_flights = 100
+    sample_points = 30
+
+# Build direction filter
+directions = []
+if dir_south_north:
+    directions.append('S→N')
+if dir_north_south:
+    directions.append('N→S')
+
+if not directions:
+    st.warning("⚠️ Please select at least one direction filter.")
+    st.stop()
+
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
+def get_crossing_summary(_session, start_d, end_d, dirs, aggregation_type, vehicle_sql_filter="1=1"):
+    """Get overall crossing counts and stats"""
+    dir_filter = "','".join(dirs)
+    local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
+    
+    # Calculate aggregation parameters
+    agg_params = utils.calculate_aggregation_params(start_d, end_d, aggregation_type)
+    divisor = agg_params['divisor']
+    
+    q = f"""
+    SELECT
+      ROUND(COUNT(DISTINCT flight_key) / {divisor}) AS total_flights,
+      ROUND(COUNT(*) / {divisor}) AS total_crossings,
+      AVG(duration_s) AS avg_duration_s,
+      ROUND(SUM(duration_s)/60.0 / {divisor}) AS total_duration_min
+    FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
+    WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+      AND direction IN ('{dir_filter}')
+      AND {vehicle_sql_filter}
+    """
+    try:
+        return _session.sql(q).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
+def get_crossing_aggregates(_session, start_d, end_d, dirs, metric, aggregation_type, vehicle_sql_filter="1=1"):
+    """
+    Aggregate crossings by H3 cell for heatmap visualization.
+    metric: 'flight_count' or 'total_duration'
+    aggregation_type: 'sum' or 'daily_average'
+    """
+    dir_filter = "','".join(dirs)
+    local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
+    
+    # Calculate aggregation parameters
+    agg_params = utils.calculate_aggregation_params(start_d, end_d, aggregation_type)
+    divisor = agg_params['divisor']
+    
+    if metric == Metrics.FLIGHT_COUNT:
+        agg_expr = f'ROUND(COUNT(DISTINCT flight_key) / {divisor}) AS metric_value'
+        metric_label = 'flights'
+    else:
+        agg_expr = f'ROUND(SUM(duration_s)/60.0 / {divisor}) AS metric_value'
+        metric_label = 'minutes'
+    
+    # Get both metrics for tooltip regardless of which one is selected for display
+    q = f"""
+    WITH base AS (
+      SELECT
+        flight_key,
+        t_entry,
+        duration_s,
+        direction,
+        midpoint_geom,
+        H3_POINT_TO_CELL_STRING(midpoint_geom, 12) AS h3_cell
+      FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
+      WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+        AND direction IN ('{dir_filter}')
+        AND {vehicle_sql_filter}
+    )
+    SELECT
+      h3_cell,
+      {agg_expr},
+      ROUND(COUNT(DISTINCT flight_key) / {divisor}) AS crossing_count,
+      ROUND(SUM(duration_s)/60.0 / {divisor}, 1) AS crossing_time,
+      ANY_VALUE(ST_Y(midpoint_geom)) AS lat,
+      ANY_VALUE(ST_X(midpoint_geom)) AS lon
+    FROM base
+    GROUP BY h3_cell
+    HAVING metric_value > 0
+    ORDER BY metric_value DESC
+    """
+    try:
+        df = _session.sql(q).to_pandas()
+        if df is not None and not df.empty:
+            df['METRIC_LABEL'] = metric_label
+            df['AGGREGATION_TYPE'] = aggregation_type
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
+def get_crossing_analytics(_session, start_d, end_d, dirs, vehicle_sql_filter="1=1"):
+    """Get ALL crossing events with flight/airline data for analytics (no limit)"""
+    dir_filter = "','".join(dirs)
+    local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
+    q = f"""
+    SELECT
+      flight_key,
+      t_entry,
+      direction,
+      duration_s,
+      flight_number,
+      airline_code
+    FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
+    WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+      AND direction IN ('{dir_filter}')
+      AND {vehicle_sql_filter}
+    """
+    try:
+        return _session.sql(q).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
+def get_crossing_details(_session, start_d, end_d, dirs, limit=100, vehicle_sql_filter="1=1"):
+    """Get recent crossing events for table display (limited)"""
+    dir_filter = "','".join(dirs)
+    local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
+    q = f"""
+    SELECT
+      flight_key,
+      t_entry,
+      t_exit,
+      direction,
+      duration_s,
+      ROUND(duration_s/60.0, 2) AS duration_min,
+      ROUND(max_speed_kts, 1) AS max_speed_kts,
+      ROUND(chord_m, 1) AS chord_m,
+      ST_Y(midpoint_geom) AS lat,
+      ST_X(midpoint_geom) AS lon,
+      flight_number,
+      airline_code
+    FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
+    WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+      AND direction IN ('{dir_filter}')
+      AND {vehicle_sql_filter}
+    ORDER BY t_entry DESC
+    LIMIT {limit}
+    """
+    try:
+        return _session.sql(q).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def get_runway_geometry(_session):
+    """Fetch runway polygon for base layer"""
+    q = f"""
+    SELECT ST_ASGEOJSON(runway_geog) AS geom_json
+    FROM {db_prefix}.PROPERTIES_RUNWAYS
+    """
+    try:
+        return _session.sql(q).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+# Infrastructure layers now use utils.get_infrastructure_layers()
+
+@st.cache_data(ttl=core.CACHE_TTL_SECONDS)
+def get_crossing_flight_paths(_session, start_d, end_d, dirs, sample_pct=10, vehicle_sql_filter="1=1"):
+    """Get flight trajectories for aircraft that performed crossings with schedule info"""
+    dir_filter = "','".join(dirs)
+    local_date_expr = utils.get_airport_local_date_sql(db_prefix, "t_entry")
+    q = f"""
+    WITH crossing_flights AS (
+      -- Pick a single representative crossing direction per flight/day
+      SELECT flight_key, crossing_date, direction
+      FROM (
+        SELECT
+          flight_key,
+          {local_date_expr} AS crossing_date,
+          direction,
+          COUNT(*) AS crossings,
+          ROW_NUMBER() OVER (
+            PARTITION BY flight_key, {local_date_expr}
+            ORDER BY COUNT(*) DESC, direction ASC
+          ) AS rn
+        FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED
+        WHERE {local_date_expr} BETWEEN '{start_d}'::DATE AND '{end_d}'::DATE
+          AND direction IN ('{dir_filter}')
+          AND {vehicle_sql_filter}
+        GROUP BY 1,2,3
+      )
+      WHERE rn = 1
+    ), flight_paths AS (
+      SELECT
+        a.FLIGHT,
+        a.FLIGHT_KEY,
+        ST_Y(a.LOCATION) AS LAT,
+        ST_X(a.LOCATION) AS LON,
+        a.TIMESTAMP,
+        a.ALTITUDE_BARO,
+        cf.crossing_date,
+        cf.direction
+      FROM {db_prefix}.ADSB_DATA_LOCAL a
+      INNER JOIN crossing_flights cf ON cf.flight_key = a.FLIGHT_KEY
+      WHERE a.LOCATION IS NOT NULL
+    )
+    SELECT
+      fp.*,
+      s.DEPARTURE_AIRPORT AS ORIGIN_AIRPORT,
+      s.ARRIVAL_AIRPORT AS DESTINATION_AIRPORT
+    FROM flight_paths fp
+    LEFT JOIN {db_prefix}.FLIGHT_SCHEDULE s
+      ON s.FLIGHT_DATE = fp.crossing_date
+     AND TO_VARCHAR(s.FLIGHT_NUMBER) = REGEXP_SUBSTR(fp.FLIGHT, '[0-9]+')
+    ORDER BY fp.FLIGHT_KEY, fp.TIMESTAMP
+    """
+    try:
+        return _session.sql(q).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+# Fetch data
+with st.spinner("Loading crossing data..."):
+    summary_df = get_crossing_summary(session, start_d, end_d, directions, aggregation_type, vehicle_filter['sql_filter'])
+    agg_df = get_crossing_aggregates(session, start_d, end_d, directions, metric_type, aggregation_type, vehicle_filter['sql_filter'])
+    analytics_df = get_crossing_analytics(session, start_d, end_d, directions, vehicle_filter['sql_filter'])  # For charts (all data)
+    details_df = get_crossing_details(session, start_d, end_d, directions, vehicle_sql_filter=vehicle_filter['sql_filter'])  # For table (limited to 100)
+    runway_df = get_runway_geometry(session)
+    # Always fetch flight paths data for charts, but only render paths on map if checkbox is on
+    flight_paths_df = get_crossing_flight_paths(session, start_d, end_d, directions, vehicle_sql_filter=vehicle_filter['sql_filter'])
+    # Load infrastructure layers based on selection
+    infra_df = utils.get_infrastructure_layers(session, db_prefix, selected_infra_layers, include_tags=show_infra_tags) if selected_infra_layers else pd.DataFrame()
+
+# Summary KPIs
+if summary_df.empty or summary_df.iloc[0]['TOTAL_CROSSINGS'] == 0:
+    st.info("No crossing events detected for the selected filters.")
+    st.stop()
+
+summary = summary_df.iloc[0]
+
+# Render KPI metrics using reusable component
+ui_components.render_kpi_metrics(
+    metrics_data={
+        'crossings': summary['TOTAL_CROSSINGS'],
+        'flights': summary['TOTAL_FLIGHTS'],
+        'avg_duration_s': summary['AVG_DURATION_S'],
+        'total_duration_min': summary['TOTAL_DURATION_MIN']
+    },
+    aggregation_type=aggregation_type
+)
+
+st.divider()
+
+# Remove redundant refetch - data already fetched above
+# agg_df is already available from line 312
+
+# Map visualization
+st.subheader("📍 Crossing Density Heatmap")
+
+if agg_df.empty:
+    st.info("No aggregated data available for map visualization.")
+else:
+    # Determine color scale based on metric
+    max_val = agg_df['METRIC_VALUE'].max()
+    min_val = agg_df['METRIC_VALUE'].min()
+    
+    # Prepare tooltip with both metrics
+    aggregation_label = "Daily Avg" if agg_df['AGGREGATION_TYPE'].iloc[0] == 'daily_average' else "Total"
+    agg_df['tooltip'] = agg_df.apply(
+        lambda r: f"<b>Crossings:</b> {int(r['CROSSING_COUNT'])} {aggregation_label.lower()}<br><b>Time:</b> {r['CROSSING_TIME']:.1f} min {aggregation_label.lower()}", 
+        axis=1
+    )
+    
+    # Base map center
+    center_lat = agg_df['LAT'].mean()
+    center_lon = agg_df['LON'].mean()
+    
+    # Layers
+    layers = []
+    
+    # Helper functions for geometry parsing
+    import json
+    def parse_polygon(geom_json):
+        try:
+            g = json.loads(geom_json)
+            if g['type'] == 'Polygon':
+                return g['coordinates'][0]
+            elif g['type'] == 'MultiPolygon':
+                return g['coordinates'][0][0]
+        except:
+            return None
+    
+    def parse_linestring(geom_json):
+        try:
+            g = json.loads(geom_json)
+            if g['type'] == 'LineString':
+                return g['coordinates']
+            elif g['type'] == 'MultiLineString':
+                return g['coordinates'][0]
+        except:
+            return None
+    
+    # Infrastructure layers (componentized rendering)
+    layers.extend(utils.create_infrastructure_pydeck_layers(infra_df, show_tags=show_infra_tags))
+    
+    # Runway base layer from PUBLIC.PROPERTIES_RUNWAYS
+    if not runway_df.empty and runway_df.iloc[0]['GEOM_JSON']:
+        geom_json = json.loads(runway_df.iloc[0]['GEOM_JSON'])
+        layers.append(
+            pdk.Layer(
+                'GeoJsonLayer',
+                data={'type': 'FeatureCollection', 'features': [{'type': 'Feature', 'geometry': geom_json}]},
+                get_fill_color=[80, 80, 80, 100],
+                get_line_color=[200, 200, 200, 200],
+                line_width_min_pixels=2,
+                pickable=False
+            )
+        )
+    
+    # H3 Hexagon heatmap layer
+    # Normalize elevation to max height of 500 to prevent overly tall hexagons
+    max_elevation = 500
+    agg_df = agg_df.copy()
+    agg_df['elevation'] = (agg_df['METRIC_VALUE'] / max_val * max_elevation).clip(upper=max_elevation)
+    
+    layers.append(
+        pdk.Layer(
+            'H3HexagonLayer',
+            agg_df,
+            get_hexagon='H3_CELL',
+            get_fill_color=f'[255, (1 - METRIC_VALUE / {max_val}) * 255, 0, 180]',
+            get_line_color=[255, 255, 255, 50],
+            line_width_min_pixels=1,
+            pickable=True,
+            auto_highlight=True,
+            extruded=True,
+            elevation_scale=1,
+            get_elevation='elevation'
+        )
+    )
+    
+    # Optional flight path layer with per-segment altitude coloring
+    if show_flights and not flight_paths_df.empty:
+        # Get airline name mapping
+        code_to_name = utils.get_airline_name_map(session, start_d, end_d)
+        
+        # Limit number of flights to display
+        unique_flights = flight_paths_df['FLIGHT_KEY'].unique()
+        if len(unique_flights) > max_flights:
+            # Randomly sample flights
+            import numpy as np
+            sampled_keys = np.random.choice(unique_flights, size=max_flights, replace=False)
+            flight_paths_sampled = flight_paths_df[flight_paths_df['FLIGHT_KEY'].isin(sampled_keys)]
+        else:
+            flight_paths_sampled = flight_paths_df
+        
+        # Get gate assignments for these flights.
+        # Callsigns are often missing historically; use flight_key from ADSB and map to most-likely gate via GATE_ANALYSIS_ADSB_GROUND_POINTS.
+        sampled_keys_list = flight_paths_sampled['FLIGHT_KEY'].unique().tolist()[:1000]  # Limit for query
+        gate_map = {}
+        if sampled_keys_list:
+            keys_clause = "','".join([str(k) for k in sampled_keys_list])
+            gate_q = f"""
+            WITH per_gate AS (
+              SELECT flight_key, closest_gate_name AS gate_name, SUM(lag_seconds) AS dwell_s
+              FROM {db_prefix}.GATE_ANALYSIS_ADSB_GROUND_POINTS
+              WHERE closest_gate_name IS NOT NULL
+                AND flight_key IN ('{keys_clause}')
+              GROUP BY 1,2
+            )
+            SELECT flight_key, gate_name
+            FROM per_gate
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY flight_key ORDER BY dwell_s DESC) = 1
+            """
+            try:
+                gate_map_df = session.sql(gate_q).to_pandas()
+                gate_map = {str(r['FLIGHT_KEY']): str(r['GATE_NAME']) for _, r in gate_map_df.iterrows()} if gate_map_df is not None and not gate_map_df.empty else {}
+            except Exception:
+                gate_map = {}
+        
+        # Group by flight and create altitude-colored segments
+        flights_grouped = flight_paths_sampled.groupby('FLIGHT_KEY')
+        
+        def interp_color(alt, min_alt, max_alt):
+            """Interpolate color based on altitude using aviation-standard gradient"""
+            if pd.isna(alt) or min_alt == max_alt:
+                t = 0.0
+            else:
+                t = (alt - min_alt) / (max_alt - min_alt)
+                t = max(0.0, min(1.0, t))
+            color = get_intensity_color_3point(t)
+            color[3] = 200
+            return color
+        
+        segments = []
+        for flight_key, group in flights_grouped:
+            group = group.sort_values('TIMESTAMP')
+            
+            # Subsample points per flight to reduce data
+            if len(group) > 2:
+                # Keep first, last, and sample of middle points
+                sample_size = max(2, int(len(group) * sample_points / 100))
+                step = max(1, len(group) // sample_size)
+                indices = list(range(0, len(group), step))
+                if indices[-1] != len(group) - 1:
+                    indices.append(len(group) - 1)  # Ensure last point included
+                group = group.iloc[indices]
+            
+            # Get altitude range for this flight
+            alts = group['ALTITUDE_BARO'].dropna()
+            if not alts.empty:
+                min_alt = alts.min()
+                max_alt = alts.max()
+            else:
+                min_alt = max_alt = 0
+            
+            # Create tooltip once for this flight (reuse for all segments)
+            flight_num = group.iloc[0]['FLIGHT'] if 'FLIGHT' in group.columns else flight_key[:8]
+            airline_code = flight_num[:3] if len(flight_num) >= 3 else 'N/A'
+            airline_name = code_to_name.get(airline_code, airline_code)
+            first_ts = group.iloc[0]['TIMESTAMP'] if 'TIMESTAMP' in group.columns else 'N/A'
+            origin = group.iloc[0]['ORIGIN_AIRPORT'] if 'ORIGIN_AIRPORT' in group.columns and pd.notna(group.iloc[0]['ORIGIN_AIRPORT']) else 'N/A'
+            destination = group.iloc[0]['DESTINATION_AIRPORT'] if 'DESTINATION_AIRPORT' in group.columns and pd.notna(group.iloc[0]['DESTINATION_AIRPORT']) else 'N/A'
+            gate_name = gate_map.get(str(flight_key), 'N/A')
+            tooltip = f"<b>Airline:</b> {airline_name}<br><b>Flight:</b> {flight_num}<br><b>Route:</b> {origin} → {destination}<br><b>Gate:</b> {gate_name}<br><b>Time:</b> {first_ts}"
+            
+            # Create colored segments between consecutive points
+            for i in range(len(group) - 1):
+                lat1 = group.iloc[i]['LAT']
+                lon1 = group.iloc[i]['LON']
+                lat2 = group.iloc[i + 1]['LAT']
+                lon2 = group.iloc[i + 1]['LON']
+                alt = group.iloc[i]['ALTITUDE_BARO']
+                
+                if pd.notna(lat1) and pd.notna(lon1) and pd.notna(lat2) and pd.notna(lon2):
+                    color = interp_color(alt, min_alt, max_alt)
+                    
+                    segments.append({
+                        'path': [[lon1, lat1], [lon2, lat2]],
+                        'color': color,
+                        'tooltip': tooltip  # Same tooltip for all segments of this flight
+                    })
+        
+        if segments:
+            segments_df = pd.DataFrame(segments)
+            layers.append(pdk.Layer(
+                'PathLayer',
+                data=segments_df,
+                get_path='path',
+                get_color='color',
+                width_scale=3,
+                width_min_pixels=2,
+                pickable=True,
+                auto_highlight=True
+            ))
+    
+    # Render map
+    view_state = pdk.ViewState(
+        latitude=center_lat,
+        longitude=center_lon,
+        zoom=14,
+        pitch=45,
+        bearing=0
+    )
+    
+    # Tooltip configuration - use lowercase 'tooltip' for pydeck compatibility
+    r = pdk.Deck(
+        layers=layers,
+        initial_view_state=view_state,
+        tooltip={"html": "{tooltip}", "style": {"backgroundColor": "steelblue", "color": "white"}},
+        map_style='light'
+    )
+    
+    st.pydeck_chart(r, use_container_width=True, key="runway_crossings")
+    
+    metric_label = agg_df['METRIC_LABEL'].iloc[0]
+    st.caption(f"💡 **Hexagon visualization:** Color (Yellow→Orange→Red) and height both represent {metric_label}. Higher intensity = more crossings/longer duration. Zoom and tilt for 3D view.")
+
+st.divider()
+
+# Analytics visualizations
+if not analytics_df.empty:
+    # Heatmap: Day of Week x Hour of Day
+    st.subheader("📅 Crossing Heatmap (Day of Week × Hour)")
+    st.caption("**Color Scale:** Teal (low) → Yellow (medium) → Red (high) crossing count. Shows temporal patterns of runway crossing activity.")
+    
+    heat_df = analytics_df.copy()
+    local_t_entry = utils.to_airport_local_time(heat_df['T_ENTRY'], tzid)
+    heat_df['dow'] = local_t_entry.dt.dayofweek
+    heat_df['hour'] = local_t_entry.dt.hour
+    
+    # Create day name and hour label
+    dow_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    heat_df['DAY_NAME'] = heat_df['dow'].apply(lambda d: dow_names[int(d)])
+    heat_df['HOUR_LABEL'] = heat_df['hour'].apply(lambda h: f"{int(h):02d}:00")
+    
+    # Aggregate
+    heatmap_agg = heat_df.groupby(['DAY_NAME', 'HOUR_LABEL']).size().reset_index(name='CROSSINGS')
+    
+    # Ensure proper ordering
+    heatmap_agg['DAY_NAME'] = pd.Categorical(heatmap_agg['DAY_NAME'], categories=dow_names, ordered=True)
+    hour_labels = [f"{h:02d}:00" for h in range(24)]
+    heatmap_agg['HOUR_LABEL'] = pd.Categorical(heatmap_agg['HOUR_LABEL'], categories=hour_labels, ordered=True)
+    
+    chart_heat = alt.Chart(heatmap_agg).mark_rect().encode(
+        x=alt.X('HOUR_LABEL:O', title='Hour of Day', sort=hour_labels),
+        y=alt.Y('DAY_NAME:O', title='Day of Week', sort=dow_names),
+        color=alt.Color('CROSSINGS:Q',
+                       title='Crossings',
+                       scale=alt.Scale(scheme='turbo')),
+        tooltip=[
+            alt.Tooltip('DAY_NAME:O', title='Day'),
+            alt.Tooltip('HOUR_LABEL:O', title='Hour'),
+            alt.Tooltip('CROSSINGS:Q', title='Crossings', format=',.0f')
+        ]
+    ).properties(
+        height=300
+    )
+    
+    st.altair_chart(chart_heat, use_container_width=True)
+    
+    st.divider()
+    
+    # Direction breakdown: S→N vs N→S
+    st.subheader("🧭 Crossings by Direction")
+    if 'DIRECTION' in analytics_df.columns and 'DURATION_S' in analytics_df.columns:
+        dir_agg = analytics_df.groupby('DIRECTION').agg({
+            'FLIGHT_KEY': 'count',
+            'DURATION_S': ['sum', 'mean']
+        }).reset_index()
+        dir_agg.columns = ['DIRECTION', 'crossing_count', 'total_duration_s', 'avg_duration_s']
+        dir_agg['total_duration_min'] = dir_agg['total_duration_s'] / 60.0
+        dir_agg['avg_duration_s'] = dir_agg['avg_duration_s'].round(1)
+        
+        col_d1, col_d2, col_d3 = st.columns(3)
+        with col_d1:
+            st.markdown("**By Flight Count**")
+            chart_d1 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS.BLUE).encode(
+                x=alt.X('crossing_count:Q', title='Number of Crossings'),
+                y=alt.Y('DIRECTION:N', title='Direction'),
+                tooltip=[
+                    alt.Tooltip('DIRECTION:N', title='Direction'),
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_large']['step']))
+            
+            st.altair_chart(chart_d1, use_container_width=True)
+        
+        with col_d2:
+            st.markdown("**By Total Time (min)**")
+            chart_d2 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS.ORANGE).encode(
+                x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
+                y=alt.Y('DIRECTION:N', title='Direction'),
+                tooltip=[
+                    alt.Tooltip('DIRECTION:N', title='Direction'),
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_large']['step']))
+            
+            st.altair_chart(chart_d2, use_container_width=True)
+        
+        with col_d3:
+            st.markdown("**By Avg Time Per Crossing (sec)**")
+            chart_d3 = alt.Chart(dir_agg).mark_bar(size=BAR_CONFIG['horizontal_large']['size'], color=COLORS.PINK).encode(
+                x=alt.X('avg_duration_s:Q', title='Avg Duration (sec)'),
+                y=alt.Y('DIRECTION:N', title='Direction'),
+                tooltip=[
+                    alt.Tooltip('DIRECTION:N', title='Direction'),
+                    alt.Tooltip('avg_duration_s:Q', title='Seconds', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_large']['step']))
+            
+            st.altair_chart(chart_d3, use_container_width=True)
+    
+    st.divider()
+    
+    # Arrival vs Departure breakdown
+    st.subheader("🛬🛫 Crossings by Flight Type (Arrival vs Departure)")
+    if not flight_paths_df.empty and 'DIRECTION' in flight_paths_df.columns and 'FLIGHT_KEY' in flight_paths_df.columns and 'DURATION_S' in analytics_df.columns:
+        # Get unique flight info from paths (which has DIRECTION from schedule)
+        flight_types = flight_paths_df[['FLIGHT_KEY', 'DIRECTION']].drop_duplicates()
+        # Merge with analytics to get duration info - keep all crossings
+        type_df = analytics_df.merge(flight_types, on='FLIGHT_KEY', how='left', suffixes=('_crossing', '_flight'))
+        # Fill unknown with 'Unknown'
+        type_df['DIRECTION_flight'] = type_df['DIRECTION_flight'].fillna('Unknown')
+        
+        if not type_df.empty:
+            type_agg = type_df.groupby('DIRECTION_flight').agg({
+                'FLIGHT_KEY': 'count',
+                'DURATION_S': 'sum'
+            }).reset_index()
+            type_agg.columns = ['flight_type', 'crossing_count', 'total_duration_s']
+            type_agg['total_duration_min'] = type_agg['total_duration_s'] / 60.0
+            
+            # Sort to show Arrival, Departure, Unknown
+            order = {'Arrival': 0, 'Departure': 1, 'Unknown': 2}
+            type_agg['sort_order'] = type_agg['flight_type'].map(order).fillna(3)
+            type_agg = type_agg.sort_values('sort_order').drop('sort_order', axis=1)
+            
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                st.markdown("**By Crossing Count**")
+                # Dynamic colors based on categories present
+                color_domain = type_agg['flight_type'].tolist()
+                color_range = []
+                for ft in type_agg['flight_type']:
+                    if ft == 'Arrival':
+                        color_range.append('#00BCD4')
+                    elif ft == 'Departure':
+                        color_range.append('#FF5722')
+                    else:
+                        color_range.append('#9E9E9E')  # Gray for Unknown
+                
+                chart_t1 = alt.Chart(type_agg).mark_bar(size=50).encode(
+                    x=alt.X('flight_type:N', title='Flight Type'),
+                    y=alt.Y('crossing_count:Q', title='Number of Crossings'),
+                    color=alt.Color('flight_type:N', scale=alt.Scale(domain=color_domain, range=color_range), legend=None),
+                    tooltip=[
+                        alt.Tooltip('flight_type:N', title='Flight Type'),
+                        alt.Tooltip('crossing_count:Q', title='Crossings', format=',.0f')
+                    ]
+                ).properties(height=300)
+                
+                st.altair_chart(chart_t1, use_container_width=True)
+            
+            with col_t2:
+                st.markdown("**By Total Time (min)**")
+                # Dynamic colors for duration chart
+                color_domain_dur = type_agg['flight_type'].tolist()
+                color_range_dur = []
+                for ft in type_agg['flight_type']:
+                    if ft == 'Arrival':
+                        color_range_dur.append('#3F51B5')
+                    elif ft == 'Departure':
+                        color_range_dur.append('#E91E63')
+                    else:
+                        color_range_dur.append('#757575')  # Dark gray for Unknown
+                
+                chart_t2 = alt.Chart(type_agg).mark_bar(size=50).encode(
+                    x=alt.X('flight_type:N', title='Flight Type'),
+                    y=alt.Y('total_duration_min:Q', title='Total Duration (min)'),
+                    color=alt.Color('flight_type:N', scale=alt.Scale(domain=color_domain_dur, range=color_range_dur), legend=None),
+                    tooltip=[
+                        alt.Tooltip('flight_type:N', title='Flight Type'),
+                        alt.Tooltip('total_duration_min:Q', title='Minutes', format=',.0f')
+                    ]
+                ).properties(height=300)
+                
+                st.altair_chart(chart_t2, use_container_width=True)
+        else:
+            st.info("Flight type data not available")
+    else:
+        st.info("No flight type data available for the selected period")
+    
+    st.divider()
+    
+    # Gates used by crossing flights
+    st.subheader("🚪 Gates by Crossing Flights")
+    if not analytics_df.empty and 'FLIGHT_KEY' in analytics_df.columns:
+        # Get gate assignments for crossing flights from analytics
+        crossing_keys = analytics_df['FLIGHT_KEY'].unique().tolist()
+        if len(crossing_keys) > 0:
+            # Query gate assignments using natural join keys (ICAO_HEX, SERVICE_DATE, FLIGHT_NUMBER)
+            keys_clause = "','".join([str(k) for k in crossing_keys[:1000]])
+            gate_q = f"""
+            SELECT 
+              r.flight_key,
+              r.direction,
+              gt.gate_name
+            FROM {db_prefix}.RUNWAY_CROSSINGS_DETAILED r
+            INNER JOIN {db_prefix}.GATE_ANALYSIS_FLIGHT_GATE_TIME gt
+              ON gt.ICAO_HEX = r.icao_hex
+             AND gt.SERVICE_DATE = r.service_date  
+             AND gt.FLIGHT_NUMBER = r.flight_number
+            WHERE r.flight_key IN ('{keys_clause}')
+              AND r.icao_hex IS NOT NULL
+              AND r.service_date IS NOT NULL
+              AND r.flight_number IS NOT NULL
+            """
+            
+            try:
+                gate_df = session.sql(gate_q).to_pandas()
+                if not gate_df.empty and 'GATE_NAME' in gate_df.columns:
+                    # Aggregate by gate and runway direction
+                    gate_agg = gate_df.groupby(['GATE_NAME', 'DIRECTION']).size().reset_index(name='count')
+                    gate_pivot = gate_agg.pivot(index='GATE_NAME', columns='DIRECTION', values='count').fillna(0)
+                    
+                    gate_pivot['total'] = gate_pivot.sum(axis=1)
+                    gate_pivot = gate_pivot.sort_values('total', ascending=False).drop('total', axis=1).head(15)
+                    
+                    if not gate_pivot.empty:
+                        # Transform to long format
+                        df_gate_long = gate_pivot.reset_index().melt(
+                            id_vars='GATE_NAME',
+                            var_name='DIRECTION',
+                            value_name='count'
+                        )
+                        
+                        # Sort within each gate so largest segments appear first
+                        df_gate_long = df_gate_long.sort_values(
+                            ['GATE_NAME', 'count'],
+                            ascending=[True, False]
+                        )
+                        
+                        chart_gate = alt.Chart(df_gate_long).mark_bar(size=BAR_CONFIG['horizontal_compact']['size']).encode(
+                            x=alt.X('sum(count):Q', title='Number of Crossings'),
+                            y=alt.Y('GATE_NAME:N',
+                                    sort=alt.EncodingSortField(field='count', op='sum', order='descending'),
+                                    title='Gate'),
+                            color=alt.Color('DIRECTION:N'),
+                            order=alt.Order('count:Q', sort='descending'),
+                            tooltip=[
+                                alt.Tooltip('DIRECTION:N', title='Direction'),
+                                alt.Tooltip('sum(count):Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
+                            ]
+                        ).properties(
+                            height=alt.Step(BAR_CONFIG['horizontal']['step'])
+                        ).configure_mark(
+                            opacity=0.9
+                        )
+                        
+                        st.altair_chart(chart_gate, use_container_width=True)
+                        st.caption(f"Top 15 gates by total crossings from flights that crossed runways")
+                    else:
+                        st.info("No gate assignment data available")
+                else:
+                    st.info("No gate data found")
+            except Exception as e:
+                st.info(f"Gate data not available: {str(e)}")
+        else:
+            st.info("No crossings or gate data available")
+    else:
+        st.info("No crossing data available for the selected period")
+    
+    st.divider()
+    
+    # Top airlines by crossings (count & duration)
+    st.subheader("✈️ Top Airlines")
+    if 'AIRLINE_CODE' in analytics_df.columns and 'DURATION_S' in analytics_df.columns:
+        airline_df = analytics_df[analytics_df['AIRLINE_CODE'].notna()].copy()
+        if hide_unknown_airlines:
+            airline_df = airline_df[~airline_df['AIRLINE_CODE'].astype(str).isin(['UNK', 'N/A', 'NA', ''])]
+        airline_agg = airline_df.groupby('AIRLINE_CODE').agg({
+            'FLIGHT_KEY': 'count',
+            'DURATION_S': 'sum'
+        }).reset_index()
+        airline_agg.columns = ['AIRLINE_CODE', 'crossing_count', 'total_duration_s']
+        airline_agg['total_duration_min'] = airline_agg['total_duration_s'] / 60.0
+        airline_agg = airline_agg.sort_values('crossing_count', ascending=False).head(10)
+        
+        # Map codes to names
+        code_to_name = utils.get_airline_name_map(session, start_d, end_d)
+        airline_agg['airline_name'] = airline_agg['AIRLINE_CODE'].apply(
+            lambda c: code_to_name.get(str(c), str(c))
+        )
+        
+        col_a1, col_a2 = st.columns(2)
+        with col_a1:
+            st.markdown("**By Crossing Count**")
+            airline_count_sorted = airline_agg.sort_values('crossing_count', ascending=False)
+            
+            chart_a1 = alt.Chart(airline_count_sorted).mark_bar(color=COLORS.BLUE, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+                x=alt.X('crossing_count:Q', title='Crossings'),
+                y=alt.Y('airline_name:N', sort='-x', title='Airline'),
+                tooltip=[
+                    alt.Tooltip('airline_name:N', title='Airline'),
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
+            
+            st.altair_chart(chart_a1, use_container_width=True)
+        
+        with col_a2:
+            st.markdown("**By Total Time (min)**")
+            airline_dur_sorted = airline_agg.sort_values('total_duration_min', ascending=False)
+            
+            chart_a2 = alt.Chart(airline_dur_sorted).mark_bar(color=COLORS.ORANGE, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+                x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
+                y=alt.Y('airline_name:N', sort='-x', title='Airline'),
+                tooltip=[
+                    alt.Tooltip('airline_name:N', title='Airline'),
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
+            
+            st.altair_chart(chart_a2, use_container_width=True)
+    else:
+        st.info("No airline data available")
+    
+    st.divider()
+    
+    # Top flights by crossings (count & duration)
+    st.subheader("🔝 Top Flights")
+    if 'FLIGHT_NUMBER' in analytics_df.columns and 'DURATION_S' in analytics_df.columns:
+        flight_df = analytics_df[analytics_df['FLIGHT_NUMBER'].notna()].copy()
+        flight_agg = flight_df.groupby('FLIGHT_NUMBER').agg({
+            'FLIGHT_KEY': 'count',
+            'DURATION_S': 'sum'
+        }).reset_index()
+        flight_agg.columns = ['FLIGHT_NUMBER', 'crossing_count', 'total_duration_s']
+        flight_agg['total_duration_min'] = flight_agg['total_duration_s'] / 60.0
+        flight_agg = flight_agg.sort_values('crossing_count', ascending=False).head(10)
+
+        # Enrich per-flight labels (airline + O/D) from schedule (helps when ADSB enrichment is missing)
+        try:
+            hdr = utils.get_flight_headers_from_schedule(
+                session,
+                start_d,
+                flight_agg['FLIGHT_NUMBER'].astype(str).tolist(),
+                db_prefix=db_prefix
+            )
+        except Exception:
+            hdr = pd.DataFrame()
+        if hdr is not None and not hdr.empty:
+            # Normalize column names to uppercase and standardize names
+            hdr.columns = [c.upper() for c in hdr.columns]
+            
+            # Map various possible column names to expected names
+            column_mapping = {
+                'FLIGHT_ID': 'FLIGHT_NUMBER',
+                'FLIGHT': 'FLIGHT_NUMBER',
+                'SCHEDULE_FLIGHT_NUMBER': 'FLIGHT_NUMBER',
+            }
+            hdr = hdr.rename(columns=column_mapping)
+            
+            # Remove duplicate columns (can happen if multiple columns map to FLIGHT_NUMBER)
+            hdr = hdr.loc[:, ~hdr.columns.duplicated()]
+            
+            # Select only columns that actually exist
+            merge_cols = ['FLIGHT_NUMBER']
+            optional_cols = ['AIRLINE_NAME', 'ORIGIN_AIRPORT', 'DESTINATION_AIRPORT']
+            
+            available_cols = [c for c in merge_cols + optional_cols if c in hdr.columns]
+            
+            if 'FLIGHT_NUMBER' in available_cols:
+                flight_agg = flight_agg.merge(
+                    hdr[available_cols],
+                    on='FLIGHT_NUMBER',
+                    how='left'
+                )
+                # Build label with available fields
+                flight_agg['LABEL'] = flight_agg.apply(
+                    lambda r: f"{r['FLIGHT_NUMBER']} — {r.get('AIRLINE_NAME') or 'N/A'} — {(r.get('ORIGIN_AIRPORT') or 'N/A')}→{(r.get('DESTINATION_AIRPORT') or 'N/A')}",
+                    axis=1
+                )
+            else:
+                # Fallback if FLIGHT_NUMBER missing
+                flight_agg['LABEL'] = flight_agg['FLIGHT_NUMBER'].astype(str)
+        else:
+            flight_agg['LABEL'] = flight_agg['FLIGHT_NUMBER']
+        
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            st.markdown("**By Crossing Count**")
+            flight_count_sorted = flight_agg.sort_values('crossing_count', ascending=False)
+            
+            chart_f1 = alt.Chart(flight_count_sorted).mark_bar(color=COLORS.GREEN, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+                x=alt.X('crossing_count:Q', title='Crossings'),
+                y=alt.Y('LABEL:N', sort='-x', title='Flight',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal_compact']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('LABEL:N', title='Flight'),
+                    alt.Tooltip('crossing_count:Q', title='Crossings', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
+            
+            st.altair_chart(chart_f1, use_container_width=True)
+        
+        with col_f2:
+            st.markdown("**By Total Time (min)**")
+            flight_dur_sorted = flight_agg.sort_values('total_duration_min', ascending=False)
+            
+            chart_f2 = alt.Chart(flight_dur_sorted).mark_bar(color=COLORS.PURPLE, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+                x=alt.X('total_duration_min:Q', title='Total Duration (min)'),
+                y=alt.Y('LABEL:N', sort='-x', title='Flight',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal_compact']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('LABEL:N', title='Flight'),
+                    alt.Tooltip('total_duration_min:Q', title='Minutes', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal_compact']['step']))
+            
+            st.altair_chart(chart_f2, use_container_width=True)
+    else:
+        st.info("No flight data available")
+
+st.divider()
+
+# Detailed table
+st.subheader("📋 Recent Crossing Events")
+
+if details_df.empty:
+    st.info("No detailed events available.")
+else:
+    # Format the dataframe for display
+    cols = ['FLIGHT_NUMBER', 'AIRLINE_CODE', 'T_ENTRY', 'T_EXIT', 'DIRECTION', 
+            'DURATION_MIN', 'MAX_SPEED_KTS', 'CHORD_M']
+    # Use only columns that exist
+    display_cols = [c for c in cols if c in details_df.columns]
+    display_df = details_df[display_cols].copy()
+    for c in ["T_ENTRY", "T_EXIT"]:
+        if c in display_df.columns:
+            local_dt = utils.to_airport_local_time(display_df[c], tzid)
+            display_df[c] = local_dt.dt.strftime("%Y-%m-%d %H:%M").fillna("")
+    
+    # Rename columns for display
+    col_rename = {
+        'FLIGHT_NUMBER': 'Flight',
+        'AIRLINE_CODE': 'Airline',
+        'T_ENTRY': 'Entry Time',
+        'T_EXIT': 'Exit Time',
+        'DIRECTION': 'Direction',
+        'DURATION_MIN': 'Duration (min)',
+        'MAX_SPEED_KTS': 'Max Speed (kts)',
+        'CHORD_M': 'Chord (m)'
+    }
+    display_df = display_df.rename(columns={k: v for k, v in col_rename.items() if k in display_df.columns})
+    
+    st.dataframe(display_df, use_container_width=True, height=400)
+    st.caption(f"Showing most recent {len(details_df)} crossings (max 100)")

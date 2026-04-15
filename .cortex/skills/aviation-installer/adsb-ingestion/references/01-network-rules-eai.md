@@ -56,3 +56,22 @@ CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {EAI_ADSB_LOL}
 
 ---
 
+## Step 1b: GitHub API Access
+
+```sql
+CREATE OR REPLACE NETWORK RULE {TARGET_DB}.{SCHEMA}.{SCHEMA}_github_rule
+  TYPE = HOST_PORT
+  MODE = EGRESS
+  VALUE_LIST = ('api.github.com:443', 'github.com:443', 'objects.githubusercontent.com:443', 'release-assets.githubusercontent.com:443')
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-adsb-ingestion","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+```
+
+```sql
+CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {EAI_GITHUB}
+  ALLOWED_NETWORK_RULES = ({TARGET_DB}.{SCHEMA}.{SCHEMA}_github_rule)
+  ENABLED = TRUE
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-adsb-ingestion","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+```
+
+---
+
