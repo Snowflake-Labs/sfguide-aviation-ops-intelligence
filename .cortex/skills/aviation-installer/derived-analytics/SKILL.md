@@ -183,17 +183,28 @@ Expected: All DTs in `SCHEDULED` or `EXECUTING` state. `DATA_TIMESTAMP` will be 
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| DT creation fails with "insufficient privileges" | Ensure role has CREATE DYNAMIC TABLE on schema |
-| ADSB_DATA_LOCAL empty after refresh | Check ADSB_DATA has rows; verify bbox in PROPERTIES_AIRPORT |
-| Gate analysis DTs empty | GATE_ANALYSIS depends on ADSB_DATA_LOCAL; wait for initial data load |
-| RUNWAY_CROSSINGS_DETAILED empty | Requires PROPERTIES_RUNWAYS to have rows; verify runway detection thresholds |
-| DTs stuck in EXECUTING | Check warehouse size — large airports may need MEDIUM or LARGE |
-| V_AIR_OPS_DAILY_KPIS returns no data | These are placeholder views; data populates once the pipeline has multiple days of history |
+| Error | Cause | Fix |
+|-------|-------|-----|
+| DT creation fails with "insufficient privileges" | Missing privilege | Ensure role has CREATE DYNAMIC TABLE on schema |
+| ADSB_DATA_LOCAL empty after refresh | No source data | Check ADSB_DATA has rows; verify bbox in PROPERTIES_AIRPORT |
+| Gate analysis DTs empty | Upstream dependency | GATE_ANALYSIS depends on ADSB_DATA_LOCAL; wait for initial data load |
+| RUNWAY_CROSSINGS_DETAILED empty | Missing runway config | Requires PROPERTIES_RUNWAYS to have rows; verify runway detection thresholds |
+| DTs stuck in EXECUTING | Warehouse too small | Check warehouse size — large airports may need MEDIUM or LARGE |
+| V_AIR_OPS_DAILY_KPIS returns no data | Placeholder views | These are placeholder views; data populates once pipeline has multiple days of history |
 
 ## Return to Router
 
 After completing all steps, return to the `aviation-installer` router to proceed with Step 5 (Start Task DAG).
 
-> **Tip:** Use the `aviation-cleanup` skill to auto-discover all tagged objects via COMMENT tracking.
+## Cleanup
+
+Derived analytics creates 13 Dynamic Tables and multiple views/procedures. Use the `aviation-cleanup` skill which reads `references/drop-order.sql` to tear down objects in the correct dependency order.
+
+For manual cleanup, suspend tasks first:
+
+```sql
+ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_REFRESH_DERIVED SUSPEND;
+ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_REFRESH_ANALYTICS SUSPEND;
+```
+
+Then drop objects in reverse dependency order — see `aviation-cleanup` skill's `references/drop-order.sql` for the full sequence.

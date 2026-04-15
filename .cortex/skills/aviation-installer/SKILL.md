@@ -82,41 +82,7 @@ IMPORTANT: Do NOT run a full inventory query. Use a search-based flow instead.
 
 **3b.** Run a filtered search using their input. Replace `{SEARCH}` with the user's text:
 
-```sql
-SELECT
-    i.id AS AIRPORT_ID,
-    COALESCE(
-        MAX(IFF(n.value:"key"::STRING = 'en', NULLIF(TRIM(n.value:"value"::STRING), ''), NULL)),
-        i.names:primary::STRING
-    ) AS AIRPORT_NAME,
-    i.class AS AIRPORT_CLASS,
-    COALESCE(
-        MAX(IFF(LOWER(t.value:"key"::STRING) IN ('iata','iata_code','iata:code'), NULLIF(TRIM(t.value:"value"::STRING), ''), NULL)),
-        ''
-    ) AS AIRPORT_CODE_IATA,
-    COALESCE(
-        MAX(IFF(LOWER(t.value:"key"::STRING) IN ('icao','icao_code','icao:code'), NULLIF(TRIM(t.value:"value"::STRING), ''), NULL)),
-        ''
-    ) AS AIRPORT_CODE_ICAO
-FROM OVERTURE_MAPS__BASE.CARTO.INFRASTRUCTURE i
-    , LATERAL FLATTEN(input => i.names:"common":"key_value", OUTER => TRUE) n
-    , LATERAL FLATTEN(
-        input => IFF(IS_OBJECT(i.source_tags), i.source_tags, TRY_PARSE_JSON(i.source_tags)):"key_value",
-        OUTER => TRUE
-    ) t
-WHERE i.class IN ('international_airport','airport','regional_airport','municipal_airport','military_airport','private_airport','seaplane_airport','airstrip')
-  AND i.subtype ILIKE '%airport%'
-  AND ST_ASGEOJSON(i.geometry):type::STRING <> 'Point'
-GROUP BY i.id, i.names:primary::STRING, i.class
-HAVING COALESCE(
-        MAX(IFF(n.value:"key"::STRING = 'en', NULLIF(TRIM(n.value:"value"::STRING), ''), NULL)),
-        i.names:primary::STRING
-    ) ILIKE '%{SEARCH}%'
-    OR MAX(IFF(LOWER(t.value:"key"::STRING) IN ('iata','iata_code','iata:code'), NULLIF(TRIM(t.value:"value"::STRING), ''), NULL)) ILIKE '%{SEARCH}%'
-    OR MAX(IFF(LOWER(t.value:"key"::STRING) IN ('icao','icao_code','icao:code'), NULLIF(TRIM(t.value:"value"::STRING), ''), NULL)) ILIKE '%{SEARCH}%'
-ORDER BY AIRPORT_NAME
-LIMIT 20;
-```
+> **Read `references/airport-search-query.sql`** for the full query. Replace `{SEARCH}` with the user's input before executing.
 
 **3c.** Present matching airports to the user. Use the `ask_user_question` tool with options showing each airport's name, IATA/ICAO codes, and class (e.g. "San Diego International Airport (SAN / KSAN) — international_airport"). If no results, ask the user to try a different search term.
 
@@ -283,14 +249,14 @@ ORDER BY SCHEDULED_TIME DESC;
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| Overture Maps query fails | Step 2 auto-installs it; or manually: `CALL SYSTEM$ACCEPT_LEGAL_TERMS('DATA_EXCHANGE_LISTING', 'GZT0Z4CM1E9KV'); CREATE DATABASE IF NOT EXISTS OVERTURE_MAPS__BASE FROM LISTING GZT0Z4CM1E9KV;` |
-| Airport not found | Search by ICAO code; some airports lack IATA codes in Overture |
-| EAI creation fails | Requires ACCOUNTADMIN or CREATE INTEGRATION privilege |
-| Tasks not running | Resume in leaf-to-root order; check warehouse is active |
-| No ADS-B data after 5 min | Check `CALL {TARGET_DB}.{SCHEMA}.PROC_INGEST_ADSB_REALTIME()` manually |
-| Backfill stuck | Check `HELPER_ADSB_BACKFILL_STATUS` for failed days |
+| Error | Cause | Fix |
+|-------|-------|-----|
+| Overture Maps query fails | Listing not installed | Step 2 auto-installs it; or manually: `CREATE DATABASE IF NOT EXISTS OVERTURE_MAPS__BASE FROM LISTING GZT0Z4CM1E9KV;` |
+| Airport not found | Missing IATA code | Search by ICAO code; some airports lack IATA codes in Overture |
+| EAI creation fails | Insufficient privileges | Requires ACCOUNTADMIN or CREATE INTEGRATION privilege |
+| Tasks not running | Wrong resume order | Resume in leaf-to-root order; check warehouse is active |
+| No ADS-B data after 5 min | Ingestion issue | Check `CALL {TARGET_DB}.{SCHEMA}.PROC_INGEST_ADSB_REALTIME()` manually |
+| Backfill stuck | Failed days | Check `HELPER_ADSB_BACKFILL_STATUS` for failed days |
 
 ## Cleanup
 

@@ -21,6 +21,19 @@ Creates the `AIRPORT_{IATA}` database, schemas, cost-attribution tags, UDFs, air
 - ACCOUNTADMIN role or role with CREATE DATABASE / CREATE INTEGRATION privileges
 - `{TARGET_DB}`, `{SCHEMA}`, `{IATA}`, `{ICAO}`, `{AIRPORT_ID}`, `{AIRPORT_NAME}`, `{WAREHOUSE}`, `{GIT_REPO_STAGE_BASE}` resolved by the router
 
+## Configuration
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `{TARGET_DB}` | `AIRPORT_SAN` | Database name (AIRPORT_{IATA}) |
+| `{SCHEMA}` | `PUBLIC` | Primary schema |
+| `{IATA}` | `SAN` | Airport IATA code |
+| `{ICAO}` | `KSAN` | Airport ICAO code |
+| `{AIRPORT_ID}` | `08b2...` | Overture Maps place UUID |
+| `{AIRPORT_NAME}` | `San Diego International` | Display name |
+| `{WAREHOUSE}` | `AVIA_SAN_WH` | Dedicated warehouse |
+| `{GIT_REPO_STAGE_BASE}` | `@AIRPORT_SAN.PUBLIC.AVIA_OPS_REPO/branches/main` | Git repo stage path |
+
 ## Required Privileges
 
 | Privilege | Scope | Reason |
@@ -114,17 +127,29 @@ Insert into `HELPER_INSTALL_AUDIT` table with installation metadata (version, ti
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| OVERTURE_MAPS__BASE query fails | Install from Snowflake Marketplace; verify IMPORTED PRIVILEGES |
-| PROPERTIES_AIRPORT empty | Check airport_id is valid Overture Maps UUID |
-| PROPERTIES_GATES empty | Airport may not have gate objects in Overture Maps; check subtype filters |
-| PROPERTIES_RUNWAYS empty | Check infrastructure for runway objects; verify subtype/class filters |
-| Airline CSV not found | Verify GIT_REPO_STAGE_BASE path points to correct branch |
-| UDF creation fails | Python UDFs require ANACONDA_PACKAGE_AGREEMENT accepted on account |
+| Error | Cause | Fix |
+|-------|-------|-----|
+| OVERTURE_MAPS__BASE query fails | Marketplace listing not installed | Install from Snowflake Marketplace; verify IMPORTED PRIVILEGES |
+| PROPERTIES_AIRPORT empty | Invalid Overture Maps UUID | Verify airport_id exists in Overture Maps places dataset |
+| PROPERTIES_GATES empty | No gate objects in Overture Maps | Check subtype filters; some airports lack gate geometry |
+| PROPERTIES_RUNWAYS empty | No runway objects in Overture Maps | Check infrastructure for runway objects; verify subtype/class filters |
+| Airline CSV not found | Wrong stage path | Verify GIT_REPO_STAGE_BASE path points to correct branch |
+| UDF creation fails | Package agreement missing | Accept ANACONDA_PACKAGE_AGREEMENT on account |
 
 ## Return to Router
 
 After completing all steps, return to the `aviation-installer` router and continue with `adsb-ingestion`.
 
-> **Tip:** Use the `aviation-cleanup` skill to auto-discover all tagged objects via COMMENT tracking.
+## Cleanup
+
+Use the `aviation-cleanup` skill for automated tag-based teardown. Manual cleanup:
+
+```sql
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.PROPERTIES_AIRPORT;
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.PROPERTIES_INFRASTRUCTURE;
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.PROPERTIES_GATES;
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.PROPERTIES_RUNWAYS;
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.HELPER_AIRLINE_DIM;
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.HELPER_AIRLINE_IATA_ICAO_MAP;
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.HELPER_INSTALL_AUDIT;
+```

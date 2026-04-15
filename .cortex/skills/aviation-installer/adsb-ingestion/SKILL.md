@@ -174,16 +174,34 @@ Expected: 0 rows (data arrives after tasks run). Verify objects exist by checkin
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| EAI creation fails | ACCOUNTADMIN required; check role with `SELECT CURRENT_ROLE()` |
-| PROC_INGEST_ADSB_REALTIME fails | Test EAI: `SELECT SYSTEM$GET_SERVICE_STATUS('...')` not applicable; test with `CALL PROC_INGEST_ADSB_REALTIME()` and check error |
-| PyPI packages not installing | Verify PyPI EAI is attached to procedure; check network rule allows pypi.org |
-| No data after 10 min | Verify airport bounding box is correct in PROPERTIES_AIRPORT; check API endpoint has coverage |
-| Backfill procedures missing | Python procedures require ANACONDA_PACKAGE_AGREEMENT on account |
+| Error | Cause | Fix |
+|-------|-------|-----|
+| EAI creation fails | Insufficient privileges | ACCOUNTADMIN required; check role with `SELECT CURRENT_ROLE()` |
+| PROC_INGEST_ADSB_REALTIME fails | EAI misconfigured | Test with `CALL PROC_INGEST_ADSB_REALTIME()` and check error |
+| PyPI packages not installing | EAI not attached | Verify PyPI EAI is attached to procedure; check network rule allows pypi.org |
+| No data after 10 min | Incorrect bounding box | Verify airport bounding box in PROPERTIES_AIRPORT; check API endpoint coverage |
+| Backfill procedures missing | Package agreement | Python procedures require ANACONDA_PACKAGE_AGREEMENT on account |
 
 ## Return to Router
 
 After completing all steps, return to the `aviation-installer` router. If an API key was provided, continue with `flight-schedules`. Otherwise, continue with `derived-analytics`.
 
-> **Tip:** Use the `aviation-cleanup` skill to auto-discover all tagged objects via COMMENT tracking.
+## Cleanup
+
+Use the `aviation-cleanup` skill for automated tag-based teardown. Manual cleanup:
+
+```sql
+ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_INGEST_ADSB SUSPEND;
+ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_ENRICH_ADSB SUSPEND;
+ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_ENRICH_AIRCRAFT_META SUSPEND;
+ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_ADSB_BACKFILL_ONCE SUSPEND;
+ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_ADSB_BACKFILL_RETRY SUSPEND;
+
+DROP TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_INGEST_ADSB;
+DROP TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_ENRICH_ADSB;
+DROP TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_ENRICH_AIRCRAFT_META;
+DROP TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_ADSB_BACKFILL_ONCE;
+DROP TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_ADSB_BACKFILL_RETRY;
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.ADSB_DATA;
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.HELPER_ADSB_LOL_RAW;
+```

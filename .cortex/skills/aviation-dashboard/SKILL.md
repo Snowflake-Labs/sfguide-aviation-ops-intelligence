@@ -5,7 +5,7 @@ depends_on:
   - aviation-installer
 metadata:
   author: Snowflake SIT-IS
-  version: 2.0.0
+  version: 1.0.0
   category: infrastructure
 ---
 
@@ -198,14 +198,14 @@ The dashboard queries these tables and views per airport. All objects live in `A
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| App shows "No airport databases found" | Run `aviation-installer` first; verify AIRPORT_XXX databases exist |
-| Streamlit creation fails | Check role has CREATE STREAMLIT privilege on target schema |
-| Pages show empty charts | Data pipelines may still be initializing; wait 5–10 min after install |
-| Map layers not rendering | Check PROPERTIES_INFRASTRUCTURE has rows for the airport |
-| Multi-airport selector missing airports | Verify each AIRPORT_XXX database has PROPERTIES_AIRPORT with 1 row |
-| Performance page always empty | V_AIR_OPS_DAILY_KPIS requires 2+ days of history to compute KPIs |
+| Error | Cause | Fix |
+|-------|-------|-----|
+| App shows "No airport databases found" | No airport installed | Run `aviation-installer` first; verify AIRPORT_XXX databases exist |
+| Streamlit creation fails | Missing privilege | Check role has CREATE STREAMLIT privilege on target schema |
+| Pages show empty charts | Pipeline initializing | Data pipelines may still be initializing; wait 5–10 min after install |
+| Map layers not rendering | Missing infrastructure data | Check PROPERTIES_INFRASTRUCTURE has rows for the airport |
+| Multi-airport selector missing airports | Missing properties | Verify each AIRPORT_XXX database has PROPERTIES_AIRPORT with 1 row |
+| Performance page always empty | Insufficient history | V_AIR_OPS_DAILY_KPIS requires 2+ days of history to compute KPIs |
 
 ## Cleanup
 

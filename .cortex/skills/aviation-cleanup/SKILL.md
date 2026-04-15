@@ -62,13 +62,15 @@ Drop order reverses creation dependencies (most-dependent objects first).
 | 14 | Schemas | `SHOW SCHEMAS IN <db>` per airport | `DROP SCHEMA IF EXISTS <name> CASCADE` |
 | 15 | Databases | `SHOW DATABASES LIKE 'AIRPORT_%'` + comment match | `DROP DATABASE IF EXISTS <name> CASCADE` |
 
-## Step 1: Set Session Tag
+## Workflow
+
+### Step 1: Set Session Tag
 
 ```sql
 ALTER SESSION SET query_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-cleanup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
-## Step 2: Discover All Objects
+### Step 2: Discover All Objects
 
 Run the discovery queries from [references/discovery-queries.sql](references/discovery-queries.sql).
 
@@ -76,7 +78,7 @@ Execute each query block and collect results. SHOW + RESULT_SCAN patterns must b
 
 > **Tip:** If filtering to a specific airport, replace `LIKE 'AIRPORT_%'` with `= 'AIRPORT_{IATA}'` in all discovery queries.
 
-## Step 3: Generate DROP Statements
+### Step 3: Generate DROP Statements
 
 Based on discovery results, generate DROP statements in **strict dependency order**:
 
@@ -162,7 +164,7 @@ DROP SCHEMA IF EXISTS {TARGET_DB}.TAGS CASCADE;
 DROP DATABASE IF EXISTS {TARGET_DB} CASCADE;
 ```
 
-## Step 4: Review and Execute
+### Step 4: Review and Execute
 
 **Action:** Present the generated DROP statements to the user grouped by phase.
 
@@ -188,7 +190,7 @@ Objects to drop:
   Total: N objects
 ```
 
-## Step 5: Verify Clean State
+### Step 5: Verify Clean State
 
 ```sql
 SHOW DATABASES LIKE 'AIRPORT_%';
@@ -213,11 +215,11 @@ To clean up objects from a single skill only:
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| No objects found | Check ACCOUNTADMIN role: `SELECT CURRENT_ROLE()` |
-| Cannot drop task | `ALTER TASK ... SUSPEND` first, then DROP |
-| Dynamic table has dependents | Drop in reverse pipeline order (leaf DTs first, ADSB_DATA_LOCAL last) |
-| EAI still exists after database drop | EAIs are account-level; drop them explicitly in Phase 5 |
-| Database not empty after DROP TABLE cascade | Use `DROP SCHEMA ... CASCADE` then `DROP DATABASE ... CASCADE` |
-| SHOW INTEGRATIONS shows unexpected EAIs | Check name pattern — may be from other airports; filter by specific airport prefix |
+| Error | Cause | Fix |
+|-------|-------|-----|
+| No objects found | Wrong role | Check ACCOUNTADMIN role: `SELECT CURRENT_ROLE()` |
+| Cannot drop task | Task is running | `ALTER TASK ... SUSPEND` first, then DROP |
+| Dynamic table has dependents | Wrong drop order | Drop in reverse pipeline order (leaf DTs first, ADSB_DATA_LOCAL last) |
+| EAI still exists after database drop | Account-level object | EAIs are account-level; drop them explicitly in Phase 5 |
+| Database not empty after DROP TABLE cascade | Schema objects remain | Use `DROP SCHEMA ... CASCADE` then `DROP DATABASE ... CASCADE` |
+| SHOW INTEGRATIONS shows unexpected EAIs | Multi-airport overlap | Check name pattern — may be from other airports; filter by specific airport prefix |
