@@ -120,16 +120,28 @@ Expected: > 0 rows if API key is valid and airport has scheduled service.
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| EAI creation fails | ACCOUNTADMIN required for CREATE INTEGRATION |
-| PROC_INGEST fails with 403 | API key may be invalid or rate-limited; check Aviationstack dashboard |
-| FLIGHT_SCHEDULE empty after backfill | Some airports have limited Aviationstack coverage; check with major IATA codes (e.g. SAN, LAX, JFK) |
-| HTTP 80 blocked | Check network rule uses PORT 80 not 443 (Aviationstack uses plain HTTP) |
-| Secret value redacted in logs | Expected — installer masks SECRET_STRING literals in UI display |
+| Error | Cause | Fix |
+|-------|-------|-----|
+| EAI creation fails | Insufficient privileges | ACCOUNTADMIN required for CREATE INTEGRATION |
+| PROC_INGEST fails with 403 | Invalid API key | API key may be invalid or rate-limited; check Aviationstack dashboard |
+| FLIGHT_SCHEDULE empty after backfill | Limited coverage | Some airports have limited Aviationstack coverage; try major IATA codes (SAN, LAX, JFK) |
+| HTTP 80 blocked | Wrong port in network rule | Check network rule uses PORT 80 not 443 (Aviationstack uses plain HTTP) |
+| Secret value redacted in logs | Expected behavior | Installer masks SECRET_STRING literals in UI display |
 
 ## Return to Router
 
 After completing all steps, return to the `aviation-installer` router and continue with `derived-analytics`.
 
-> **Tip:** Use the `aviation-cleanup` skill to auto-discover all tagged objects via COMMENT tracking.
+## Cleanup
+
+Use the `aviation-cleanup` skill for automated tag-based teardown. Manual cleanup:
+
+```sql
+ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_FLIGHT_SCHEDULE SUSPEND;
+
+DROP TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_FLIGHT_SCHEDULE;
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.FLIGHT_SCHEDULE;
+DROP TABLE IF EXISTS {TARGET_DB}.{SCHEMA}.HELPER_FLIGHT_SCHEDULE_RAW;
+DROP PROCEDURE IF EXISTS {TARGET_DB}.{SCHEMA}.PROC_FETCH_FLIGHT_SCHEDULE();
+DROP PROCEDURE IF EXISTS {TARGET_DB}.{SCHEMA}.PROC_FLIGHT_SCHEDULE_INGEST_AND_ETL();
+```

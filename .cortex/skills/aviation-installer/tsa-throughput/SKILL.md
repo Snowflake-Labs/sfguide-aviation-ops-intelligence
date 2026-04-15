@@ -118,13 +118,13 @@ Expected: > 0 rows overall; local rows depend on whether the airport appears in 
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| EAI creation fails | ACCOUNTADMIN required for CREATE INTEGRATION |
-| PROC_FETCH fails with connection error | Check network rule allows `tsa.gov:443` (HTTPS) |
-| No PDF found on FOIA page | TSA may have changed page structure; check `https://www.tsa.gov/foia/readingroom/` manually |
-| AI_EXTRACT returns empty results | Ensure stages use SNOWFLAKE_SSE encryption (required for AI_EXTRACT) |
-| 0 rows for airport | Not all airports appear in TSA data; major US airports should have data |
+| Error | Cause | Fix |
+|-------|-------|-----|
+| EAI creation fails | Insufficient privileges | ACCOUNTADMIN required for CREATE INTEGRATION |
+| PROC_FETCH fails with connection error | Network rule misconfigured | Check network rule allows `tsa.gov:443` (HTTPS) |
+| No PDF found on FOIA page | Page structure changed | TSA may have changed page structure; check `https://www.tsa.gov/foia/readingroom/` manually |
+| AI_EXTRACT returns empty results | Wrong encryption type | Ensure stages use SNOWFLAKE_SSE encryption (required for AI_EXTRACT) |
+| 0 rows for airport | Airport not in TSA data | Not all airports appear in TSA data; major US airports should have data |
 
 ## Cleanup
 
