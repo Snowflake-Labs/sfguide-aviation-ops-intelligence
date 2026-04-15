@@ -20,7 +20,7 @@ Every CREATE statement in every skill includes a COMMENT with JSON metadata:
 
 This skill queries `INFORMATION_SCHEMA`, `SHOW` commands, and `ACCOUNT_USAGE` views to discover all tagged objects, then generates DROP statements in dependency-safe order.
 
-> **IMPORTANT:** External access integrations and network rules are account-level objects created during ADS-B ingestion. They are matched by name pattern (`AIRPORT_*_EAI`, `AIRPORT_*_RULE`) rather than COMMENT tag, since those object types may not support COMMENT.
+> **IMPORTANT:** External access integrations and network rules are account-level objects created during ADS-B ingestion, flight schedules, and TSA throughput. They are matched by name pattern (`AIRPORT_*_EAI`, `AIRPORT_*_RULE`) rather than COMMENT tag, since those object types may not support COMMENT.
 
 ## Configuration
 
@@ -32,7 +32,7 @@ This skill queries `INFORMATION_SCHEMA`, `SHOW` commands, and `ACCOUNT_USAGE` vi
 
 ## Error Logging
 
-When any step fails, log to `logs/` as `aviation-cleanup_{YYYY-MM-DD}_{HH-MM}.md`. Continue execution where possible, logging all issues. If no issues, do not create a log file.
+When any step fails, log to `.cortex/skills/logs/` as `aviation-cleanup_{YYYY-MM-DD}_{HH-MM}.md`. Continue execution where possible, logging all issues. If no issues, do not create a log file.
 
 ## Prerequisites
 
@@ -53,6 +53,7 @@ Drop order reverses creation dependencies (most-dependent objects first).
 | 6 | Functions / UDFs | `INFORMATION_SCHEMA.FUNCTIONS` + comment match | `DROP FUNCTION IF EXISTS <name>(<arg_types>)` |
 | 7 | Tables | `INFORMATION_SCHEMA.TABLES` + comment match | `DROP TABLE IF EXISTS <name>` |
 | 8 | Stages | `SHOW STAGES IN <db>.<schema>` per airport | `DROP STAGE IF EXISTS <name>` |
+| 8b | Git Repositories | `SHOW GIT REPOSITORIES IN <db>.<schema>` per airport | `DROP GIT REPOSITORY IF EXISTS <name>` |
 | 9 | File Formats | `SHOW FILE FORMATS IN <db>.<schema>` | `DROP FILE FORMAT IF EXISTS <name>` |
 | 10 | Tags | `SHOW TAGS IN <db>.TAGS` per airport | `DROP TAG IF EXISTS <name>` |
 | 11 | External Access Integrations | `SHOW INTEGRATIONS` + name LIKE 'AIRPORT_%_EAI' | `DROP INTEGRATION IF EXISTS <name>` |
@@ -81,8 +82,9 @@ Based on discovery results, generate DROP statements in **strict dependency orde
 
 ### Phase 1 — Streamlit Apps
 
+The dashboard lives inside each airport database:
 ```sql
-DROP STREAMLIT IF EXISTS <dashboard_db>.<schema>.<app_name>;
+DROP STREAMLIT IF EXISTS {TARGET_DB}.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD;
 ```
 
 ### Phase 2 — Tasks (Suspend First)
@@ -94,6 +96,10 @@ ALTER TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_REFRESH_ANALYTICS SUSPEND;
 DROP TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_REFRESH_ANALYTICS;
 ALTER TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_REFRESH_DERIVED SUSPEND;
 DROP TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_REFRESH_DERIVED;
+ALTER TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_EXTRACT_TSA_PDF SUSPEND;
+DROP TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_EXTRACT_TSA_PDF;
+ALTER TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_FETCH_TSA_PDF SUSPEND;
+DROP TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_FETCH_TSA_PDF;
 ALTER TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_FLIGHT_SCHEDULE SUSPEND;
 DROP TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_FLIGHT_SCHEDULE;
 ALTER TASK IF EXISTS {TARGET_DB}.PUBLIC.TASK_ENRICH_ADSB SUSPEND;
@@ -136,6 +142,7 @@ Use discovery results to drop in order. See [references/drop-order.sql](referenc
 DROP INTEGRATION IF EXISTS {TARGET_DB}_PUBLIC_ADSB_LOL_EAI;
 DROP INTEGRATION IF EXISTS {TARGET_DB}_PUBLIC_GITHUB_EAI;
 DROP INTEGRATION IF EXISTS {TARGET_DB}_PUBLIC_AVIATIONSTACK_EAI;
+DROP INTEGRATION IF EXISTS {TARGET_DB}_PUBLIC_TSA_GOV_EAI;
 DROP INTEGRATION IF EXISTS {TARGET_DB}_PUBLIC_PYPI_ACCESS_INTEGRATION;
 ```
 
@@ -144,6 +151,7 @@ Network rules (qualified names inside the airport database):
 DROP NETWORK RULE IF EXISTS {TARGET_DB}.PUBLIC.PUBLIC_ADSB_LOL_RULE;
 DROP NETWORK RULE IF EXISTS {TARGET_DB}.PUBLIC.PUBLIC_GITHUB_RULE;
 DROP NETWORK RULE IF EXISTS {TARGET_DB}.PUBLIC.PUBLIC_AVIATIONSTACK_RULE;
+DROP NETWORK RULE IF EXISTS {TARGET_DB}.PUBLIC.PUBLIC_TSA_GOV_RULE;
 DROP NETWORK RULE IF EXISTS {TARGET_DB}.PUBLIC.PUBLIC_PYPI_NETWORK_RULE;
 ```
 
@@ -199,6 +207,7 @@ To clean up objects from a single skill only:
 | aviation-base-setup | `oss-aviation-base-setup` | PROPERTIES_*, HELPER_AIRLINE_DIM, UDFs, tags |
 | aviation-adsb-ingestion | `oss-aviation-adsb-ingestion` | ADSB_DATA, HELPER_ADSB_*, procedures, tasks, EAIs |
 | aviation-flight-schedules | `oss-aviation-flight-schedules` | FLIGHT_SCHEDULE, HELPER_FLIGHT_*, schedule procedures, TASK_FLIGHT_SCHEDULE |
+| aviation-tsa-throughput | `oss-aviation-tsa-throughput` | TSA_THROUGHPUT, TSA_PDF_STAGE, TSA_PDF_PAGES_STAGE, TSA procedures, TASK_FETCH/EXTRACT_TSA_PDF, EAI |
 | aviation-derived-analytics | `oss-aviation-derived-analytics` | All 13 Dynamic Tables, monitoring views, refresh procedures |
 | aviation-dashboard | `oss-aviation-dashboard` | Streamlit app object |
 

@@ -3,12 +3,6 @@
 > **Placeholders** (replaced by the skill at generation time):
 > - `{TARGET_DB}` — Snowflake database, e.g. `AIRPORT_SAN`
 > - `{SCHEMA}` — Schema, e.g. `PUBLIC`
-> - `{WAREHOUSE}` — Warehouse name
-> - `{EAI_ADSB_LOL}` — External Access Integration name for adsb.lol (e.g. `AIRPORT_SAN_PUBLIC_ADSB_LOL_EAI`)
-> - `{EAI_GITHUB}` — External Access Integration name for GitHub (e.g. `AIRPORT_SAN_PUBLIC_GITHUB_EAI`)
-> - `{API_URL}` — adsb.lol API endpoint with lat/lon/radius (e.g. `https://api.adsb.lol/v2/point/32.7336/-117.1897/27`)
-> - `{BACKFILL_DAYS}` — Number of historical days to backfill (e.g. `7`)
-> - `{IATA}` — Airport IATA code (e.g. `SAN`)
 
 The **COMMENT tag** used on every `CREATE` statement:
 ```
@@ -37,7 +31,6 @@ DECLARE
 BEGIN
   v_days := COALESCE(:p_days_back, 2);
 
-  -- Airport-local service day (for matching) using PROPERTIES_AIRPORT.AIRPORT_TZID
   SELECT TO_TIMESTAMP_NTZ(CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP()))
     INTO :v_utc_now;
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC')
@@ -47,10 +40,7 @@ BEGIN
   SELECT TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, :v_utc_now))
     INTO :v_local_today;
 
-  -- Self-heal: duplicates in ADSB_DATA (by ICAO_HEX,TIMESTAMP) cause MERGE to fail with:
-  --   "Duplicate row detected during DML action"
-  -- This can happen from older installer versions / parallel loads.
-  -- Keep newest INGESTED_AT per key within the enrichment window.
+  -- Self-heal: remove duplicates (by ICAO_HEX,TIMESTAMP) that cause MERGE to fail.
   DELETE FROM {TARGET_DB}.{SCHEMA}.ADSB_DATA
   WHERE (ICAO_HEX, TIMESTAMP, INGESTED_AT) IN (
     SELECT ICAO_HEX, TIMESTAMP, INGESTED_AT
@@ -71,7 +61,6 @@ BEGIN
     WHERE rn > 1
   );
 
-  -- Source sanity: use calendar days (UTC date) rather than "last N hours"
   SELECT COUNT(*) INTO v_src_rows
   FROM {TARGET_DB}.{SCHEMA}.ADSB_DATA
   WHERE TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) >= DATEADD('day', -:v_days, :v_local_today)
@@ -82,126 +71,75 @@ BEGIN
     RETURN 'Enrichment skipped: no ADSB_DATA rows in last ' || :v_days || ' days';
   END IF;
 
-  -- 1) Build airborne segments ("legs") per aircraft/day using a simple ground/air state machine.
-  CREATE OR REPLACE TEMP TABLE tmp_airborne_leg AS
+  -- 0) Segment ADSB points into ground/air legs (single scan, reused by steps 1-4).
+  CREATE OR REPLACE TEMP TABLE tmp_adsb_segmented AS
   WITH pts AS (
     SELECT
-      ICAO_HEX,
-      REGISTRATION,
-      FLIGHT,
-      TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) AS service_date,
-      TIMESTAMP AS ts,
-      LOCATION,
-      VELOCITY,
-      ALTITUDE_BARO,
-      -- Treat low-speed points as ground even if ALTITUDE_BARO is missing (common in realtime feeds).
+      s.*,
+      TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP)) AS service_date,
       IFF(
-        COALESCE(VELOCITY, 0) <= 40
-        AND (
-          ALTITUDE_BARO IS NULL
-          OR ALTITUDE_BARO <= 50
-        ),
+        COALESCE(s.VELOCITY, 0) <= 40
+        AND (s.ALTITUDE_BARO IS NULL OR s.ALTITUDE_BARO <= 50),
         1, 0
       ) AS is_ground,
       DATEDIFF(
         'minute',
-        LAG(TIMESTAMP) OVER (
-          PARTITION BY ICAO_HEX, TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP))
-          ORDER BY TIMESTAMP
+        LAG(s.TIMESTAMP) OVER (
+          PARTITION BY s.ICAO_HEX, TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP))
+          ORDER BY s.TIMESTAMP
         ),
-        TIMESTAMP
+        s.TIMESTAMP
       ) AS gap_min,
       LAG(IFF(
-            COALESCE(VELOCITY, 0) <= 40
-            AND (ALTITUDE_BARO IS NULL OR ALTITUDE_BARO <= 50),
+            COALESCE(s.VELOCITY, 0) <= 40
+            AND (s.ALTITUDE_BARO IS NULL OR s.ALTITUDE_BARO <= 50),
             1, 0
           ))
         OVER (
-          PARTITION BY ICAO_HEX, TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP))
-          ORDER BY TIMESTAMP
+          PARTITION BY s.ICAO_HEX, TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP))
+          ORDER BY s.TIMESTAMP
         ) AS prev_is_ground
-    FROM {TARGET_DB}.{SCHEMA}.ADSB_DATA
-    WHERE TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) >= DATEADD('day', -:v_days, :v_local_today)
-      AND ICAO_HEX IS NOT NULL
-      AND LOCATION IS NOT NULL
-      AND TIMESTAMP IS NOT NULL
-  ),
-  seg AS (
-    SELECT
-      *,
-      SUM(IFF(COALESCE(gap_min, 999999) > 20 OR COALESCE(prev_is_ground, is_ground) <> is_ground, 1, 0))
-        OVER (PARTITION BY ICAO_HEX, service_date ORDER BY ts ROWS UNBOUNDED PRECEDING) AS seg_id
-    FROM pts
-  ),
-  airborne AS (
-    SELECT *
-    FROM seg
-    WHERE is_ground = 0
+    FROM {TARGET_DB}.{SCHEMA}.ADSB_DATA s
+    WHERE TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP)) >= DATEADD('day', -:v_days, :v_local_today)
+      AND s.ICAO_HEX IS NOT NULL
+      AND s.LOCATION IS NOT NULL
+      AND s.TIMESTAMP IS NOT NULL
   )
+  SELECT
+    *,
+    SUM(IFF(COALESCE(gap_min, 999999) > 20 OR COALESCE(prev_is_ground, is_ground) <> is_ground, 1, 0))
+      OVER (PARTITION BY ICAO_HEX, service_date ORDER BY TIMESTAMP ROWS UNBOUNDED PRECEDING) AS seg_id
+  FROM pts;
+
+  -- 1) Build airborne leg summaries from the segmented points.
+  CREATE OR REPLACE TEMP TABLE tmp_airborne_leg AS
   SELECT
     ICAO_HEX,
     service_date,
     seg_id,
-    MIN(ts) AS leg_start_ts,
-    MAX(ts) AS leg_end_ts,
+    MIN(TIMESTAMP) AS leg_start_ts,
+    MAX(TIMESTAMP) AS leg_end_ts,
     MAX(REGISTRATION) AS registration,
     MAX(NULLIF(UPPER(TRIM(FLIGHT)), '')) AS callsign,
     COUNT(*) AS points
-  FROM airborne
+  FROM tmp_adsb_segmented
+  WHERE is_ground = 0
   GROUP BY 1,2,3;
 
   -- 2) Classify leg direction relative to the airport polygon.
   CREATE OR REPLACE TEMP TABLE tmp_leg_dir AS
   WITH ap AS (SELECT geometry AS g FROM {TARGET_DB}.{SCHEMA}.PROPERTIES_AIRPORT LIMIT 1),
-  p0 AS (
-    SELECT
-      ICAO_HEX,
-      TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) AS service_date,
-      TIMESTAMP AS ts,
-      LOCATION,
-      IFF(
-        COALESCE(VELOCITY, 0) <= 40
-        AND (ALTITUDE_BARO IS NULL OR ALTITUDE_BARO <= 50),
-        1, 0
-      ) AS is_ground
-    FROM {TARGET_DB}.{SCHEMA}.ADSB_DATA
-    WHERE TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, TIMESTAMP)) >= DATEADD('day', -:v_days, :v_local_today)
-      AND ICAO_HEX IS NOT NULL
-      AND LOCATION IS NOT NULL
-      AND TIMESTAMP IS NOT NULL
-  ),
-  p1 AS (
-    SELECT
-      *,
-      LAG(ts) OVER (PARTITION BY ICAO_HEX, service_date ORDER BY ts) AS prev_ts,
-      LAG(is_ground) OVER (PARTITION BY ICAO_HEX, service_date ORDER BY ts) AS prev_is_ground
-    FROM p0
-  ),
-  p2 AS (
-    SELECT
-      *,
-      DATEDIFF('minute', prev_ts, ts) AS gap_min
-    FROM p1
-  ),
-  p AS (
-    SELECT
-      *,
-      -- NOTE: window functions cannot be nested in Snowflake; keep LAG() in prior CTEs and only SUM() here.
-      SUM(IFF(COALESCE(gap_min, 999999) > 20 OR COALESCE(prev_is_ground, is_ground) <> is_ground, 1, 0))
-        OVER (PARTITION BY ICAO_HEX, service_date ORDER BY ts ROWS UNBOUNDED PRECEDING) AS seg_id
-    FROM p2
-  ),
   start_rows AS (
     SELECT ICAO_HEX, service_date, seg_id, LOCATION AS start_loc
-    FROM p
+    FROM tmp_adsb_segmented
     WHERE is_ground = 0
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY ICAO_HEX, service_date, seg_id ORDER BY ts ASC) = 1
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY ICAO_HEX, service_date, seg_id ORDER BY TIMESTAMP ASC) = 1
   ),
   end_rows AS (
     SELECT ICAO_HEX, service_date, seg_id, LOCATION AS end_loc
-    FROM p
+    FROM tmp_adsb_segmented
     WHERE is_ground = 0
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY ICAO_HEX, service_date, seg_id ORDER BY ts DESC) = 1
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY ICAO_HEX, service_date, seg_id ORDER BY TIMESTAMP DESC) = 1
   ),
   endpoints AS (
     SELECT s.ICAO_HEX, s.service_date, s.seg_id, s.start_loc, e.end_loc
@@ -222,7 +160,6 @@ BEGIN
   JOIN endpoints e USING (ICAO_HEX, service_date, seg_id)
   CROSS JOIN ap;
 
-  -- Persist legs for debugging/analytics (keep last v_days + 1 due to ±1 day schedule joins)
   DELETE FROM {TARGET_DB}.{SCHEMA}.HELPER_FLIGHT_LEG
   WHERE service_date >= DATEADD('day', -(:v_days + 1), :v_local_today);
 
@@ -245,8 +182,7 @@ BEGIN
     CURRENT_TIMESTAMP()
   FROM tmp_leg_dir;
 
-  -- 3) Match legs to schedule using (a) registration + date + time proximity, and
-  --    (b) callsign (flight/callsign) + date + time proximity as a fallback.
+  -- 3) Match legs to schedule via registration then callsign, scored by time proximity.
   CREATE OR REPLACE TEMP TABLE tmp_leg_candidates AS
   WITH airport AS (
     SELECT
@@ -271,7 +207,6 @@ BEGIN
       DEPARTURE_SCHEDULED,
       ARRIVAL_SCHEDULED
     FROM {TARGET_DB}.{SCHEMA}.FLIGHT_SCHEDULE
-    -- Include an extra day because ADSB uses UTC dates while schedule is airport-local date in practice.
     WHERE FLIGHT_DATE >= DATEADD('day', -(:v_days + 1), :v_local_today)
   ),
   candidates_reg AS (
@@ -280,54 +215,34 @@ BEGIN
       s.schedule_flight_key, s.schedule_flight_number,
       s.airline_icao, s.airline_iata,
       s.DEPARTURE_AIRPORT, s.ARRIVAL_AIRPORT,
-      l.direction,
+      s.DEPARTURE_SCHEDULED, s.ARRIVAL_SCHEDULED,
+      l.direction, l.leg_start_ts, l.leg_end_ts,
       ABS(DATEDIFF('day', s.service_date, l.service_date)) AS date_diff_days,
-      CASE
-        WHEN l.direction = 'departure' THEN DATEDIFF('minute', s.DEPARTURE_SCHEDULED, l.leg_start_ts)
-        WHEN l.direction = 'arrival' THEN DATEDIFF('minute', s.ARRIVAL_SCHEDULED, l.leg_end_ts)
-        ELSE LEAST(
-          ABS(DATEDIFF('minute', s.DEPARTURE_SCHEDULED, l.leg_start_ts)),
-          ABS(DATEDIFF('minute', s.ARRIVAL_SCHEDULED, l.leg_end_ts))
-        )
-      END AS diff_min,
-      CASE
-        WHEN l.direction = 'departure' THEN l.leg_start_ts
-        WHEN l.direction = 'arrival' THEN l.leg_end_ts
-        ELSE DATEADD('minute', DATEDIFF('minute', l.leg_start_ts, l.leg_end_ts)/2, l.leg_start_ts)
-      END AS anchor_ts
+      'registration_time' AS match_method, 0 AS match_priority
     FROM tmp_leg_dir l
     JOIN sched s
-      -- Allow ±1 day due to UTC vs local date boundaries
       ON s.service_date BETWEEN DATEADD('day', -1, l.service_date) AND DATEADD('day', 1, l.service_date)
      AND s.registration = UPPER(l.registration)
     WHERE l.registration IS NOT NULL
   ),
   callsign_normalized AS (
-    -- Normalize callsigns: strip trailing operational suffixes (W,J,X,Y,Z)
-    -- and extract airline prefix + flight number for dual-prefix matching.
     SELECT
       ICAO_HEX, service_date, seg_id, callsign, leg_start_ts, leg_end_ts, direction,
-      -- Strip single trailing letter suffix if present (SKW864W → SKW864)
       REGEXP_REPLACE(UPPER(TRIM(callsign)), '[WJXYZ]$', '') AS callsign_normalized,
-      -- Extract airline prefix (2-3 letters)
       REGEXP_SUBSTR(UPPER(TRIM(callsign)), '^[A-Z]{2,3}') AS airline_prefix,
-      -- Extract numeric part
       REGEXP_SUBSTR(UPPER(TRIM(callsign)), '[0-9]+') AS flight_number_part
     FROM tmp_leg_dir
     WHERE callsign IS NOT NULL AND callsign <> ''
   ),
   callsign_with_alternates AS (
-    -- For each callsign, get alternate airline codes (IATA↔ICAO translation)
     SELECT
       c.*,
       m_icao.airline_iata AS alternate_iata,
       m_iata.airline_icao AS alternate_icao
     FROM callsign_normalized c
-    -- If callsign has 3-letter prefix (ICAO), find corresponding IATA
     LEFT JOIN {TARGET_DB}.{SCHEMA}.HELPER_AIRLINE_IATA_ICAO_MAP m_icao
       ON LENGTH(c.airline_prefix) = 3
      AND m_icao.airline_icao = c.airline_prefix
-    -- If callsign has 2-letter prefix (IATA), find corresponding ICAO
     LEFT JOIN {TARGET_DB}.{SCHEMA}.HELPER_AIRLINE_IATA_ICAO_MAP m_iata
       ON LENGTH(c.airline_prefix) = 2
      AND m_iata.airline_iata = c.airline_prefix
@@ -338,32 +253,18 @@ BEGIN
       s.schedule_flight_key, s.schedule_flight_number,
       s.airline_icao, s.airline_iata,
       s.DEPARTURE_AIRPORT, s.ARRIVAL_AIRPORT,
-      l.direction,
+      s.DEPARTURE_SCHEDULED, s.ARRIVAL_SCHEDULED,
+      l.direction, l.leg_start_ts, l.leg_end_ts,
       ABS(DATEDIFF('day', s.service_date, l.service_date)) AS date_diff_days,
-      CASE
-        WHEN l.direction = 'departure' THEN DATEDIFF('minute', s.DEPARTURE_SCHEDULED, l.leg_start_ts)
-        WHEN l.direction = 'arrival' THEN DATEDIFF('minute', s.ARRIVAL_SCHEDULED, l.leg_end_ts)
-        ELSE LEAST(
-          ABS(DATEDIFF('minute', s.DEPARTURE_SCHEDULED, l.leg_start_ts)),
-          ABS(DATEDIFF('minute', s.ARRIVAL_SCHEDULED, l.leg_end_ts))
-        )
-      END AS diff_min,
-      CASE
-        WHEN l.direction = 'departure' THEN l.leg_start_ts
-        WHEN l.direction = 'arrival' THEN l.leg_end_ts
-        ELSE DATEADD('minute', DATEDIFF('minute', l.leg_start_ts, l.leg_end_ts)/2, l.leg_start_ts)
-      END AS anchor_ts
+      'callsign_time' AS match_method, 1 AS match_priority
     FROM callsign_with_alternates l
     JOIN sched s
-      -- Allow ±1 day due to UTC vs local date boundaries
       ON s.service_date BETWEEN DATEADD('day', -1, l.service_date) AND DATEADD('day', 1, l.service_date)
      AND (
-          -- Exact callsign match (original or normalized)
           s.flight_icao = UPPER(TRIM(l.callsign))
        OR s.flight_iata = UPPER(TRIM(l.callsign))
        OR s.flight_icao = l.callsign_normalized
        OR s.flight_iata = l.callsign_normalized
-       -- Numeric + airline prefix match (current logic, but with normalized callsign)
        OR (
             l.airline_prefix IS NOT NULL
         AND l.flight_number_part IS NOT NULL
@@ -371,7 +272,6 @@ BEGIN
         AND (
               (LENGTH(l.airline_prefix) = 3 AND s.airline_icao = l.airline_prefix)
            OR (LENGTH(l.airline_prefix) = 2 AND s.airline_iata = l.airline_prefix)
-           -- NEW: Try alternate code (IATA↔ICAO translation)
            OR (LENGTH(l.airline_prefix) = 3 AND l.alternate_iata IS NOT NULL AND s.airline_iata = l.alternate_iata)
            OR (LENGTH(l.airline_prefix) = 2 AND l.alternate_icao IS NOT NULL AND s.airline_icao = l.alternate_icao)
         )
@@ -379,9 +279,25 @@ BEGIN
      )
   ),
   candidates AS (
-    SELECT *, 'registration_time' AS match_method, 0 AS match_priority FROM candidates_reg
-    UNION ALL
-    SELECT *, 'callsign_time' AS match_method, 1 AS match_priority FROM candidates_callsign
+    SELECT *,
+      CASE
+        WHEN direction = 'departure' THEN DATEDIFF('minute', DEPARTURE_SCHEDULED, leg_start_ts)
+        WHEN direction = 'arrival' THEN DATEDIFF('minute', ARRIVAL_SCHEDULED, leg_end_ts)
+        ELSE LEAST(
+          ABS(DATEDIFF('minute', DEPARTURE_SCHEDULED, leg_start_ts)),
+          ABS(DATEDIFF('minute', ARRIVAL_SCHEDULED, leg_end_ts))
+        )
+      END AS diff_min,
+      CASE
+        WHEN direction = 'departure' THEN leg_start_ts
+        WHEN direction = 'arrival' THEN leg_end_ts
+        ELSE DATEADD('minute', DATEDIFF('minute', leg_start_ts, leg_end_ts)/2, leg_start_ts)
+      END AS anchor_ts
+    FROM (
+      SELECT * FROM candidates_reg
+      UNION ALL
+      SELECT * FROM candidates_callsign
+    )
   ),
   filtered AS (
     SELECT *,
@@ -389,14 +305,11 @@ BEGIN
     FROM candidates
     WHERE
       (match_method = 'registration_time' AND abs(diff_min) <= 240)
-      OR
-      -- Callsign is a strong identifier; expand to ±36 hours to catch irregular ops/delays.
-      (match_method = 'callsign_time' AND abs(diff_min) <= 2160)
+      OR (match_method = 'callsign_time' AND abs(diff_min) <= 2160)
   ),
   scored AS (
     SELECT
       c.*,
-      -- Direction sanity: for arrivals, schedule ARRIVAL should be our airport; for departures, schedule DEPARTURE.
       IFF(
         c.direction IN ('arrival','departure'),
         IFF(
@@ -406,16 +319,11 @@ BEGIN
         ),
         TRUE
       ) AS direction_ok,
-      -- Base score from time gap, then penalize date diff and direction mismatch.
-      -- Improved confidence tiers for wider callsign window (±36 hrs):
-      --   0-120 min: 80-90 confidence
-      --   121-1440 min (24h): 60-79 confidence
-      --   1441-2160 min (36h): 40-59 confidence
+      -- Confidence: registration 0-100 linear; callsign tiered (0-120m: 80-90, 121-1440m: 60-79, 1441-2160m: 40-59)
       (
         IFF(
           c.match_method = 'registration_time',
           GREATEST(0, 100 - (c.abs_diff * 100 / 240))::INT,
-          -- Callsign scoring with tiered confidence
           CASE
             WHEN c.abs_diff <= 120 THEN GREATEST(0, 90 - (c.abs_diff * 10 / 120))::INT
             WHEN c.abs_diff <= 1440 THEN GREATEST(0, 79 - ((c.abs_diff - 120) * 19 / 1320))::INT
@@ -453,7 +361,6 @@ BEGIN
     anchor_ts
   FROM scored;
 
-  -- Persist candidates (debugging)
   DELETE FROM {TARGET_DB}.{SCHEMA}.HELPER_FLIGHT_MATCH_CANDIDATES
   WHERE service_date >= DATEADD('day', -(:v_days + 1), :v_local_today);
 
@@ -476,7 +383,7 @@ BEGIN
     score, CURRENT_TIMESTAMP()
   FROM tmp_leg_candidates;
 
-  -- Choose best candidate per leg using score + direction sanity
+  -- Best candidate per leg
   CREATE OR REPLACE TEMP TABLE tmp_leg_match AS
   SELECT
     ICAO_HEX,
@@ -485,8 +392,13 @@ BEGIN
     schedule_flight_key,
     schedule_flight_number,
     match_method,
-    -- Keep existing confidence semantics for downstream consumers
+    match_priority,
+    date_diff_days,
+    abs_diff,
+    direction,
+    direction_ok,
     GREATEST(0, score)::INT AS match_confidence,
+    score,
     anchor_ts
   FROM tmp_leg_candidates
   QUALIFY ROW_NUMBER() OVER (
@@ -494,7 +406,6 @@ BEGIN
     ORDER BY match_priority ASC, direction_ok DESC, score DESC, abs_diff ASC, date_diff_days ASC
   ) = 1;
 
-  -- Persist chosen results
   DELETE FROM {TARGET_DB}.{SCHEMA}.HELPER_FLIGHT_MATCH_RESULT
   WHERE service_date >= DATEADD('day', -(:v_days + 1), :v_local_today);
 
@@ -511,15 +422,9 @@ BEGIN
     direction, direction_ok,
     schedule_flight_key, schedule_flight_number,
     score, CURRENT_TIMESTAMP()
-  FROM tmp_leg_candidates
-  QUALIFY ROW_NUMBER() OVER (
-    PARTITION BY ICAO_HEX, service_date, seg_id
-    ORDER BY match_priority ASC, direction_ok DESC, score DESC, abs_diff ASC, date_diff_days ASC
-  ) = 1;
+  FROM tmp_leg_match;
 
-  -- -----------------------------------------------------------------------------
   -- Phase 4: Refresh recurring callsign prior (conservative fallback)
-  -- -----------------------------------------------------------------------------
   CREATE OR REPLACE TABLE {TARGET_DB}.{SCHEMA}.HELPER_RECURRING_CALLSIGN_PRIOR AS
   WITH base AS (
     SELECT
@@ -593,54 +498,15 @@ BEGIN
   LEFT JOIN best_od o USING (callsign_key)
   WHERE t.legs >= 5;
 
-  -- 4) Apply schedule association to points in ADSB_DATA (canonical table)
+  -- 4) Apply schedule association to points in ADSB_DATA via the shared segmented table.
   MERGE INTO {TARGET_DB}.{SCHEMA}.ADSB_DATA t
   USING (
     WITH airport AS (
       SELECT
         UPPER(airport_code) AS airport_code,
-        UPPER(airport_icao) AS airport_icao,
-        geometry AS airport_geom
+        UPPER(airport_icao) AS airport_icao
       FROM {TARGET_DB}.{SCHEMA}.PROPERTIES_AIRPORT
       LIMIT 1
-    ),
-    pts AS (
-      SELECT
-        s.*,
-        TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP)) AS service_date,
-        IFF(
-          COALESCE(s.VELOCITY, 0) <= 40
-          AND (s.ALTITUDE_BARO IS NULL OR s.ALTITUDE_BARO <= 50),
-          1, 0
-        ) AS is_ground,
-        DATEDIFF(
-          'minute',
-          LAG(s.TIMESTAMP) OVER (
-            PARTITION BY s.ICAO_HEX, TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP))
-            ORDER BY s.TIMESTAMP
-          ),
-          s.TIMESTAMP
-        ) AS gap_min,
-        LAG(IFF(
-              COALESCE(s.VELOCITY, 0) <= 40
-              AND (s.ALTITUDE_BARO IS NULL OR s.ALTITUDE_BARO <= 50),
-              1, 0
-            ))
-          OVER (
-            PARTITION BY s.ICAO_HEX, TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP))
-            ORDER BY s.TIMESTAMP
-          ) AS prev_is_ground
-      FROM {TARGET_DB}.{SCHEMA}.ADSB_DATA s
-      WHERE TO_DATE(CONVERT_TIMEZONE('UTC', :v_tzid, s.TIMESTAMP)) >= DATEADD('day', -:v_days, :v_local_today)
-        AND s.ICAO_HEX IS NOT NULL
-        AND s.TIMESTAMP IS NOT NULL
-    ),
-    seg AS (
-      SELECT
-        *,
-        SUM(IFF(COALESCE(gap_min, 999999) > 20 OR COALESCE(prev_is_ground, is_ground) <> is_ground, 1, 0))
-          OVER (PARTITION BY ICAO_HEX, service_date ORDER BY TIMESTAMP ROWS UNBOUNDED PRECEDING) AS seg_id
-      FROM pts
     ),
     joined AS (
       SELECT
@@ -650,7 +516,7 @@ BEGIN
         m.match_method AS match_match_method,
         m.match_confidence AS match_match_confidence,
         m.anchor_ts AS match_anchor_ts
-      FROM seg p
+      FROM tmp_adsb_segmented p
       LEFT JOIN tmp_leg_match m
         ON m.ICAO_HEX = p.ICAO_HEX
        AND m.service_date = p.service_date
@@ -677,7 +543,6 @@ BEGIN
     )
     ,final AS (
       SELECT
-      -- Choose nearest schedule key if point itself isn't on a matched leg.
       COALESCE(
         schedule_flight_key_merged,
         IFF(prev_key IS NULL, next_key,
@@ -688,7 +553,6 @@ BEGIN
       ) AS schedule_flight_key_final,
       COALESCE(
         schedule_flight_number_merged,
-        -- fallback: use existing callsign when present
         NULLIF(TRIM(FLIGHT), '')
       ) AS schedule_flight_number_final,
       COALESCE(match_method_merged, 'propagated') AS match_method_final,
@@ -698,9 +562,6 @@ BEGIN
     FROM filled
     )
     ,fs_dedup AS (
-      -- Defensive: ensure FLIGHT_SCHEDULE contributes at most 1 row per FLIGHT_KEY.
-      -- If older installs (or API quirks) produced duplicates, join fanout would create
-      -- duplicate (ICAO_HEX,TIMESTAMP) rows in the MERGE source and the MERGE would fail.
       SELECT *
       FROM {TARGET_DB}.{SCHEMA}.FLIGHT_SCHEDULE
       QUALIFY ROW_NUMBER() OVER (
@@ -709,7 +570,6 @@ BEGIN
       ) = 1
     )
     ,rp_dedup AS (
-      -- Ensure 1 row per callsign_key to avoid join fanout.
       SELECT *
       FROM {TARGET_DB}.{SCHEMA}.HELPER_RECURRING_CALLSIGN_PRIOR
       QUALIFY ROW_NUMBER() OVER (
@@ -718,7 +578,6 @@ BEGIN
       ) = 1
     )
     ,airline_dim_icao AS (
-      -- HELPER_AIRLINE_DIM can contain multiple rows per code; collapse to 1 row/code to avoid fanout.
       SELECT
         TRIM(UPPER(AIRLINE_ICAO)) AS airline_icao,
         MAX(NULLIF(TRIM(AIRLINE_NAME), '')) AS airline_name
@@ -740,10 +599,7 @@ BEGIN
       f.schedule_flight_number_final,
       f.match_method_final,
       f.match_confidence_final,
-      -- Airline fallback priority:
-      --  1) Schedule (best)
-      --  2) Recurring callsign prior (when schedule missing)
-      --  3) Airline dim by prefix (last resort)
+      -- Airline fallback: 1) Schedule 2) Recurring prior 3) Airline dim by prefix
       COALESCE(fs.AIRLINE_NAME, rp.AIRLINE_NAME, ad3.airline_name, ad2.airline_name) AS airline_name_final,
       COALESCE(fs.AIRLINE_IATA, rp.AIRLINE_IATA, ad2.airline_iata_raw) AS airline_iata_final,
       COALESCE(fs.AIRLINE_ICAO, rp.AIRLINE_ICAO, ad3.airline_icao) AS airline_icao_final,
@@ -799,4 +655,3 @@ ALTER PROCEDURE {TARGET_DB}.{SCHEMA}.PROC_ENRICH_ADSB_WITH_SCHEDULE(INT)
   SET TAG {TARGET_DB}.TAGS.SOLUTION = 'aviation-ops-intelligence',
           {TARGET_DB}.TAGS.COMPONENT = 'etl';
 ```
-

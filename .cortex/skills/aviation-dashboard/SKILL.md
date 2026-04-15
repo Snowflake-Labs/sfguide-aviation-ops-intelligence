@@ -1,15 +1,28 @@
 ---
 name: aviation-dashboard
-description: "Deploy the Airport Analytics Streamlit-in-Snowflake dashboard: upload app files from Git repo stage, create the Streamlit object, and verify the app is accessible. Use when: deploying dashboard, setting up airport analytics UI, installing flight tracker, monitoring page. Do NOT use for: installing airport data pipeline (use aviation-installer), cleaning up objects (use aviation-cleanup). Triggers: deploy dashboard, aviation dashboard, airport analytics UI, streamlit airport, install dashboard, flight tracker app."
+description: "Deploy the Airport Analytics dashboard (Streamlit-in-Snowflake or React/SPCS): upload app files, create the Streamlit object or SPCS service, and verify accessibility. Use when: deploying dashboard, setting up airport analytics UI, installing flight tracker, monitoring page, SPCS dashboard, React dashboard. Do NOT use for: installing airport data pipeline (use aviation-installer), cleaning up objects (use aviation-cleanup). Triggers: deploy dashboard, aviation dashboard, airport analytics UI, streamlit airport, install dashboard, flight tracker app, react dashboard, SPCS dashboard."
 depends_on:
   - aviation-installer
 metadata:
   author: Snowflake SIT-IS
-  version: 1.0.0
+  version: 2.0.0
   category: infrastructure
 ---
 
 # Deploy Airport Analytics Dashboard
+
+This skill contains two dashboard implementations for airport analytics:
+
+| Variant | Directory | Stack | Deployment |
+|---------|-----------|-------|------------|
+| Streamlit | `dashboard-streamlit/` | Python, Streamlit, pydeck, Altair | Streamlit-in-Snowflake |
+| React | `dashboard-react/` | React 18, TypeScript, deck.gl, recharts | SPCS (Docker + Express) |
+
+Both dashboards provide the same 8 analytics pages and auto-discover all `AIRPORT_XXX` databases.
+
+---
+
+# Streamlit Dashboard
 
 Deploys the multi-page Streamlit-in-Snowflake dashboard that provides real-time and historical analytics for installed airports. The dashboard auto-discovers all `AIRPORT_XXX` databases and shows a multi-airport selector in the sidebar.
 
@@ -29,7 +42,7 @@ Deploys the multi-page Streamlit-in-Snowflake dashboard that provides real-time 
 ## Prerequisites
 
 1. At least one airport installed via `aviation-installer` (at minimum `base-setup` and `derived-analytics` completed)
-2. Dashboard files available in Git repo stage (`{GIT_REPO_STAGE_BASE}`)
+2. Dashboard files available in Git repo stage (`{GIT_REPO_STAGE_BASE}/.cortex/skills/aviation-dashboard/dashboard-streamlit`)
 3. A Snowflake database and schema to host the Streamlit app
 4. Warehouse for Streamlit execution
 
@@ -48,15 +61,15 @@ Deploys the multi-page Streamlit-in-Snowflake dashboard that provides real-time 
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| DASHBOARD_DB | AVIA_INSTALLER | Database to host the Streamlit app |
+| DASHBOARD_DB | {TARGET_DB} | Database to host the Streamlit app (same as the airport database) |
 | DASHBOARD_SCHEMA | PUBLIC | Schema to host the Streamlit app |
 | APP_NAME | AIRPORT_ANALYTICS_DASHBOARD | Streamlit object name |
-| GIT_REPO_STAGE | `@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main` | Source files |
+| GIT_REPO_STAGE | `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main` | Source files |
 | WAREHOUSE | (current warehouse) | Warehouse for app execution |
 
 ## Error Logging
 
-When any step fails, log to `logs/` as `aviation-dashboard_{YYYY-MM-DD}_{HH-MM}.md`. If no issues, do not create a log file.
+When any step fails, log to `.cortex/skills/logs/` as `aviation-dashboard_{YYYY-MM-DD}_{HH-MM}.md`. If no issues, do not create a log file.
 
 ## Workflow
 
@@ -83,23 +96,21 @@ WHERE TABLE_CATALOG LIKE 'AIRPORT_%'
 ORDER BY TABLE_CATALOG, TABLE_NAME;
 ```
 
-### Step 3: Create Dashboard Host Database and Schema (if needed)
+### Step 3: Verify Dashboard Host Schema
+
+The dashboard is deployed into the airport database created by `base-setup`. Verify it exists:
 
 ```sql
-CREATE DATABASE IF NOT EXISTS {DASHBOARD_DB}
-  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-dashboard","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
-
-CREATE SCHEMA IF NOT EXISTS {DASHBOARD_DB}.{DASHBOARD_SCHEMA}
-  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-dashboard","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+SELECT 1 FROM INFORMATION_SCHEMA.SCHEMATA WHERE CATALOG_NAME = '{DASHBOARD_DB}' AND SCHEMA_NAME = '{DASHBOARD_SCHEMA}';
 ```
 
-> **Note:** If deploying into an existing database (e.g., alongside the installer app), skip this step.
+> **Note:** The airport database and PUBLIC schema already exist from the `base-setup` sub-skill.
 
 ### Step 4: Create or Replace Streamlit App
 
 ```sql
 CREATE OR REPLACE STREAMLIT {DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}
-  ROOT_LOCATION = '{GIT_REPO_STAGE_BASE}/dashboard'
+  ROOT_LOCATION = '{GIT_REPO_STAGE_BASE}/.cortex/skills/aviation-dashboard/dashboard-streamlit'
   MAIN_FILE = 'streamlit_app.py'
   QUERY_WAREHOUSE = {WAREHOUSE}
   COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-dashboard","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
@@ -203,3 +214,107 @@ DROP STREAMLIT IF EXISTS {DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME};
 ```
 
 > **Tip:** Use the `aviation-cleanup` skill to auto-discover all tagged objects via COMMENT tracking.
+
+---
+
+# React Dashboard (SPCS)
+
+A React 18 + TypeScript + deck.gl dashboard deployed as a Snowpark Container Service. Uses the same Snowflake design system as the ORS Control App from the routing solution.
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 18, TypeScript 5.6, Vite 5.4 |
+| Maps | deck.gl ~9.2.11, luma.gl ~9.2.6, CARTO basemap |
+| Charts | recharts 3.x |
+| Icons | lucide-react |
+| Server | Express 4, dual-mode SQL (local `snow sql` / SPCS REST API) |
+| Deploy | Docker, Snowpark Container Services |
+
+## Pages
+
+| Page | Component | Key Visualizations |
+|------|-----------|-------------------|
+| Home | `Home.tsx` | Navigation grid with page cards |
+| Live View | `LiveView.tsx` | ScatterplotLayer aircraft positions + timetable |
+| Flight Tracker | `FlightTracker.tsx` | PathLayer flight paths + altitude profile |
+| Ground Activity | `GroundActivity.tsx` | H3HexagonLayer 3D density |
+| Runway Crossings | `RunwayCrossings.tsx` | Hexagon heatmap + GeoJsonLayer runways |
+| Traffic Analysis | `TrafficAnalysis.tsx` | Daily trends, hourly bars, airline rankings |
+| Gate Analysis | `GateAnalysis.tsx` | Utilization bars, airline dwell charts |
+| Monitoring | `Monitoring.tsx` | Freshness, volume, QA counts |
+| Performance | `Performance.tsx` | Taxi times, on-time rates |
+
+## Local Development
+
+```bash
+cd dashboard-react
+cp .env.example .env
+# Edit .env: set SNOWFLAKE_CONNECTION, SNOWFLAKE_WAREHOUSE, SNOWFLAKE_DATABASE
+
+npm install --legacy-peer-deps
+npm run dev          # Vite dev server (frontend) on :5173
+npm run build:server # Compile Express server
+npm start            # Express server on :8080 (serves API + proxies tiles)
+```
+
+The Vite dev server proxies `/api/*` to `http://localhost:8080`.
+
+## Production Build
+
+```bash
+npm run build          # TypeScript check + Vite bundle → dist/
+npm run build:server   # Compile server → dist-server/
+npm start              # Serves dist/ + API on :8080
+```
+
+## SPCS Deployment
+
+### 1. Build and push Docker image
+
+```bash
+cd dashboard-react
+docker build -f Dockerfile.runtime -t aviation-ops-dashboard:latest .
+
+# Tag and push to Snowflake image registry
+docker tag aviation-ops-dashboard:latest <registry>/aviation-ops-dashboard:latest
+docker push <registry>/aviation-ops-dashboard:latest
+```
+
+### 2. Create the SPCS service
+
+```sql
+CREATE SERVICE {DATABASE}.{SCHEMA}.AVIATION_DASHBOARD_SERVICE
+  IN COMPUTE POOL {COMPUTE_POOL}
+  FROM SPECIFICATION_FILE = 'aviation_dashboard_service.yaml'
+  EXTERNAL_ACCESS_INTEGRATIONS = ({EAI_NAME})
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"aviation-ops-dashboard","version":"1.0"}';
+```
+
+### 3. Verify
+
+```sql
+SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN SCHEMA {DATABASE}.{SCHEMA};
+SELECT SYSTEM$GET_SERVICE_STATUS('{DATABASE}.{SCHEMA}.AVIATION_DASHBOARD_SERVICE');
+```
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SNOWFLAKE_CONNECTION` | Local only | `snow sql -c` connection name |
+| `SNOWFLAKE_WAREHOUSE` | Yes | Warehouse for queries |
+| `SNOWFLAKE_DATABASE` | No | Default airport database |
+| `PORT` | No | Server port (default: 8080) |
+
+In SPCS, the service authenticates via OAuth token from `/snowflake/session/token` and executes SQL through the SQL REST API.
+
+## Design Notes
+
+- CSS is inline in `index.html` using the same Snowflake design system (`--sf-blue: #29B5E8`) as the ORS Control App
+- No CSS modules or Tailwind — all styles via CSS custom properties
+- State management via React Context (`AirportContext`)
+- Navigation via simple string state (no react-router)
+- `useSnowflake` hook for data fetching via `/api/query`
+- CARTO basemap tiles proxied through Express to avoid CORS

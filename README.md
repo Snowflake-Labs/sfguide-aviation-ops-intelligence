@@ -52,14 +52,14 @@ The Airport Analytics Platform is a comprehensive aviation operations intelligen
 
 ## 🚀 Deployment via GitHub Integration
 
-#### Step 1: Create a Database for Installer
+#### Step 1: Create the Airport Database
 
 Execute these queries in a Snowflake worksheet (replace placeholders):
 
 ```sql
-CREATE OR REPLACE DATABASE AVIA_INSTALLER;
+CREATE OR REPLACE DATABASE AIRPORT_{IATA};  -- e.g., AIRPORT_SAN
 USE ROLE ACCOUNTADMIN;
-USE DATABASE AVIA_INSTALLER;
+USE DATABASE AIRPORT_{IATA};
 USE SCHEMA PUBLIC;
 
 ```
@@ -75,39 +75,25 @@ CREATE OR REPLACE API INTEGRATION github_api_integration
 #### Step 3: Create Git Repository Object (NO credentials needed for public repos)
 
 ```sql
-CREATE OR REPLACE GIT REPOSITORY AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO
+CREATE OR REPLACE GIT REPOSITORY AIRPORT_{IATA}.PUBLIC.AVIA_OPS_REPO
   API_INTEGRATION = github_api_integration
   ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-aviation-ops-intelligence/';
 -- Fetch latest files from repository
-  ALTER GIT REPOSITORY avia_ops_repo FETCH;
+  ALTER GIT REPOSITORY AIRPORT_{IATA}.PUBLIC.AVIA_OPS_REPO FETCH;
 ```
 
-#### Step 4: Create Installer Streamlit App from Git
+#### Step 4: Create Dashboard Streamlit App
 
 ```sql
-CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_INSTALLER
-  ROOT_LOCATION = '@avia_ops_repo/branches/main/installer'
-  MAIN_FILE = 'installer_daily.py'
-  QUERY_WAREHOUSE = MY_WH  -- Replace with your warehouse
-  TITLE = 'Airport Analytics Installer'
-  COMMENT = 'Installer for Airport Analytics Platform - generates and deploys airport infrastructure';
-
--- Grant usage if needed (for non-ACCOUNTADMIN users)
-GRANT USAGE ON STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_INSTALLER TO ROLE <your_role>;
-```
-
-#### Step 5: Create Dashboard Streamlit App
-
-```sql
-CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD
-  ROOT_LOCATION = '@avia_ops_repo/branches/main/dashboard'
+CREATE OR REPLACE STREAMLIT AIRPORT_{IATA}.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD
+  ROOT_LOCATION = '@AIRPORT_{IATA}.PUBLIC.AVIA_OPS_REPO/branches/main/dashboard'
   MAIN_FILE = 'streamlit_app.py'
   QUERY_WAREHOUSE = MY_WH  -- Replace with your warehouse
   TITLE = 'Airport Analytics Dashboard'
   COMMENT = 'Dashboard for Airport Analytics Platform';
 
 -- Grant usage if needed (for non-ACCOUNTADMIN users)
-GRANT USAGE ON STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD TO ROLE <your_role>;
+GRANT USAGE ON STREAMLIT AIRPORT_{IATA}.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD TO ROLE <your_role>;
 ```
 
 ---
@@ -116,15 +102,10 @@ GRANT USAGE ON STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD TO RO
 
 Once you've completed the GitHub Integration steps above, follow these steps to configure and launch your airport analytics:
 
-### Step 1: Access the Installer App
+### Step 1: Access the Installer
 
-1. Navigate to **Streamlit** in your Snowflake UI (left sidebar)
-2. Find and open **Airport Analytics Installer** 
-3. In the app:
-- Select the airport for which you want to install the solution
-- Optionally specify the Aviationstack API Key
-- Specify how many days in the past you want to backfill (for demo we recommend 5-7days)
-- Click "Execute in Snowflake"
+1. Use **Cortex Code** to invoke the `aviation-installer` skill, or
+2. Run the installation SQL manually following the skill instructions in `.cortex/skills/aviation-installer/SKILL.md`
 
 ### Step 2: Monitor Deployment
 
@@ -145,7 +126,7 @@ Deployment typically takes **15-60 minutes** depending on:
 Once deployment is complete:
 
 1. Navigate to **Streamlit** in Snowflake
-2. Open **Airport Analytics Dashboard** in `AVIA_INSTALLER.PUBLIC`
+2. Open **Airport Analytics Dashboard** in `AIRPORT_{IATA}.PUBLIC`
 3. **Select your airport from the airport selector** from the dropdown (e.g., `San Diego International Airport (SAN)`)
 4. Explore the dashboard pages:
 

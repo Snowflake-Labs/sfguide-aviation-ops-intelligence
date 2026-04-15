@@ -1,6 +1,6 @@
 ---
 name: aviation-installer
-description: "Install and configure an airport analytics platform in Snowflake. Routes to sub-skills for base infrastructure setup, ADS-B real-time ingestion, flight schedule ingestion, and derived analytics pipelines. Use when: installing airport analytics, setting up a new airport, deploying aviation platform, provisioning airport database. Do NOT use for: deploying the Streamlit dashboard (use aviation-dashboard), cleaning up objects (use aviation-cleanup), viewing flight data. Triggers: install airport, setup airport, deploy aviation, provision airport, aviation installer, new airport setup, airport analytics platform."
+description: "Install and configure an airport analytics platform in Snowflake. Routes to sub-skills for base infrastructure setup, ADS-B real-time ingestion, flight schedule ingestion, TSA checkpoint throughput ingestion, and derived analytics pipelines. Use when: installing airport analytics, setting up a new airport, deploying aviation platform, provisioning airport database. Do NOT use for: deploying the Streamlit dashboard (use aviation-dashboard), cleaning up objects (use aviation-cleanup), viewing flight data. Triggers: install airport, setup airport, deploy aviation, provision airport, aviation installer, new airport setup, airport analytics platform."
 metadata:
   author: Snowflake SIT-IS
   version: 1.0.0
@@ -9,7 +9,7 @@ metadata:
 
 # Install Airport Analytics Platform
 
-Routes installation requests to the correct sub-skills based on phase. Provisions a complete airport analytics platform in Snowflake: database infrastructure, real-time ADS-B ingestion from adsb.lol, optional flight schedules from Aviationstack, and derived Dynamic Table pipelines for gate analysis, traffic analytics, runway crossings, and operational KPIs.
+Routes installation requests to the correct sub-skills based on phase. Provisions a complete airport analytics platform in Snowflake: database infrastructure, real-time ADS-B ingestion from adsb.lol, optional flight schedules from Aviationstack, optional TSA checkpoint throughput from FOIA data, and derived Dynamic Table pipelines for gate analysis, traffic analytics, runway crossings, and operational KPIs.
 
 ## Prerequisites
 
@@ -34,13 +34,14 @@ Routes installation requests to the correct sub-skills based on phase. Provision
 |-----------|---------|-------------|
 | AIRPORT | (user selects) | Target airport from Overture Maps inventory |
 | WAREHOUSE | AVIA_{IATA}_WH | Dedicated warehouse (created automatically, XSMALL) |
-| AVIATIONSTACK_KEY | (optional) | API key for flight schedule ingestion |
-| GIT_REPO_STAGE | `@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main` | Git repo stage for dashboard/airline files |
+| AVIATIONSTACK_KEY | (optional) | API key for flight schedule ingestion. Skip for a fully functional install without schedule matching. |
+| TSA_THROUGHPUT | yes (default) | Enable TSA checkpoint throughput ingestion from FOIA data. No API key needed. |
+| GIT_REPO_STAGE | `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main` | Git repo stage for skill source files |
 | BACKFILL_DAYS | 5 | Days of historical ADS-B data to backfill |
 
 ## Error Logging
 
-When any step fails or produces unexpected results (SQL errors, missing objects, wrong row counts, service failures, deployment issues), log the issue to `logs/` following the format in `logs/README.md`. Create one log file per execution: `aviation-installer_{YYYY-MM-DD}_{HH-MM}.md`. Continue execution where possible, logging all issues encountered. If execution completes with no issues, do not create a log file.
+When any step fails or produces unexpected results (SQL errors, missing objects, wrong row counts, service failures, deployment issues), log the issue to `.cortex/skills/logs/`. Create one log file per execution: `aviation-installer_{YYYY-MM-DD}_{HH-MM}.md`. Continue execution where possible, logging all issues encountered. If execution completes with no issues, do not create a log file.
 
 ## Workflow
 
@@ -71,9 +72,16 @@ SELECT COUNT(*) FROM OVERTURE_MAPS__BASE.CARTO.INFRASTRUCTURE WHERE class ILIKE 
 
 ### Step 3: Select Airport
 
-**Goal:** Load airport inventory from Overture Maps and let user choose target airport.
+**Goal:** Help the user find and select their target airport from 22,000+ airports worldwide.
 
-Run the airport inventory query:
+IMPORTANT: Do NOT run a full inventory query. Use a search-based flow instead.
+
+**3a.** Ask the user which airport they want to install. Use the `ask_user_question` tool with a text input:
+- Question: "Which airport do you want to install? Type an airport name, city, or IATA/ICAO code (e.g. 'San Diego', 'SAN', 'KSAN')."
+- Default value: "" (empty)
+
+**3b.** Run a filtered search using their input. Replace `{SEARCH}` with the user's text:
+
 ```sql
 SELECT
     i.id AS AIRPORT_ID,
@@ -81,6 +89,7 @@ SELECT
         MAX(IFF(n.value:"key"::STRING = 'en', NULLIF(TRIM(n.value:"value"::STRING), ''), NULL)),
         i.names:primary::STRING
     ) AS AIRPORT_NAME,
+    i.class AS AIRPORT_CLASS,
     COALESCE(
         MAX(IFF(LOWER(t.value:"key"::STRING) IN ('iata','iata_code','iata:code'), NULLIF(TRIM(t.value:"value"::STRING), ''), NULL)),
         ''
@@ -95,24 +104,29 @@ FROM OVERTURE_MAPS__BASE.CARTO.INFRASTRUCTURE i
         input => IFF(IS_OBJECT(i.source_tags), i.source_tags, TRY_PARSE_JSON(i.source_tags)):"key_value",
         OUTER => TRUE
     ) t
-WHERE i.class ILIKE '%international_airport%'
+WHERE i.class IN ('international_airport','airport','regional_airport','municipal_airport','military_airport','private_airport','seaplane_airport','airstrip')
   AND i.subtype ILIKE '%airport%'
   AND ST_ASGEOJSON(i.geometry):type::STRING <> 'Point'
-GROUP BY i.id, i.names:primary::STRING
+GROUP BY i.id, i.names:primary::STRING, i.class
 HAVING COALESCE(
-    MAX(IFF(n.value:"key"::STRING = 'en', NULLIF(TRIM(n.value:"value"::STRING), ''), NULL)),
-    i.names:primary::STRING
-) IS NOT NULL
+        MAX(IFF(n.value:"key"::STRING = 'en', NULLIF(TRIM(n.value:"value"::STRING), ''), NULL)),
+        i.names:primary::STRING
+    ) ILIKE '%{SEARCH}%'
+    OR MAX(IFF(LOWER(t.value:"key"::STRING) IN ('iata','iata_code','iata:code'), NULLIF(TRIM(t.value:"value"::STRING), ''), NULL)) ILIKE '%{SEARCH}%'
+    OR MAX(IFF(LOWER(t.value:"key"::STRING) IN ('icao','icao_code','icao:code'), NULLIF(TRIM(t.value:"value"::STRING), ''), NULL)) ILIKE '%{SEARCH}%'
 ORDER BY AIRPORT_NAME
-LIMIT 5000;
+LIMIT 20;
 ```
 
-Ask user to select an airport. Derive:
-- `{TARGET_DB}` = `AIRPORT_{IATA}` (e.g., `AIRPORT_SAN`)
+**3c.** Present matching airports to the user. Use the `ask_user_question` tool with options showing each airport's name, IATA/ICAO codes, and class (e.g. "San Diego International Airport (SAN / KSAN) — international_airport"). If no results, ask the user to try a different search term.
+
+**3d.** From the selected airport, derive:
+- `{TARGET_DB}` = `AIRPORT_{IATA}` (prefer IATA; fall back to ICAO if IATA is empty)
 - `{SCHEMA}` = `PUBLIC`
-- `{IATA}` = Airport IATA code
+- `{IATA}` = Airport IATA code (or ICAO as fallback for DB naming)
 - `{ICAO}` = Airport ICAO code
 - `{AIRPORT_ID}` = Overture Maps record ID
+- `{AIRPORT_NAME}` = Airport name
 
 ### Step 3.5: Create Dedicated Warehouse
 
@@ -129,25 +143,54 @@ Set `{WAREHOUSE}` = `AVIA_{IATA}_WH` for all subsequent steps.
 
 ### Step 4: Gather Configuration
 
-Ask the user:
-1. Whether they have an Aviationstack API key (optional)
-2. Number of backfill days (default 5)
-3. Confirm warehouse to use (default: `AVIA_{IATA}_WH`)
+Collect configuration from the user using structured prompts. Ask these one at a time.
 
-### Step 5: Ensure Git Repository Stage Exists
+**4a. Flight Schedules (Aviationstack)**
 
-The airline CSV and dashboard files are loaded from a Git Repository Stage. If it doesn't exist, create it:
+Use the `ask_user_question` tool to ask whether the user wants flight schedule ingestion:
+- **Option "Skip"**: "Install without flight schedules. Everything works: real-time aircraft tracking, ground activity, runway crossings, and traffic analytics. Flights just won't be matched to airline schedules (no flight numbers, gate assignments, or delay metrics)."
+- **Option "I have a key"**: "Enable flight schedule ingestion via Aviationstack. Adds: flight number matching, airline/gate assignments, on-time performance, and delay analytics. Requires a free or paid API key from aviationstack.com."
+
+If user chooses "I have a key", ask them to provide the key using the `ask_user_question` tool with a text input.
+Set `{API_KEY}` to the provided key, or leave empty if skipped.
+
+**4b. TSA Throughput**
+
+Use the `ask_user_question` tool to ask whether the user wants TSA checkpoint throughput data:
+- **Option "Yes"** (default): "Enable TSA checkpoint throughput ingestion. Fetches weekly passenger throughput data from the TSA FOIA reading room. No API key needed. Adds: checkpoint passenger counts by hour, day, and checkpoint for the selected airport."
+- **Option "Skip"**: "Install without TSA throughput data. All other features remain fully functional."
+
+Set `{ENABLE_TSA}` = true/false based on user response.
+
+**4c. Historical Backfill**
+
+Use the `ask_user_question` tool with a text input to ask how many days of historical ADS-B data to load:
+- Question: "How many days of historical ADS-B data should we backfill? (0 = skip, max 30, default 5). More days = richer initial dataset but longer install time (~2-3 min per day)."
+- Default value: "5"
+
+Set `{BACKFILL_DAYS}` to the user's value.
+
+**4d. Warehouse**
+
+Use the `ask_user_question` tool to confirm the warehouse:
+- Question: "We'll create warehouse `AVIA_{IATA}_WH` (XSMALL, auto-suspend 60s). Confirm or provide a different warehouse name."
+- Default value: `AVIA_{IATA}_WH`
+
+Set `{WAREHOUSE}` to confirmed name.
+
+### Step 5: Create Git Repository Stage
+
+The airline CSV and skill files are loaded from a Git Repository Stage inside the airport database:
 
 ```sql
-CREATE DATABASE IF NOT EXISTS AVIA_INSTALLER;
-CREATE SCHEMA IF NOT EXISTS AVIA_INSTALLER.PUBLIC;
-
-CREATE OR REPLACE GIT REPOSITORY AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO
+CREATE OR REPLACE GIT REPOSITORY {TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO
   API_INTEGRATION = (ask user or use existing)
   ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-aviation-ops-intelligence.git';
 ```
 
-> **Note:** If the Git Repository Stage already exists (e.g., `@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main`), skip this step. The default `{GIT_REPO_STAGE_BASE}` is `@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main`.
+Set `{GIT_REPO_STAGE_BASE}` = `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main`.
+
+> **Note:** If the Git Repository Stage already exists, skip this step.
 
 ### Step 6: Route to Sub-Skills
 
@@ -162,15 +205,26 @@ Execute sub-skills in order:
 3. **Flight Schedules** (if API key provided) -- Read and follow `.cortex/skills/aviation-installer/flight-schedules/SKILL.md`
    - Creates schedule tables, ingestion procedure, task
 
-4. **Derived Analytics** -- Read and follow `.cortex/skills/aviation-installer/derived-analytics/SKILL.md`
+4. **TSA Throughput** (if enabled, default yes) -- Read and follow `.cortex/skills/aviation-installer/tsa-throughput/SKILL.md`
+   - Creates TSA PDF stages, throughput table, network rule, EAI, ingestion procedures, weekly tasks
+
+5. **Derived Analytics** -- Read and follow `.cortex/skills/aviation-installer/derived-analytics/SKILL.md`
    - Creates Dynamic Tables, monitoring views, task DAG, operational KPIs
 
-5. **Dashboard** -- Read and follow `.cortex/skills/aviation-dashboard/SKILL.md`
+6. **Dashboard** -- Read and follow `.cortex/skills/aviation-dashboard/SKILL.md`
    - Deploys Streamlit-in-Snowflake dashboard from Git repo stage
 
 ### Step 7: Start Task DAG
 
-Resume tasks in leaf-to-root order (avoids "Unable to update graph" errors):
+Resume tasks in leaf-to-root order (avoids "Unable to update graph" errors).
+
+First, ensure the root task is suspended (a sub-skill may have already resumed some tasks):
+
+```sql
+ALTER TASK {TARGET_DB}.{SCHEMA}.TASK_INGEST_ADSB SUSPEND;
+```
+
+Then resume children first, root last:
 
 ```sql
 ALTER TASK {TARGET_DB}.{SCHEMA}.TASK_REFRESH_ANALYTICS RESUME;
@@ -183,6 +237,12 @@ ALTER TASK {TARGET_DB}.{SCHEMA}.TASK_INGEST_ADSB RESUME;
 If flight schedules were configured:
 ```sql
 CALL {TARGET_DB}.{SCHEMA}.PROC_RESUME_OPTIONAL_TASK('TASK_FLIGHT_SCHEDULE');
+```
+
+If TSA throughput was enabled:
+```sql
+ALTER TASK {TARGET_DB}.{SCHEMA}.TASK_EXTRACT_TSA_PDF RESUME;
+ALTER TASK {TARGET_DB}.{SCHEMA}.TASK_FETCH_TSA_PDF RESUME;
 ```
 
 ### Step 8: Trigger Initial Data Load

@@ -33,13 +33,13 @@ Creates the `AIRPORT_{IATA}` database, schemas, cost-attribution tags, UDFs, air
 
 ## Error Logging
 
-When any step fails, log to `logs/` as `aviation-base-setup_{YYYY-MM-DD}_{HH-MM}.md`. Continue where possible, logging all issues. If no issues, do not create a log file.
+When any step fails, log to `.cortex/skills/logs/` as `aviation-base-setup_{YYYY-MM-DD}_{HH-MM}.md`. Continue where possible, logging all issues. If no issues, do not create a log file.
 
 ## Workflow
 
 Execute each statement using `snowflake_sql_execute`. Substitute all `{PLACEHOLDER}` values before executing.
 
-> **Read `references/sql-pipeline.md` for complete SQL for every step below.**
+> **Read `references/sql-pipeline-infra.md` (Steps 1-3) and `references/sql-pipeline-properties.md` (Steps 4-9) for complete SQL.**
 
 ### CRITICAL: Execution Rules
 

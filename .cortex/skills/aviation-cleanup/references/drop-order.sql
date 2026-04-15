@@ -6,8 +6,8 @@
 -- ============================================================
 -- PHASE 1: Streamlit Apps
 -- ============================================================
--- Drop dashboard app (if hosted in a separate DB, adjust accordingly)
-DROP STREAMLIT IF EXISTS AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD;
+-- Drop dashboard app (lives inside the airport database)
+DROP STREAMLIT IF EXISTS {TARGET_DB}.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD;
 
 -- ============================================================
 -- PHASE 2: Tasks (suspend leaf-to-root, then drop root-to-leaf)
@@ -126,9 +126,10 @@ DROP TABLE IF EXISTS {TARGET_DB}.PUBLIC.PROPERTIES_INFRASTRUCTURE;
 DROP TABLE IF EXISTS {TARGET_DB}.PUBLIC.PROPERTIES_AIRPORT;
 
 -- ============================================================
--- PHASE 8: Stages and File Formats
+-- PHASE 8: Stages, Git Repositories, and File Formats
 -- ============================================================
 DROP STAGE IF EXISTS {TARGET_DB}.PUBLIC.ADSB_HISTORY_STAGE;
+DROP GIT REPOSITORY IF EXISTS {TARGET_DB}.PUBLIC.AVIA_OPS_REPO;
 DROP FILE FORMAT IF EXISTS {TARGET_DB}.PUBLIC.FF_AIRLINES_CSV;
 
 -- ============================================================

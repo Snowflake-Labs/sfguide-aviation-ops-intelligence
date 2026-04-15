@@ -1,0 +1,15 @@
+spec:
+  containers:
+    - name: aviation-dashboard
+      image: /aviation_ops/public/aviation_dashboard_repo/aviation_dashboard:latest
+      resources:
+        requests:
+          cpu: 0.5
+          memory: 512Mi
+        limits:
+          cpu: 1
+          memory: 1Gi
+  endpoints:
+    - name: aviation-dashboard
+      port: 3001
+      public: true

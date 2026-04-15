@@ -71,19 +71,20 @@ ADSB_DATA_LOCAL (DT, DOWNSTREAM — bbox-filtered local positions)
 
 ## Error Logging
 
-When any step fails, log to `logs/` as `aviation-derived-analytics_{YYYY-MM-DD}_{HH-MM}.md`. If no issues, do not create a log file.
+When any step fails, log to `.cortex/skills/logs/` as `aviation-derived-analytics_{YYYY-MM-DD}_{HH-MM}.md`. If no issues, do not create a log file.
 
 ## Workflow
 
 > **Read the `references/` subfiles for complete SQL:**
 > - `references/01-adsb-data-local.md` — Foundation DT with VEHICLE_CATEGORY
-> - `references/02-gate-analysis-dts.md` — 6 gate analysis DTs
+> - `references/02a-gate-sessions-dts.md` — Gate analysis DTs 1-3 (sessions, ground points, flight gate time)
+> - `references/02b-gate-utilization-dts.md` — Gate analysis DTs 4-6 (utilization, airline dwell, flight dwell)
 > - `references/03-traffic-dts.md` — 5 traffic fact DTs + flight tracker
 > - `references/04-runway-crossings.md` — RUNWAY_CROSSINGS_DETAILED DT
 > - `references/05-views-and-tables.md` — HELPER_LANDING_LIVE_TIMETABLE, monitoring tables, placeholders
 > - `references/06a-procedures.md` — PROC_REFRESH_DERIVED, PROC_SMOKE_CHECK, PROC_REFRESH_ANALYTICS, PROC_RESUME_OPTIONAL_TASK
 > - `references/06b-tasks.md` — Task CREATE statements (no COMMENT on AFTER tasks) + ALTER TAG
-> - `references/06c-operations.md` — DT refresh, DT resume, task resume, install-time calls, verification
+> - `references/06c-operations.md` — DT refresh, DT resume, install-time calls, verification
 >
 > **Execute ALL SQL from each file in order. Do NOT skip or optimize away any queries.**
 

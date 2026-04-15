@@ -44,7 +44,7 @@ def _normalize_git_repo_stage_base(stage_base: str) -> str:
     """
     s = (stage_base or "").strip()
     if not s:
-        return "@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main"
+        return "@AVIA_OPS_REPO/branches/main"
     if not s.startswith("@"):
         s = "@" + s
 
@@ -151,7 +151,7 @@ def load_airports():
             input => IFF(IS_OBJECT(i.source_tags), i.source_tags, TRY_PARSE_JSON(i.source_tags)):"key_value",
             OUTER => TRUE
         ) t
-    WHERE i.class ILIKE '%international_airport%'
+    WHERE i.class IN ('international_airport','airport','regional_airport','municipal_airport','military_airport','private_airport','seaplane_airport','airstrip')
       AND i.subtype ILIKE '%airport%'
       AND ST_ASGEOJSON(i.geometry):type::STRING <> 'Point'
     GROUP BY i.id, i.names:primary::STRING
@@ -185,7 +185,7 @@ def load_airport_geometry_by_id(airport_id: str):
       ST_X(ST_CENTROID(i.geometry)) AS center_lon
     FROM OVERTURE_MAPS__BASE.CARTO.INFRASTRUCTURE i
     WHERE i.id = '{_sql_escape_str(airport_id)}'
-      AND i.class ILIKE '%international_airport%'
+      AND i.class IN ('international_airport','airport','regional_airport','municipal_airport','military_airport','private_airport','seaplane_airport','airstrip')
       AND i.subtype ILIKE '%airport%'
       AND ST_ASGEOJSON(i.geometry):type::STRING <> 'Point'
     LIMIT 1
@@ -284,7 +284,7 @@ WITH g AS (
   SELECT i.geometry AS geometry
   FROM OVERTURE_MAPS__BASE.CARTO.INFRASTRUCTURE i
   WHERE i.id = '{airport_id_sql}'
-    AND i.class ILIKE '%international_airport%'
+    AND i.class IN ('international_airport','airport','regional_airport','municipal_airport','military_airport','private_airport','seaplane_airport','airstrip')
     AND i.subtype ILIKE '%airport%'
     AND ST_ASGEOJSON(i.geometry):type::STRING <> 'Point'
   LIMIT 1
@@ -5412,13 +5412,297 @@ SELECT 'Flight schedule setup complete. Task is now running.' AS status;
 """
 
 
+def generate_tsa_sql(
+    airport: dict,
+    database: str,
+    schema: str,
+    warehouse: str,
+) -> str:
+    """Generate TSA checkpoint throughput pipeline SQL."""
+    eai_tsa_gov = re.sub(r"[^A-Za-z0-9_]", "_", f"{database}_{schema}_TSA_GOV_EAI").upper()
+    tracking_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-tsa-throughput","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
+
+    return f"""-- =============================================================================
+-- TSA THROUGHPUT PIPELINE FOR {airport['name']} ({airport['iata_code']})
+-- Database: {database}.{schema}
+-- Source: TSA FOIA Reading Room (weekly PDF)
+-- =============================================================================
+
+ALTER SESSION SET query_tag = '{tracking_tag}';
+
+-- -----------------------------------------------------------------------------
+-- Network Rule and External Access Integration
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE NETWORK RULE {database}.{schema}.{schema}_tsa_gov_rule
+  TYPE = HOST_PORT
+  MODE = EGRESS
+  VALUE_LIST = ('www.tsa.gov:443')
+  COMMENT = '{tracking_tag}';
+
+CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {eai_tsa_gov}
+  ALLOWED_NETWORK_RULES = ({database}.{schema}.{schema}_tsa_gov_rule)
+  ENABLED = TRUE
+  COMMENT = '{tracking_tag}';
+
+-- -----------------------------------------------------------------------------
+-- Stages (SNOWFLAKE_SSE required for AI_EXTRACT)
+-- -----------------------------------------------------------------------------
+CREATE STAGE IF NOT EXISTS {database}.{schema}.TSA_PDF_STAGE
+  DIRECTORY  = (ENABLE = TRUE)
+  ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE')
+  COMMENT    = '{tracking_tag}';
+
+CREATE STAGE IF NOT EXISTS {database}.{schema}.TSA_PDF_PAGES_STAGE
+  DIRECTORY  = (ENABLE = TRUE)
+  ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE')
+  COMMENT    = '{tracking_tag}';
+
+-- -----------------------------------------------------------------------------
+-- Table
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS {database}.{schema}.TSA_THROUGHPUT (
+    source_file        VARCHAR,
+    page_file          VARCHAR,
+    date               VARCHAR,
+    hour_of_day        VARCHAR,
+    airport_code       VARCHAR,
+    airport_name       VARCHAR,
+    city               VARCHAR,
+    state              VARCHAR,
+    checkpoint         VARCHAR,
+    total_pax_kcm_pax  VARCHAR,
+    extracted_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = '{tracking_tag}';
+
+-- -----------------------------------------------------------------------------
+-- Procedures
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_FETCH_PDF_TO_STAGE(url STRING, stage_path STRING)
+RETURNS STRING
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python', 'requests')
+EXTERNAL_ACCESS_INTEGRATIONS = ({eai_tsa_gov})
+HANDLER = 'run'
+COMMENT = '{tracking_tag}'
+AS $$
+import io
+import requests
+from datetime import datetime
+
+def run(session, url: str, stage_path: str) -> str:
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    pdf_bytes = io.BytesIO(response.content)
+    filename  = url.split('?')[0].split('/')[-1]
+    if not filename.lower().endswith('.pdf'):
+        filename += '.pdf'
+    timestamp       = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    staged_filename = f'{{timestamp}}_{{filename}}'
+    session.file.put_stream(pdf_bytes, f'{{stage_path}}/{{staged_filename}}', auto_compress=False)
+    return f'Success: uploaded {{staged_filename}} to {{stage_path}}'
+$$;
+
+CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_FETCH_LATEST_TSA_PDF(stage_path STRING)
+RETURNS STRING
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python', 'requests')
+EXTERNAL_ACCESS_INTEGRATIONS = ({eai_tsa_gov})
+HANDLER = 'run'
+COMMENT = '{tracking_tag}'
+AS $$
+import re
+import requests
+from datetime import datetime
+
+FOIA_PAGE = 'https://www.tsa.gov/foia/readingroom/'
+BASE_URL  = 'https://www.tsa.gov'
+PATTERN   = re.compile(r'href="(/sites/default/files/foia-readingroom/tsa-throughput-data-[^"]+\\.pdf)"')
+MONTH_MAP = {{
+    'january':1,'february':2,'march':3,'april':4,'may':5,'june':6,
+    'july':7,'august':8,'september':9,'october':10,'november':11,'december':12
+}}
+
+def parse_end_date(filename):
+    m = re.search(r'-to-(\\w+)-(\\d+)-(\\d{{4}})\\.pdf$', filename)
+    if m:
+        month, day, year = m.group(1).lower(), int(m.group(2)), int(m.group(3))
+        return datetime(year, MONTH_MAP.get(month, 1), day)
+    return datetime.min
+
+def run(session, stage_path: str) -> str:
+    html  = requests.get(FOIA_PAGE, timeout=30).text
+    paths = PATTERN.findall(html)
+    if not paths:
+        return 'Error: no throughput PDF links found on FOIA page'
+    latest_path = max(paths, key=lambda p: parse_end_date(p.split('/')[-1]))
+    url         = BASE_URL + latest_path
+    filename    = url.split('/')[-1]
+    staged = [row['name'] for row in session.sql(f'LIST {{stage_path}}').collect()]
+    if any(filename in s for s in staged):
+        return f'Already up to date: {{filename}} is already in {{stage_path}}'
+    db     = session.get_current_database()
+    schema = session.get_current_schema()
+    result = session.sql(
+        f"CALL {{db}}.{{schema}}.PROC_FETCH_PDF_TO_STAGE('{{url}}', '{{stage_path}}')"
+    ).collect()[0][0]
+    return result
+$$;
+
+CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_PROCESS_TSA_PDF(pages_stage VARCHAR, target_table VARCHAR)
+RETURNS VARCHAR
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python', 'pypdf')
+HANDLER = 'run'
+COMMENT = '{tracking_tag}'
+AS $$
+import io
+import json
+import os
+import tempfile
+import pypdf
+
+def run(session, pages_stage: str, target_table: str) -> str:
+    db           = session.get_current_database()
+    schema       = session.get_current_schema()
+    source_stage = f'@{{db}}.{{schema}}.TSA_PDF_STAGE'
+    files     = session.sql(f'LIST {{source_stage}}').collect()
+    pdf_files = sorted(
+        [r['name'].split('/')[-1] for r in files if r['name'].endswith('.pdf')],
+        reverse=True
+    )
+    if not pdf_files:
+        return 'No PDF found in source stage'
+    source_file = pdf_files[0]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        session.file.get(f'{{source_stage}}/{{source_file}}', tmpdir)
+        local_path = os.path.join(tmpdir, os.path.basename(source_file))
+        with open(local_path, 'rb') as f:
+            pdf_bytes = f.read()
+    reader    = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+    num_pages = len(reader.pages)
+    for i, page in enumerate(reader.pages):
+        writer = pypdf.PdfWriter()
+        writer.add_page(page)
+        buf = io.BytesIO()
+        writer.write(buf)
+        buf.seek(0)
+        session.file.put_stream(buf, f'{{pages_stage}}/page_{{i+1:04d}}.pdf', auto_compress=False)
+    stage_name = pages_stage.lstrip('@')
+    session.sql(f'ALTER STAGE {{stage_name}} REFRESH').collect()
+    schema_json = {{
+        "schema": {{
+            "type": "object",
+            "properties": {{
+                "rows": {{
+                    "type": "object",
+                    "description": "All data rows from the table in this document",
+                    "column_ordering": ["date","hour_of_day","airport_code","airport_name","city","state","checkpoint","total_pax_kcm_pax"],
+                    "properties": {{
+                        "date":              {{"type": "array", "description": "Date column"}},
+                        "hour_of_day":       {{"type": "array", "description": "Hour of Day column"}},
+                        "airport_code":      {{"type": "array", "description": "Airport Code column"}},
+                        "airport_name":      {{"type": "array", "description": "Airport Name column"}},
+                        "city":              {{"type": "array", "description": "City column"}},
+                        "state":             {{"type": "array", "description": "State column"}},
+                        "checkpoint":        {{"type": "array", "description": "Checkpoint column"}},
+                        "total_pax_kcm_pax": {{"type": "array", "description": "Total Pax + KCM PAX column"}}
+                    }}
+                }}
+            }}
+        }}
+    }}
+    schema_str = json.dumps(schema_json)
+    extract_sql = f\"\"\"
+        SELECT SPLIT_PART(relative_path, '/', -1) AS page_file,
+               AI_EXTRACT(file => TO_FILE('{{pages_stage}}', SPLIT_PART(relative_path, '/', -1)),
+                          responseFormat => PARSE_JSON('{{schema_str}}')):response AS result
+        FROM DIRECTORY({{pages_stage}})
+        WHERE relative_path ILIKE '%.pdf'
+        ORDER BY relative_path
+    \"\"\"
+    extract_rows = session.sql(extract_sql).collect()
+    insert_rows = []
+    for r in extract_rows:
+        page_file = r['PAGE_FILE']
+        raw       = r['RESULT']
+        if not raw:
+            continue
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        tbl  = data.get('rows', {{}}) if data else {{}}
+        dates  = tbl.get('date', [])              or []
+        hours  = tbl.get('hour_of_day', [])        or []
+        codes  = tbl.get('airport_code', [])       or []
+        names  = tbl.get('airport_name', [])       or []
+        cities = tbl.get('city', [])               or []
+        states = tbl.get('state', [])              or []
+        chkpts = tbl.get('checkpoint', [])         or []
+        pax    = tbl.get('total_pax_kcm_pax', [])  or []
+        for i in range(len(dates)):
+            def s(lst, idx=i): return str(lst[idx]).replace("'","''") if idx < len(lst) and lst[idx] is not None else ''
+            insert_rows.append(
+                f"('{{source_file}}','{{page_file}}','{{s(dates)}}','{{s(hours)}}',"
+                f"'{{s(codes)}}','{{s(names)}}','{{s(cities)}}','{{s(states)}}',"
+                f"'{{s(chkpts)}}','{{s(pax)}}',CURRENT_TIMESTAMP())"
+            )
+    total_inserted = 0
+    if insert_rows:
+        for b in range(0, len(insert_rows), 500):
+            batch = insert_rows[b:b+500]
+            session.sql(f\"\"\"
+                INSERT INTO {{target_table}}
+                    (source_file,page_file,date,hour_of_day,airport_code,
+                     airport_name,city,state,checkpoint,total_pax_kcm_pax,extracted_at)
+                VALUES {{','.join(batch)}}
+            \"\"\").collect()
+            total_inserted += len(batch)
+    session.sql(f"REMOVE {{pages_stage}} PATTERN='.*'").collect()
+    return (f'Source: {{source_file}} | Split: {{num_pages}} pages | '
+            f'Inserted: {{total_inserted}} rows into {{target_table}} | Pages stage cleared')
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Tasks (weekly Monday 9am PT)
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE TASK {database}.{schema}.TASK_FETCH_TSA_PDF
+  WAREHOUSE = {warehouse}
+  SCHEDULE  = 'USING CRON 0 9 * * 1 America/Los_Angeles'
+  COMMENT   = '{tracking_tag}'
+AS
+  CALL {database}.{schema}.PROC_FETCH_LATEST_TSA_PDF('@{database}.{schema}.TSA_PDF_STAGE');
+
+CREATE OR REPLACE TASK {database}.{schema}.TASK_EXTRACT_TSA_PDF
+  WAREHOUSE = {warehouse}
+  AFTER     {database}.{schema}.TASK_FETCH_TSA_PDF
+  COMMENT   = '{tracking_tag}'
+AS
+  CALL {database}.{schema}.PROC_PROCESS_TSA_PDF(
+    '@{database}.{schema}.TSA_PDF_PAGES_STAGE',
+    '{database}.{schema}.TSA_THROUGHPUT'
+  );
+
+-- Resume tasks (child first, then root)
+ALTER TASK {database}.{schema}.TASK_EXTRACT_TSA_PDF RESUME;
+ALTER TASK {database}.{schema}.TASK_FETCH_TSA_PDF RESUME;
+
+-- Trigger initial fetch and extract
+CALL {database}.{schema}.PROC_FETCH_LATEST_TSA_PDF('@{database}.{schema}.TSA_PDF_STAGE');
+CALL {database}.{schema}.PROC_PROCESS_TSA_PDF('@{database}.{schema}.TSA_PDF_PAGES_STAGE', '{database}.{schema}.TSA_THROUGHPUT');
+
+SELECT 'TSA throughput pipeline setup complete.' AS status;
+"""
+
+
 def generate_all_sql(
     airport: dict,
     database: str,
     schema: str,
     warehouse: str,
     api_key: str = None,
-    git_repo_stage_base: str = "@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main",
+    git_repo_stage_base: str = "@AVIA_OPS_REPO/branches/main",
     adsb_history_backfill_days: int = 5,
 ) -> dict:
     """Generate all SQL files.
@@ -5427,7 +5711,8 @@ def generate_all_sql(
     1. Base infrastructure (database, schema, geometry tables)
     2. ADS-B setup (tables, procedures, daily batch ingestion)
     3. ADS-B History backfill (downloads TAR files, processes with ST_DWITHIN filtering)
-    4. Flight Schedule (loads schedule data with aircraft registrations) 
+    4. Flight Schedule (loads schedule data with aircraft registrations)
+    4b. TSA Throughput (PDF-based checkpoint throughput via AI_EXTRACT)
     5. Derived analytics tables
     
     ADS-B data is loaded first (daily batch + history) before schedule.
@@ -5481,6 +5766,7 @@ def generate_all_sql(
         )
     
     # Derived analytics runs LAST (needs both Flight Schedule and ADS-B data)
+    files['04b_tsa_throughput.sql'] = generate_tsa_sql(airport, database, schema, warehouse)
     files['05_derived.sql'] = generate_derived_sql(airport, database, schema, warehouse, adsb_history_backfill_days)
     
     return files
@@ -5713,7 +5999,7 @@ def main():
     with st.expander("Advanced: Git repo stage path", expanded=False):
         git_repo_stage_base_input = st.text_input(
             "Git repo stage base",
-            value="@AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO/branches/main",
+            value="@AVIA_OPS_REPO/branches/main",
             help="Example: @REPO_NAME/branches/main (or fully-qualified @DB.SCHEMA.REPO_NAME/branches/main). Do not include a trailing slash.",
         )
         git_repo_stage_base = _normalize_git_repo_stage_base(git_repo_stage_base_input)

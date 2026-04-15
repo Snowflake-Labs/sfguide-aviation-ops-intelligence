@@ -46,7 +46,7 @@ Without this sub-skill, ADS-B tracks are still captured but won't be enriched wi
 
 ## Error Logging
 
-When any step fails, log to `logs/` as `aviation-flight-schedules_{YYYY-MM-DD}_{HH-MM}.md`. If no issues, do not create a log file.
+When any step fails, log to `.cortex/skills/logs/` as `aviation-flight-schedules_{YYYY-MM-DD}_{HH-MM}.md`. If no issues, do not create a log file.
 
 ## Workflow
 
