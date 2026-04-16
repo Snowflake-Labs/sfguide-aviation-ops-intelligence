@@ -18,7 +18,7 @@ export default function RunwayCrossings() {
   const [dateTo, setDateTo] = useState(today);
 
   const airportSql = airport
-    ? `SELECT LAT, LON, ZOOM FROM ${db}.PROPERTIES_AIRPORT LIMIT 1`
+    ? `SELECT CENTER_LAT AS LAT, CENTER_LON AS LON FROM ${db}.PROPERTIES_AIRPORT LIMIT 1`
     : '';
   const { data: metaRows } = useSfQuery(airportSql, airport, 'PUBLIC');
   const meta = metaRows[0] as any;
@@ -106,7 +106,7 @@ export default function RunwayCrossings() {
   }, [hexData, runwayRows]);
 
   const viewState = meta
-    ? { longitude: Number(meta.LON), latitude: Number(meta.LAT), zoom: Number(meta.ZOOM || 14), pitch: 40, bearing: 0 }
+    ? { longitude: Number(meta.LON), latitude: Number(meta.LAT), zoom: 14, pitch: 40, bearing: 0 }
     : undefined;
 
   if (!airport) return <div className="page-dashboard"><p className="empty-state">Select an airport to begin.</p></div>;

@@ -236,11 +236,15 @@ def run(session, pages_stage: str, target_table: str) -> str:
             """).collect()
             total_inserted += len(batch)
 
-    session.sql(f"REMOVE {pages_stage} PATTERN='.*'").collect()
+    try:
+        session.sql(f"REMOVE {pages_stage} PATTERN='.*'").collect()
+        cleanup_msg = 'Pages stage cleared'
+    except Exception:
+        cleanup_msg = 'Pages stage cleanup skipped (non-blocking)'
 
     return (f'Source: {source_file} | '
             f'Split: {num_pages} pages | '
             f'Inserted: {total_inserted} rows into {target_table} | '
-            f'Pages stage cleared')
+            f'{cleanup_msg}')
 $$;
 ```

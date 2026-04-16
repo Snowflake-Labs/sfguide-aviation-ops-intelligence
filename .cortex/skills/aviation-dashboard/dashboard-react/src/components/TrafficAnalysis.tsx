@@ -20,18 +20,17 @@ export default function TrafficAnalysis() {
   const [dateTo, setDateTo] = useState(today);
 
   const dailySql = airport
-    ? `SELECT LOCAL_DATE AS DATE, SUM(UNIQUE_AIRCRAFT) AS AIRCRAFT, SUM(UNIQUE_FLIGHTS) AS FLIGHTS,
+    ? `SELECT DATE, SUM(UNIQUE_AIRCRAFT) AS AIRCRAFT, SUM(UNIQUE_FLIGHTS) AS FLIGHTS,
               SUM(TOTAL_RECORDS) AS RECORDS
        FROM ${db}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
-       WHERE LOCAL_DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        GROUP BY 1 ORDER BY 1`
     : '';
   const { data: dailyData, loading } = useSfQuery(dailySql, airport, 'PUBLIC', [dateFrom, dateTo]);
 
   const hourlySql = airport
-    ? `SELECT HOUR_OF_DAY AS HOUR, SUM(AIRCRAFT_COUNT) AS AIRCRAFT
+    ? `SELECT HOUR, SUM(AIRCRAFT_COUNT) AS AIRCRAFT
        FROM ${db}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
-       WHERE LOCAL_DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        GROUP BY 1 ORDER BY 1`
     : '';
   const { data: hourlyData } = useSfQuery(hourlySql, airport, 'PUBLIC', [dateFrom, dateTo]);
@@ -39,7 +38,7 @@ export default function TrafficAnalysis() {
   const airlineSql = airport
     ? `SELECT AIRLINE_CODE AS AIRLINE, SUM(FLIGHT_COUNT) AS FLIGHTS, SUM(AIRCRAFT_COUNT) AS AIRCRAFT
        FROM ${db}.FLIGHT_TRAFFIC_FACT_AIRLINE_TRAFFIC_DAILY
-       WHERE LOCAL_DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        GROUP BY 1 ORDER BY FLIGHTS DESC LIMIT 15`
     : '';
   const { data: airlineData } = useSfQuery(airlineSql, airport, 'PUBLIC', [dateFrom, dateTo]);
@@ -48,7 +47,7 @@ export default function TrafficAnalysis() {
     ? `SELECT AIRLINE, SUM(TOTAL_DELAY_MINUTES) AS DELAY_MIN, SUM(DELAYED_FLIGHTS) AS DELAYED,
               SUM(TOTAL_EARLY_MINUTES) AS EARLY_MIN, SUM(EARLY_FLIGHTS) AS EARLY
        FROM ${db}.FLIGHT_TRAFFIC_FACT_AIRLINE_DELAY_DAILY
-       WHERE LOCAL_DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        GROUP BY 1 ORDER BY DELAY_MIN DESC LIMIT 15`
     : '';
   const { data: delayData } = useSfQuery(delaySql, airport, 'PUBLIC', [dateFrom, dateTo]);

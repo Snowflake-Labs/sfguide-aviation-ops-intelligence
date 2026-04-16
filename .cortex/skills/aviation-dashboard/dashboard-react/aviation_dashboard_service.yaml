@@ -1,14 +1,17 @@
 spec:
   containers:
     - name: aviation-dashboard
-      image: /aviation_ops/public/aviation_dashboard_repo/aviation_dashboard:latest
+      image: /{TARGET_DB}/public/aviation_dashboard_repo/aviation_dashboard:latest
+      env:
+        SNOWFLAKE_DATABASE: "{TARGET_DB}"
+        SNOWFLAKE_WAREHOUSE: "{WAREHOUSE}"
       resources:
         requests:
-          cpu: 0.5
-          memory: 512Mi
+          cpu: "0.5"
+          memory: "512Mi"
         limits:
-          cpu: 1
-          memory: 1Gi
+          cpu: "1"
+          memory: "1Gi"
   endpoints:
     - name: aviation-dashboard
       port: 3001

@@ -14,7 +14,7 @@ metadata:
 
 > **This subskill cannot be run independently.** It must be invoked from the `aviation-installer` router after `adsb-ingestion` (and optionally `flight-schedules`) completes.
 
-Deploys 13 Dynamic Tables, 3 views, monitoring tables, refresh procedures, and operational KPI placeholders. This is the analytics layer that powers all dashboard pages.
+Deploys 13 Dynamic Tables, 4 views, monitoring tables, refresh procedures, and operational KPI placeholders. This is the analytics layer that powers all dashboard pages.
 
 ## Pipeline Architecture
 
@@ -85,6 +85,7 @@ When any step fails, log to `.cortex/skills/logs/` as `aviation-derived-analytic
 > - `references/06a-procedures.md` — PROC_REFRESH_DERIVED, PROC_SMOKE_CHECK, PROC_REFRESH_ANALYTICS, PROC_RESUME_OPTIONAL_TASK
 > - `references/06b-tasks.md` — Task CREATE statements (no COMMENT on AFTER tasks) + ALTER TAG
 > - `references/06c-operations.md` — DT refresh, DT resume, install-time calls, verification
+> - `references/07-tsa-checkpoint-geo.md` — V_TSA_CHECKPOINT_GEO view (TSA throughput mapped to terminal geometries)
 >
 > **Execute ALL SQL from each file in order. Do NOT skip or optimize away any queries.**
 
@@ -133,6 +134,7 @@ In dependency order:
 - `H2H_CONFLICT_PAIRS` — head-to-head conflict placeholder table
 - `V_AIR_OPS_TIMELINE` — operational timeline view (placeholder structure)
 - `V_AIR_OPS_DAILY_KPIS` — daily KPI view (placeholder structure for Performance page)
+- `V_TSA_CHECKPOINT_GEO` — TSA checkpoint throughput mapped to terminal building geometries (fuzzy-matched from PROPERTIES_INFRASTRUCTURE)
 
 ### Step 6: Create Refresh Procedures
 
@@ -167,13 +169,13 @@ ALTER DYNAMIC TABLE {TARGET_DB}.{SCHEMA}.RUNWAY_CROSSINGS_DETAILED REFRESH;
 ### Step 9: Verify Pipeline
 
 ```sql
-SELECT NAME, SCHEDULING_STATE, DATA_TIMESTAMP, LAST_REFRESH_DETAILS
-FROM INFORMATION_SCHEMA.DYNAMIC_TABLES
-WHERE TABLE_SCHEMA = '{SCHEMA}'
-ORDER BY NAME;
+SHOW DYNAMIC TABLES IN {TARGET_DB}.{SCHEMA};
+SELECT "name", "scheduling_state", "data_timestamp"
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+ORDER BY "name";
 ```
 
-Expected: All DTs in `SCHEDULED` or `EXECUTING` state. `DATA_TIMESTAMP` will be NULL until first refresh completes.
+Expected: All DTs in `SCHEDULED` or `EXECUTING` state. `data_timestamp` will be NULL until first refresh completes.
 
 ## Stopping Points
 

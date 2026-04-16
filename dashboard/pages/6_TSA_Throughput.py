@@ -5,16 +5,18 @@ Analyze TSA checkpoint throughput by hour, day, and checkpoint
 
 import streamlit as st
 import pandas as pd
+import pydeck as pdk
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from snowflake.snowpark.context import get_active_session
 from datetime import datetime, timedelta
 import altair as alt
+import json
 import sys
 sys.path.append('..')
 import utils
 from config import BAR_CONFIG, TOOLTIP_FORMAT
-from config.colors import Hex as COLORS
+from config.colors import Hex as COLORS, get_intensity_color_3point
 import ui_components
 
 st.set_page_config(
@@ -234,6 +236,163 @@ col3.metric("Peak Hour", peak_hour_label)
 col4.metric("Checkpoints", num_checkpoints)
 
 st.divider()
+
+@st.cache_data(ttl=300)
+def get_checkpoint_geo_data(_session, iata, start_dt, end_dt, chk_filter):
+    try:
+        _session.sql(f"SELECT 1 FROM {db_prefix}.V_TSA_CHECKPOINT_GEO LIMIT 0").collect()
+    except Exception:
+        return pd.DataFrame()
+    query = f"""
+    SELECT
+        checkpoint,
+        terminal_name,
+        lat,
+        lon,
+        terminal_geojson,
+        match_type,
+        SUM(passengers) AS total_passengers,
+        COUNT(DISTINCT throughput_date) AS num_days,
+        ROUND(SUM(passengers) / NULLIF(COUNT(DISTINCT throughput_date), 0)) AS daily_avg_passengers
+    FROM {db_prefix}.V_TSA_CHECKPOINT_GEO
+    WHERE throughput_date BETWEEN '{start_dt}' AND '{end_dt}'
+      AND {chk_filter}
+    GROUP BY 1, 2, 3, 4, 5, 6
+    ORDER BY total_passengers DESC NULLS LAST
+    """
+    return _session.sql(query).to_pandas()
+
+@st.cache_data(ttl=3600)
+def get_airport_center(_session):
+    query = f"SELECT center_lat, center_lon FROM {db_prefix}.PROPERTIES_AIRPORT LIMIT 1"
+    result = _session.sql(query).to_pandas()
+    if not result.empty:
+        return float(result.iloc[0]['CENTER_LAT']), float(result.iloc[0]['CENTER_LON'])
+    return 32.73, -117.19
+
+geo_data = get_checkpoint_geo_data(session, airport_iata, start_date, end_date, checkpoint_filter)
+
+if not geo_data.empty and geo_data['TOTAL_PASSENGERS'].notna().any():
+    st.subheader("🗺️ Checkpoint Throughput Map")
+    st.caption("Terminal polygons and checkpoint locations sized by passenger throughput. Unmatched checkpoints shown at airport center.")
+
+    center_lat, center_lon = get_airport_center(session)
+
+    max_pax = geo_data['TOTAL_PASSENGERS'].max() if geo_data['TOTAL_PASSENGERS'].notna().any() else 1
+    if pd.isna(max_pax) or max_pax == 0:
+        max_pax = 1
+
+    geo_data['NORM'] = geo_data['TOTAL_PASSENGERS'].fillna(0) / max_pax
+    geo_data['COLOR'] = geo_data['NORM'].apply(get_intensity_color_3point)
+    geo_data['RADIUS'] = (geo_data['NORM'].fillna(0) * 150 + 30).astype(float)
+    geo_data['DISPLAY_PAX'] = geo_data['TOTAL_PASSENGERS'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
+    geo_data['DISPLAY_AVG'] = geo_data['DAILY_AVG_PASSENGERS'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
+    geo_data['DISPLAY_MATCH'] = geo_data['MATCH_TYPE'].apply(
+        lambda x: 'Terminal Matched' if x == 'matched' else 'Airport Center (no match)')
+
+    layers = []
+
+    polys_with_geojson = geo_data[geo_data['TERMINAL_GEOJSON'].notna() & (geo_data['MATCH_TYPE'] == 'matched')]
+    if not polys_with_geojson.empty:
+        features = []
+        seen = set()
+        for _, row in polys_with_geojson.iterrows():
+            key = row.get('TERMINAL_NAME', '')
+            if key in seen or not row['TERMINAL_GEOJSON']:
+                continue
+            seen.add(key)
+            try:
+                geom = json.loads(row['TERMINAL_GEOJSON'])
+                norm_val = float(row['NORM']) if pd.notna(row['NORM']) else 0
+                color = get_intensity_color_3point(norm_val)
+                features.append({
+                    "type": "Feature",
+                    "geometry": geom,
+                    "properties": {
+                        "terminal_name": str(row.get('TERMINAL_NAME', '')),
+                        "passengers": str(row.get('DISPLAY_PAX', '0')),
+                        "fill_color": color[:3],
+                        "fill_alpha": 100,
+                    }
+                })
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        if features:
+            geojson_data = {"type": "FeatureCollection", "features": features}
+            layers.append(pdk.Layer(
+                "GeoJsonLayer",
+                data=geojson_data,
+                pickable=True,
+                stroked=True,
+                filled=True,
+                get_fill_color="[properties.fill_color[0], properties.fill_color[1], properties.fill_color[2], properties.fill_alpha]",
+                get_line_color=[200, 200, 200, 180],
+                get_line_width=2,
+                line_width_min_pixels=1,
+            ))
+
+    scatter_data = geo_data[['LAT', 'LON', 'COLOR', 'RADIUS', 'CHECKPOINT', 'DISPLAY_PAX', 'DISPLAY_AVG', 'DISPLAY_MATCH', 'MATCH_TYPE']].copy()
+    scatter_data = scatter_data.rename(columns={'LAT': 'lat', 'LON': 'lon'})
+    scatter_data['lat'] = scatter_data['lat'].astype(float)
+    scatter_data['lon'] = scatter_data['lon'].astype(float)
+    scatter_data['RADIUS'] = scatter_data['RADIUS'].astype(float)
+
+    layers.append(pdk.Layer(
+        "ScatterplotLayer",
+        data=scatter_data,
+        get_position='[lon, lat]',
+        get_fill_color='COLOR',
+        get_radius='RADIUS',
+        radius_min_pixels=8,
+        radius_max_pixels=60,
+        pickable=True,
+        opacity=0.85,
+    ))
+
+    centroid_data = scatter_data[scatter_data['MATCH_TYPE'] == 'centroid']
+    if not centroid_data.empty:
+        layers.append(pdk.Layer(
+            "ScatterplotLayer",
+            data=centroid_data,
+            get_position='[lon, lat]',
+            get_fill_color=[180, 180, 180, 120],
+            get_line_color=[255, 255, 255, 200],
+            get_radius='RADIUS',
+            radius_min_pixels=6,
+            radius_max_pixels=40,
+            stroked=True,
+            line_width_min_pixels=2,
+            pickable=True,
+            opacity=0.7,
+        ))
+
+    r = pdk.Deck(
+        layers=layers,
+        initial_view_state=pdk.ViewState(
+            latitude=center_lat,
+            longitude=center_lon,
+            zoom=14,
+            pitch=30,
+        ),
+        tooltip={
+            "html": "<b>{CHECKPOINT}</b><br/>Passengers: {DISPLAY_PAX}<br/>Daily Avg: {DISPLAY_AVG}<br/>{DISPLAY_MATCH}",
+            "style": {"backgroundColor": "#1a2332", "color": "white", "fontSize": "12px"}
+        }
+    )
+    st.pydeck_chart(r, use_container_width=True, height=500, key="tsa_checkpoint_map")
+
+    match_summary = geo_data.groupby('MATCH_TYPE').agg(
+        checkpoints=('CHECKPOINT', 'nunique'),
+        passengers=('TOTAL_PASSENGERS', 'sum')
+    ).reset_index()
+    cols = st.columns(len(match_summary))
+    for i, (_, row) in enumerate(match_summary.iterrows()):
+        label = "Terminal Matched" if row['MATCH_TYPE'] == 'matched' else "Airport Center"
+        pax_val = int(row['passengers']) if pd.notna(row['passengers']) else 0
+        cols[i].metric(f"{label} ({int(row['checkpoints'])} checkpoints)", f"{pax_val:,} pax")
+
+    st.divider()
 
 st.subheader("📅 Daily Throughput Trend")
 

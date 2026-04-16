@@ -1,8 +1,42 @@
-*.pyc
+# Environment and secrets
+.env
+*.p8
+*.pem
+rsa_key*
 installer/aviationstack_api_key.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
 .DS_Store
-dashboard/.DS_Store
-/.snowflake
+
+# Node / React
+node_modules/
+package-lock.json
+tsconfig.tsbuildinfo
+
+# Distribution
+dist/
+dist-server/
+build/
+*.egg-info/
+
+# Cortex Code session artifacts
+.snowflake/cortex/plans/
+
+# Project-specific
 BACKLOG.md
 BACKLOG/BACKLOG_H_done.md
 BACKLOG/BACKLOG_G.md
@@ -16,4 +50,4 @@ BACKLOG/BACKLOG_A.md
 INSTALLER_FIX.md
 sfguide-aviation-ops-intelligence.code-workspace
 /reports
-/.venv
+/.snowflake

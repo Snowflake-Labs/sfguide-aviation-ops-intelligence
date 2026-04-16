@@ -34,7 +34,7 @@ export default function GateAnalysis() {
   const gateSql = airport
     ? `SELECT gate_name AS GATE, SUM(dwell_minutes) AS DWELL_MIN, SUM(flights) AS FLIGHTS
        FROM ${db}.GATE_ANALYSIS_GATE_UTIL_DAILY
-       WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        GROUP BY 1 ORDER BY DWELL_MIN DESC LIMIT 20`
     : '';
   const { data: gateData } = useSfQuery(gateSql, airport, 'PUBLIC', [dateFrom, dateTo]);
@@ -42,7 +42,7 @@ export default function GateAnalysis() {
   const airlineSql = airport
     ? `SELECT airline_code AS AIRLINE, SUM(dwell_minutes) AS DWELL_MIN, SUM(flights) AS FLIGHTS
        FROM ${db}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY
-       WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        GROUP BY 1 ORDER BY DWELL_MIN DESC LIMIT 15`
     : '';
   const { data: airlineData } = useSfQuery(airlineSql, airport, 'PUBLIC', [dateFrom, dateTo]);
