@@ -194,7 +194,7 @@ Expected: All DTs in `SCHEDULED` or `EXECUTING` state. `DATA_TIMESTAMP` will be 
 
 ## Return to Router
 
-After completing all steps, return to the `aviation-installer` router to proceed with Step 5 (Start Task DAG).
+After completing all steps, return to the `aviation-installer` router to proceed with Step 7 (Start Task DAG).
 
 ## Cleanup
 

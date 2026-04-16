@@ -14,7 +14,9 @@
 Live timetable view for dashboard landing page — joins latest ADS-B positions with FLIGHT_SCHEDULE enrichment, planned and actual gates.
 
 ```sql
-CREATE OR REPLACE VIEW {TARGET_DB}.{SCHEMA}.HELPER_LANDING_LIVE_TIMETABLE AS
+CREATE OR REPLACE VIEW {TARGET_DB}.{SCHEMA}.HELPER_LANDING_LIVE_TIMETABLE
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
+AS
 WITH airport AS (
   SELECT
     UPPER(airport_code) AS airport_code,
@@ -217,13 +219,15 @@ CREATE TABLE IF NOT EXISTS {TARGET_DB}.{SCHEMA}.HELPER_MONITOR_LAST_REFRESH (
   max_ts TIMESTAMP_NTZ,
   status STRING,
   details STRING
-);
+)
+COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 
 CREATE TABLE IF NOT EXISTS {TARGET_DB}.{SCHEMA}.HELPER_QA_COUNTS_DAILY (
   metric_date DATE,
   metric_name STRING,
   metric_value NUMBER(38,0)
-);
+)
+COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 
 ALTER TABLE {TARGET_DB}.{SCHEMA}.HELPER_MONITOR_LAST_REFRESH ADD COLUMN IF NOT EXISTS row_count_24h NUMBER(38,0);
 ALTER TABLE {TARGET_DB}.{SCHEMA}.HELPER_MONITOR_LAST_REFRESH ADD COLUMN IF NOT EXISTS max_ts TIMESTAMP_NTZ;
@@ -256,7 +260,8 @@ CREATE TABLE IF NOT EXISTS {TARGET_DB}.{SCHEMA}.HELPER_INGEST_AUDIT (
   status STRING,
   error_message STRING,
   created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
+)
+COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
 ---
@@ -281,13 +286,16 @@ CREATE TABLE IF NOT EXISTS {TARGET_DB}.{SCHEMA}.H2H_CONFLICT_PAIRS (
   b_start TIMESTAMP_NTZ,
   b_end TIMESTAMP_NTZ,
   min_gap_seconds NUMBER(38,0)
-);
+)
+COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
 ### V_AIR_OPS_TIMELINE (placeholder)
 
 ```sql
-CREATE OR REPLACE VIEW {TARGET_DB}.{SCHEMA}.V_AIR_OPS_TIMELINE AS
+CREATE OR REPLACE VIEW {TARGET_DB}.{SCHEMA}.V_AIR_OPS_TIMELINE
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
+AS
 SELECT CAST(NULL AS DATE) AS service_date, CAST(NULL AS STRING) AS airline_name
 WHERE 1=0;
 ```
@@ -295,7 +303,9 @@ WHERE 1=0;
 ### V_AIR_OPS_DAILY_KPIS (placeholder)
 
 ```sql
-CREATE OR REPLACE VIEW {TARGET_DB}.{SCHEMA}.V_AIR_OPS_DAILY_KPIS AS
+CREATE OR REPLACE VIEW {TARGET_DB}.{SCHEMA}.V_AIR_OPS_DAILY_KPIS
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
+AS
 SELECT
   CAST(NULL AS DATE) AS service_date,
   CAST(NULL AS STRING) AS airline_name,

@@ -95,7 +95,7 @@ Create:
 
 ### Step 5: Create Ingestion Procedures
 
-Create Python stored procedures (require PyPI EAI for package installation):
+Create Python stored procedures:
 - `PROC_INGEST_ADSB_REALTIME()` — fetches live positions from adsb.lol API, inserts into HELPER_ADSB_LOL_RAW
 - `PROC_ETL_ADSB_TO_DATA()` — transforms Bronze → Gold (ADSB_DATA), deduplicates by icao24+timestamp
 - `PROC_DEDUP_ADSB_DATA(INT)` — removes duplicate position records older than N days
@@ -178,7 +178,7 @@ Expected: 0 rows (data arrives after tasks run). Verify objects exist by checkin
 |-------|-------|-----|
 | EAI creation fails | Insufficient privileges | ACCOUNTADMIN required; check role with `SELECT CURRENT_ROLE()` |
 | PROC_INGEST_ADSB_REALTIME fails | EAI misconfigured | Test with `CALL PROC_INGEST_ADSB_REALTIME()` and check error |
-| PyPI packages not installing | EAI not attached | Verify PyPI EAI is attached to procedure; check network rule allows pypi.org |
+| Python packages not installing | Anaconda agreement missing | Run `CALL SYSTEM$ACCEPT_LEGAL_TERMS('ANACONDA')` with ACCOUNTADMIN |
 | No data after 10 min | Incorrect bounding box | Verify airport bounding box in PROPERTIES_AIRPORT; check API endpoint coverage |
 | Backfill procedures missing | Package agreement | Python procedures require ANACONDA_PACKAGE_AGREEMENT on account |
 

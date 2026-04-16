@@ -11,26 +11,20 @@
 
 ## Install audit (versioning / provenance)
 
-```sql
-CREATE TABLE IF NOT EXISTS {TARGET_DB}.{SCHEMA}.HELPER_INSTALL_AUDIT (
-  installed_at TIMESTAMP_NTZ,
-  installer_git_sha STRING,
-  installer_generated_at TIMESTAMP_NTZ,
-  airport_code STRING,
-  database_name STRING,
-  schema_name STRING,
-  notes STRING
-);
+Table is created by base-setup (canonical schema). Insert a row to record the derived-analytics install.
 
+```sql
 INSERT INTO {TARGET_DB}.{SCHEMA}.HELPER_INSTALL_AUDIT
+  (INSTALL_TS, INSTALLER_VERSION, AIRPORT_IATA, AIRPORT_ICAO, AIRPORT_NAME, WAREHOUSE, SCHEMA_NAME, NOTES)
 SELECT
   CURRENT_TIMESTAMP(),
-  NULL,
-  CURRENT_TIMESTAMP(),
+  '1.0.0',
   '{IATA}',
-  '{TARGET_DB}',
+  NULL,
+  NULL,
+  '{WAREHOUSE}',
   '{SCHEMA}',
-  'derived install';
+  'derived-analytics install';
 ```
 
 ## Dashboard prerequisites
