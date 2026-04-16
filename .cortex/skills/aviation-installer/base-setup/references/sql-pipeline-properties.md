@@ -303,7 +303,7 @@ SELECT
   t.$5::STRING AS airline_callsign,
   t.$6::STRING AS country,
   t.$7::STRING AS is_active
-FROM {GIT_REPO_STAGE_BASE}/.cortex/skills/aviation-installer/base-setup/data/airlines.csv
+FROM {GIT_REPO_STAGE_BASE}/installer/airlines.csv
   (FILE_FORMAT => {TARGET_DB}.{SCHEMA}.FF_AIRLINES_CSV) t;
 
 ALTER TABLE {TARGET_DB}.{SCHEMA}.HELPER_AIRLINE_DIM

@@ -8,14 +8,15 @@ import GroundActivity from './components/GroundActivity';
 import RunwayCrossings from './components/RunwayCrossings';
 import TrafficAnalysis from './components/TrafficAnalysis';
 import GateAnalysis from './components/GateAnalysis';
+import TSAThroughput from './components/TSAThroughput';
 import Monitoring from './components/Monitoring';
 import Performance from './components/Performance';
 import {
   Radio, Plane, MapPin, AlertTriangle,
-  BarChart3, DoorOpen, Activity, Gauge, Home as HomeIcon,
+  BarChart3, DoorOpen, ShieldCheck, Activity, Gauge, Home as HomeIcon,
 } from 'lucide-react';
 
-type Page = 'home' | 'live' | 'tracker' | 'ground' | 'crossings' | 'traffic' | 'gates' | 'monitoring' | 'performance';
+type Page = 'home' | 'live' | 'tracker' | 'ground' | 'crossings' | 'traffic' | 'gates' | 'tsa' | 'monitoring' | 'performance';
 
 const NAV: { section: string; items: { key: Page; label: string; icon: any }[] }[] = [
   {
@@ -32,6 +33,7 @@ const NAV: { section: string; items: { key: Page; label: string; icon: any }[] }
       { key: 'traffic', label: 'Traffic Analysis', icon: BarChart3 },
       { key: 'gates', label: 'Gate Analysis', icon: DoorOpen },
       { key: 'crossings', label: 'Runway Crossings', icon: AlertTriangle },
+      { key: 'tsa', label: 'TSA Throughput', icon: ShieldCheck },
       { key: 'performance', label: 'Performance', icon: Gauge },
     ],
   },
@@ -52,6 +54,7 @@ function renderPage(page: Page, navigateTo: (p: Page) => void) {
     case 'crossings': return <RunwayCrossings />;
     case 'traffic': return <TrafficAnalysis />;
     case 'gates': return <GateAnalysis />;
+    case 'tsa': return <TSAThroughput />;
     case 'monitoring': return <Monitoring />;
     case 'performance': return <Performance />;
     default: return <Home navigateTo={navigateTo} />;

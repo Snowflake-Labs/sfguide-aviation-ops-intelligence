@@ -1,6 +1,6 @@
 import {
   Radio, Plane, MapPin, AlertTriangle,
-  BarChart3, DoorOpen, Activity, Gauge,
+  BarChart3, DoorOpen, ShieldCheck, Activity, Gauge,
 } from 'lucide-react';
 
 interface HomeProps {
@@ -14,6 +14,7 @@ const PAGES = [
   { key: 'crossings', label: 'Runway Crossings', icon: AlertTriangle, desc: 'Runway crossing safety analytics and heatmaps' },
   { key: 'traffic', label: 'Traffic Analysis', icon: BarChart3, desc: 'Temporal traffic patterns and airline statistics' },
   { key: 'gates', label: 'Gate Analysis', icon: DoorOpen, desc: 'Gate utilization, dwell times, and airline breakdown' },
+  { key: 'tsa', label: 'TSA Throughput', icon: ShieldCheck, desc: 'TSA checkpoint passenger throughput trends and patterns' },
   { key: 'performance', label: 'Performance', icon: Gauge, desc: 'Operational KPIs: taxi times, on-time rates' },
   { key: 'monitoring', label: 'Monitoring', icon: Activity, desc: 'System health, data freshness, and pipeline status' },
 ];

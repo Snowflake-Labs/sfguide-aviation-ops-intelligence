@@ -230,6 +230,15 @@
 
       .altitude-legend { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-secondary); }
       .altitude-bar { height: 8px; border-radius: 4px; flex: 1; background: linear-gradient(to right, #00897B, #FDD835, #E53935); }
+
+      .mode-toggle { display: inline-flex; background: rgba(0,0,0,0.04); border-radius: 8px; padding: 2px; gap: 2px; }
+      .mode-toggle-btn { padding: 6px 16px; border: none; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; font-family: inherit; cursor: pointer; transition: background 0.15s, color 0.15s; }
+      .mode-toggle-btn:hover { color: var(--text); }
+      .mode-toggle-btn.active { background: var(--accent); color: white; }
+
+      .playback-bar { position: absolute; bottom: 12px; left: 12px; right: 12px; display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.95); backdrop-filter: blur(8px); padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 10; }
+      .playback-time { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 64px; color: var(--text); }
+      .playback-count { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
     </style>
   </head>
   <body>

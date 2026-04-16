@@ -49,6 +49,7 @@ function snowSqlLocal(sql: string, database?: string, schema?: string): any[] {
 }
 
 async function snowSqlSpcs(sql: string, database?: string, schema?: string, timeoutSecs: number = 600): Promise<any[]> {
+  console.log(`[SQL API] Executing: ${sql.slice(0, 200)} (WH: ${SF_WAREHOUSE}, DB: ${database || '-'}, HOST: ${SNOWFLAKE_HOST})`);
   const token = getSpcsToken();
   const body = {
     statement: sql,
@@ -124,6 +125,7 @@ app.post('/api/query', async (req, res) => {
     const rows = await runSql(sql, database, schema);
     res.json(rows);
   } catch (err: any) {
+    console.error('[/api/query] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -136,6 +138,7 @@ app.get('/api/airports', async (_req, res) => {
     })).filter((a: any) => a.name);
     res.json(airports);
   } catch (err: any) {
+    console.error('[/api/airports] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

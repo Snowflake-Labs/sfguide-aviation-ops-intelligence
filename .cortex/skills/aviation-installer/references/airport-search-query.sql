@@ -2,6 +2,7 @@
 -- Searches Overture Maps infrastructure for airports matching {SEARCH} term.
 -- Replace {SEARCH} with user's search text (airport name, city, IATA, or ICAO code).
 -- Returns up to 20 matching airports with name, IATA, ICAO, and class.
+-- Results prioritize exact IATA/ICAO code matches over substring name matches.
 
 SELECT
     i.id AS AIRPORT_ID,
@@ -17,7 +18,14 @@ SELECT
     COALESCE(
         MAX(IFF(LOWER(t.value:"key"::STRING) IN ('icao','icao_code','icao:code'), NULLIF(TRIM(t.value:"value"::STRING), ''), NULL)),
         ''
-    ) AS AIRPORT_CODE_ICAO
+    ) AS AIRPORT_CODE_ICAO,
+    CASE
+        WHEN UPPER(MAX(IFF(LOWER(t.value:"key"::STRING) IN ('iata','iata_code','iata:code'),
+             NULLIF(TRIM(t.value:"value"::STRING), ''), NULL))) = UPPER('{SEARCH}') THEN 1
+        WHEN UPPER(MAX(IFF(LOWER(t.value:"key"::STRING) IN ('icao','icao_code','icao:code'),
+             NULLIF(TRIM(t.value:"value"::STRING), ''), NULL))) = UPPER('{SEARCH}') THEN 2
+        ELSE 3
+    END AS SEARCH_RANK
 FROM OVERTURE_MAPS__BASE.CARTO.INFRASTRUCTURE i
     , LATERAL FLATTEN(input => i.names:"common":"key_value", OUTER => TRUE) n
     , LATERAL FLATTEN(
@@ -34,5 +42,5 @@ HAVING COALESCE(
     ) ILIKE '%{SEARCH}%'
     OR MAX(IFF(LOWER(t.value:"key"::STRING) IN ('iata','iata_code','iata:code'), NULLIF(TRIM(t.value:"value"::STRING), ''), NULL)) ILIKE '%{SEARCH}%'
     OR MAX(IFF(LOWER(t.value:"key"::STRING) IN ('icao','icao_code','icao:code'), NULLIF(TRIM(t.value:"value"::STRING), ''), NULL)) ILIKE '%{SEARCH}%'
-ORDER BY AIRPORT_NAME
+ORDER BY SEARCH_RANK, AIRPORT_NAME
 LIMIT 20;

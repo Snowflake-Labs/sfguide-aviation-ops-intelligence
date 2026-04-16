@@ -1,15 +1,18 @@
-FROM node:20-alpine AS build
+# -- Stage 1: build --
+FROM node:20-alpine AS builder
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci --legacy-peer-deps
 COPY . .
-RUN npm run build && npm run build:server
+RUN [ -d dist ] && echo "Skipping build: dist/ already exists" || npm run build
+RUN [ -d dist-server ] && echo "Skipping server build: dist-server/ already exists" || npx tsc -p tsconfig.server.json
 
+# -- Stage 2: runtime --
 FROM node:20-alpine
 WORKDIR /app
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/dist-server ./dist-server
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/package.json ./
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/dist-server ./dist-server
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --legacy-peer-deps
 EXPOSE 3001
 CMD ["node", "dist-server/index.js"]
