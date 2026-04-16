@@ -124,6 +124,7 @@ def get_checkpoints(_session, iata, start_dt, end_dt):
     WHERE UPPER(airport_code) = '{iata}'
       AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '{start_dt}' AND '{end_dt}'
       AND checkpoint IS NOT NULL AND checkpoint != ''
+      AND LEN(checkpoint) < 40
     ORDER BY checkpoint
     """
     result = _session.sql(query).to_pandas()
@@ -154,6 +155,7 @@ def get_daily_throughput(_session, iata, start_dt, end_dt, chk_filter):
     FROM {db_prefix}.TSA_THROUGHPUT
     WHERE UPPER(airport_code) = '{iata}'
       AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '{start_dt}' AND '{end_dt}'
+      AND LEN(checkpoint) < 40
       AND {chk_filter}
     GROUP BY tsa_date
     ORDER BY tsa_date
@@ -164,12 +166,13 @@ def get_daily_throughput(_session, iata, start_dt, end_dt, chk_filter):
 def get_hourly_pattern(_session, iata, start_dt, end_dt, chk_filter):
     query = f"""
     SELECT
-        TRY_TO_NUMBER(hour_of_day) AS hour_of_day,
+        TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) AS hour_of_day,
         SUM(TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0)) AS total_pax
     FROM {db_prefix}.TSA_THROUGHPUT
     WHERE UPPER(airport_code) = '{iata}'
       AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '{start_dt}' AND '{end_dt}'
-      AND TRY_TO_NUMBER(hour_of_day) IS NOT NULL
+      AND TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) IS NOT NULL
+      AND LEN(checkpoint) < 40
       AND {chk_filter}
     GROUP BY hour_of_day
     ORDER BY hour_of_day
@@ -186,6 +189,7 @@ def get_checkpoint_breakdown(_session, iata, start_dt, end_dt, chk_filter):
     WHERE UPPER(airport_code) = '{iata}'
       AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '{start_dt}' AND '{end_dt}'
       AND checkpoint IS NOT NULL AND checkpoint != ''
+      AND LEN(checkpoint) < 40
       AND {chk_filter}
     GROUP BY checkpoint
     ORDER BY total_pax DESC
@@ -196,13 +200,14 @@ def get_checkpoint_breakdown(_session, iata, start_dt, end_dt, chk_filter):
 def get_heatmap_data(_session, iata, start_dt, end_dt, chk_filter):
     query = f"""
     SELECT
-        TRY_TO_NUMBER(hour_of_day) AS hour,
+        TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) AS hour,
         DAYOFWEEK(TRY_TO_DATE(date, 'MM/DD/YYYY')) AS day_of_week,
         SUM(TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0)) AS total_pax
     FROM {db_prefix}.TSA_THROUGHPUT
     WHERE UPPER(airport_code) = '{iata}'
       AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '{start_dt}' AND '{end_dt}'
-      AND TRY_TO_NUMBER(hour_of_day) IS NOT NULL
+      AND TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) IS NOT NULL
+      AND LEN(checkpoint) < 40
       AND {chk_filter}
     GROUP BY hour, day_of_week
     ORDER BY day_of_week, hour
@@ -249,7 +254,7 @@ def get_checkpoint_geo_data(_session, iata, start_dt, end_dt, chk_filter):
         terminal_name,
         lat,
         lon,
-        terminal_geojson,
+        terminal_geojson::VARCHAR AS terminal_geojson,
         match_type,
         SUM(passengers) AS total_passengers,
         COUNT(DISTINCT throughput_date) AS num_days,
@@ -302,7 +307,13 @@ if not geo_data.empty and geo_data['TOTAL_PASSENGERS'].notna().any():
                 continue
             seen.add(key)
             try:
-                geom = json.loads(row['TERMINAL_GEOJSON'])
+                raw_geojson = row['TERMINAL_GEOJSON']
+                if isinstance(raw_geojson, str):
+                    geom = json.loads(raw_geojson)
+                elif isinstance(raw_geojson, dict):
+                    geom = raw_geojson
+                else:
+                    continue
                 norm_val = float(row['NORM']) if pd.notna(row['NORM']) else 0
                 color = get_intensity_color_3point(norm_val)
                 features.append({
@@ -460,25 +471,40 @@ with col2:
     st.subheader("🏢 Throughput by Checkpoint")
 
     if not checkpoint_data.empty:
-        chart_chk = alt.Chart(checkpoint_data).mark_bar(color=COLORS.LIGHT_GREEN, size=BAR_CONFIG['horizontal']['size']).encode(
-            x=alt.X('TOTAL_PAX:Q', title='Total Passengers'),
-            y=alt.Y('CHECKPOINT:N', sort='-x', title='Checkpoint',
-                    axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
-            tooltip=[
-                alt.Tooltip('CHECKPOINT:N', title='Checkpoint'),
-                alt.Tooltip('TOTAL_PAX:Q', title='Passengers', format=TOOLTIP_FORMAT['integer'])
-            ]
-        ).properties(height=alt.Step(BAR_CONFIG['horizontal']['step']))
+        checkpoint_data_filtered = checkpoint_data[
+            checkpoint_data['TOTAL_PAX'].notna() & (checkpoint_data['TOTAL_PAX'] > 0)
+        ].copy()
 
-        st.altair_chart(chart_chk, use_container_width=True)
+        if not checkpoint_data_filtered.empty:
+            num_bars = len(checkpoint_data_filtered)
+            step_size = max(30, BAR_CONFIG['horizontal']['step'])
+            chart_height = max(200, num_bars * step_size + 40)
+
+            chart_chk = alt.Chart(checkpoint_data_filtered).mark_bar(color=COLORS.LIGHT_GREEN, size=BAR_CONFIG['horizontal']['size']).encode(
+                x=alt.X('TOTAL_PAX:Q', title='Total Passengers'),
+                y=alt.Y('CHECKPOINT:N', sort='-x', title='Checkpoint',
+                        axis=alt.Axis(labelLimit=300)),
+                tooltip=[
+                    alt.Tooltip('CHECKPOINT:N', title='Checkpoint'),
+                    alt.Tooltip('TOTAL_PAX:Q', title='Passengers', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=chart_height)
+
+            st.altair_chart(chart_chk, use_container_width=True)
+        else:
+            st.info("All checkpoints have zero throughput in selected period.")
     else:
         st.info("No checkpoint breakdown available.")
 
-if not checkpoint_data.empty and len(checkpoint_data) > 1:
+checkpoint_data_for_pie = checkpoint_data[
+    checkpoint_data['TOTAL_PAX'].notna() & (checkpoint_data['TOTAL_PAX'] > 0)
+].copy() if not checkpoint_data.empty else pd.DataFrame()
+
+if not checkpoint_data_for_pie.empty and len(checkpoint_data_for_pie) > 1:
     st.divider()
     st.subheader("📊 Checkpoint Share")
 
-    chart_pie = alt.Chart(checkpoint_data).mark_arc(innerRadius=50).encode(
+    chart_pie = alt.Chart(checkpoint_data_for_pie).mark_arc(innerRadius=50).encode(
         theta=alt.Theta('TOTAL_PAX:Q'),
         color=alt.Color('CHECKPOINT:N', legend=alt.Legend(title='Checkpoint')),
         tooltip=[
@@ -537,6 +563,7 @@ with st.expander("📋 Raw Data"):
         FROM {db_prefix}.TSA_THROUGHPUT
         WHERE UPPER(airport_code) = '{iata}'
           AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '{start_dt}' AND '{end_dt}'
+          AND LEN(checkpoint) < 40
           AND {chk_filter}
         ORDER BY date DESC, hour_of_day
         LIMIT 1000
