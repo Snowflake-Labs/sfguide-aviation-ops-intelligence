@@ -68,9 +68,9 @@ Deploys the multi-page Streamlit-in-Snowflake dashboard that provides real-time 
 | GIT_REPO_STAGE | `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main` | Source files |
 | WAREHOUSE | (current warehouse) | Warehouse for app execution |
 
-## Friction Log
+## Friction Logging
 
-When invoked by the parent installer, report all friction points back to it. When invoked standalone, write to `.cortex/skills/logs/aviation-dashboard_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md. Always create the log — even if no issues occurred (mark Friction Points as "None").
+When invoked by the parent installer, report all friction points back using the F1/F2/F3 format from `.cortex/skills/logs/README.md`. When invoked standalone, write to `.cortex/skills/logs/friction-log_{YYYY-MM-DD}_{HH-MM}.md`. Always create the log — even if no issues occurred (write "No friction points encountered.").
 
 ## Workflow
 

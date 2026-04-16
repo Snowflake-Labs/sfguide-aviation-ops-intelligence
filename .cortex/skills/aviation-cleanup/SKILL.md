@@ -30,9 +30,9 @@ This skill queries `INFORMATION_SCHEMA`, `SHOW` commands, and `ACCOUNT_USAGE` vi
 | AIRPORT_FILTER | (all) | Optional: filter to a specific airport (e.g., `AIRPORT_SAN`) |
 | DRY_RUN | `true` | When true, only generates DROP statements without executing |
 
-## Friction Log
+## Friction Logging
 
-Always write a friction log to `.cortex/skills/logs/aviation-cleanup_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md. Include configuration, objects discovered/dropped, and any errors. If no friction points, mark that section as "None".
+Always write a friction log to `.cortex/skills/logs/friction-log_{YYYY-MM-DD}_{HH-MM}.md` following the template in `.cortex/skills/logs/README.md`. Include configuration, objects discovered/dropped, and any friction points using the F1/F2/F3 format. If no friction points, write "No friction points encountered."
 
 ## Execution Rules
 

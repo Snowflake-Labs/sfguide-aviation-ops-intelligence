@@ -62,23 +62,25 @@ The dashboard is deployed once and auto-discovers all `AIRPORT_XXX` databases. W
 | Procedures, Tasks, UDFs, Views | `CREATE OR REPLACE` | Safe -- stateless objects |
 | Streamlit app, SPCS service | `CREATE OR REPLACE` / redeploy | Safe -- idempotent |
 
-## Friction Log (Required)
+## Error Logging
 
-Every execution MUST produce a friction log at `.cortex/skills/logs/aviation-installer_{YYYY-MM-DD}_{HH-MM}.md`. Create the file at the **start** of execution and update it as each step completes.
+When any step fails or produces unexpected results, log the issue to `.cortex/skills/logs/` following the format in `.cortex/skills/logs/README.md`. File name: `aviation-installer_{YYYY-MM-DD}_{HH-MM}.md`. Continue execution where possible.
 
-### Required Sections
+## Friction Logging
 
-| Section | Content |
-|---------|---------|
-| **Header** | Airport name, IATA/ICAO, date, account, role |
-| **Configuration** | All resolved parameters (database, warehouse, API keys provided/skipped, backfill days, etc.) |
-| **Installation Summary** | Table of steps with sub-skill name, status (OK / WARN / ERROR / SKIPPED), and approximate duration |
-| **Objects Created** | Counts by category (tables, DTs, views, procedures, tasks, EAIs, etc.) |
-| **Initial Data** | Row counts for key tables after first load |
-| **Friction Points** | Numbered list. Each entry: severity (LOW / MEDIUM / HIGH), issue description, error message (if any), workaround applied, suggestion for permanent fix. Include friction even when recovered automatically. If none, write "None". |
-| **Verification Checklist** | Checkbox list of post-install health checks with pass/fail |
+**MANDATORY:** After every execution (regardless of success or failure), generate a friction log in `.cortex/skills/logs/`. File name: `friction-log_{YYYY-MM-DD}_{HH-MM}.md`.
 
-Sub-skills executed via `runSubagent` must report friction points back. Consolidate all into this single log file.
+Follow the friction log template in `.cortex/skills/logs/README.md`. The log must capture:
+- Exact wall-clock duration of each step (Step Timing table)
+- Configuration parameters used
+- Objects created counts and initial data row counts
+- Any friction points with F1/F2/F3 numbering, each including: Step, Severity (High/Medium/Low), What happened, Resolution, Recommendation
+- Verification checklist with pass/fail
+- Summary with total execution time and overall outcome (SUCCESS / COMPLETED_WITH_ISSUES / FAILED)
+
+If no friction was encountered, still create the log with "No friction points encountered." and all other sections filled.
+
+Sub-skills executed via `runSubagent` must report friction points back to this parent skill for consolidation into the single friction log.
 
 ## Workflow
 
