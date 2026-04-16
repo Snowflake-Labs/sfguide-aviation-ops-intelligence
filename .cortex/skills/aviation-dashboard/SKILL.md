@@ -215,6 +215,24 @@ The dashboard queries these tables and views per airport. All objects live in `A
 | Multi-airport selector missing airports | Missing properties | Verify each AIRPORT_XXX database has PROPERTIES_AIRPORT with 1 row |
 | Performance page always empty | Insufficient history | V_AIR_OPS_DAILY_KPIS requires 2+ days of history to compute KPIs |
 
+## Output
+
+Streamlit-in-Snowflake dashboard deployed:
+- App: `{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
+- 9 analytics pages: Live View, Flight Tracker, Ground Activity, Runway Crossings, Traffic Analysis, Gate Analysis, TSA Throughput, Monitoring, Performance
+- Auto-discovers all `AIRPORT_XXX` databases
+
+Retrieve the URL:
+```sql
+SELECT SYSTEM$GET_SNOWSIGHT_HOST() AS host;
+```
+
+Print this message to the user:
+
+> **Open the Airport Analytics Dashboard in Snowsight:**
+>
+> `https://<host>/api/streamlit/{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
+
 ## Cleanup
 
 ```sql
@@ -400,6 +418,35 @@ GRANT USAGE ON SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE TO ROLE {CO
 | SQL REST API 500 errors in SPCS | SNOWFLAKE_HOST set explicitly to short-form account URL | Do NOT set SNOWFLAKE_HOST in service spec; SPCS auto-injects the full regional URL |
 | `CREATE OR REPLACE SERVICE` fails | Not supported for SPCS services | Use `DROP SERVICE IF EXISTS` + `CREATE SERVICE` to redeploy |
 | Docker `--ignorefile` not recognized | Docker 29.x does not support `--ignorefile` | Swap `.dockerignore` manually (see `references/build-images.md`) |
+
+## Output
+
+React SPCS dashboard deployed:
+- Service: `{TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE`
+- Compute pool: `AVIATION_DASHBOARD_COMPUTE_POOL`
+- 10 pages: Home, Live View, Flight Tracker, Ground Activity, Runway Crossings, Traffic Analysis, Gate Analysis, TSA Throughput, Monitoring, Performance
+- Auto-discovers all `AIRPORT_XXX` databases
+
+### Final Step: Open the Dashboard
+
+Retrieve the endpoint URL:
+```sql
+SHOW ENDPOINTS IN SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
+SELECT 'https://' || "ingress_url" AS dashboard_url
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'dashboard';
+```
+
+Print this exact message to the user (substituting the actual URL):
+
+> **Open this URL and log in with your Snowflake credentials to see the Airport Analytics Dashboard:**
+>
+> `<url>`
+
+Then open it automatically:
+```bash
+open "<url>"
+```
 
 ## Cleanup
 
