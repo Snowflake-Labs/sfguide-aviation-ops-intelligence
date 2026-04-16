@@ -45,7 +45,12 @@ When any step fails or produces unexpected results (SQL errors, missing objects,
 
 ## Workflow
 
-### Step 1: Set Query Tag
+### Step 1: Set Query Tag and Record Start Time
+
+Record the installation start time (store as `{START_TIME}`):
+```sql
+SELECT CURRENT_TIMESTAMP() AS install_start_time;
+```
 
 ```sql
 ALTER SESSION SET query_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-installer","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
@@ -239,6 +244,8 @@ WHERE DATABASE_NAME = '{TARGET_DB}'
 ORDER BY SCHEDULED_TIME DESC;
 ```
 
+Record the installation end time and compute elapsed minutes: `{ELAPSED} = TIMEDIFF(minute, {START_TIME}, CURRENT_TIMESTAMP())`. Store the row counts from the verification query above as `{GATE_COUNT}`, `{RUNWAY_COUNT}`, `{AIRLINE_COUNT}` for the output summary.
+
 ## Stopping Points
 
 - After Step 3: Confirm airport selection with user
@@ -257,6 +264,78 @@ ORDER BY SCHEDULED_TIME DESC;
 | Tasks not running | Wrong resume order | Resume in leaf-to-root order; check warehouse is active |
 | No ADS-B data after 5 min | Ingestion issue | Check `CALL {TARGET_DB}.{SCHEMA}.PROC_INGEST_ADSB_REALTIME()` manually |
 | Backfill stuck | Failed days | Check `HELPER_ADSB_BACKFILL_STATUS` for failed days |
+
+## Output
+
+After Step 9 verification completes, print the following summary to the user (substituting actual values from the installation):
+
+---
+
+**Airport Analytics Platform installed for {AIRPORT_NAME} ({IATA} / {ICAO})**
+
+**Installation time:** {ELAPSED} minutes
+
+**Capabilities installed:**
+- Real-time ADS-B aircraft tracking (5-minute refresh from adsb.lol)
+- Ground movement analysis (taxi paths, gate dwell times)
+- Runway crossing detection
+- Daily and hourly traffic analytics
+- Airline-level traffic and delay metrics
+- Gate utilization and airline dwell analysis
+- Flight tracker with historical replay
+- Operational KPI dashboard (V_AIR_OPS_DAILY_KPIS)
+- {BACKFILL_DAYS}-day historical ADS-B backfill (running in background)
+- Flight schedule matching via Aviationstack *(include only if API key was provided; otherwise print: "Flight schedules: skipped (no API key)")*
+- TSA checkpoint throughput ingestion *(include only if TSA was enabled; otherwise print: "TSA throughput: skipped")*
+
+**Objects created:**
+- Database: `{TARGET_DB}`
+- Warehouse: `{WAREHOUSE}`
+- Schemas: `PUBLIC`, `TAGS`
+- Reference tables: PROPERTIES_AIRPORT (1 row), PROPERTIES_GATES ({GATE_COUNT} gates), PROPERTIES_RUNWAYS ({RUNWAY_COUNT} runways), HELPER_AIRLINE_DIM ({AIRLINE_COUNT} airlines)
+- ADS-B pipeline: 3 network rules, 3 external access integrations, ingestion and enrichment stored procedures
+- Dynamic Tables: 13 cascading DTs (traffic facts, gate analysis, runway crossings, flight tracker)
+- Views: V_AIR_OPS_DAILY_KPIS, HELPER_MONITOR_LAST_REFRESH, HELPER_QA_COUNTS_DAILY
+- Task DAG: TASK_INGEST_ADSB (root, 5-min schedule) with child tasks for enrichment, derived analytics, and optional flight schedule / TSA ingestion
+- Dashboard: deployed (see link below)
+
+---
+
+### Final Step: Open the Dashboard
+
+**If React dashboard (SPCS) was deployed:**
+
+Retrieve the dashboard endpoint URL:
+
+```sql
+SHOW ENDPOINTS IN SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
+SELECT 'https://' || "ingress_url" AS dashboard_url
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'dashboard';
+```
+
+Print this exact message to the user (substituting the actual URL):
+
+> **Open this URL and log in with your Snowflake credentials to see the Airport Analytics Dashboard:**
+>
+> `<url>`
+
+Then open it automatically:
+```bash
+open "<url>"
+```
+
+**If Streamlit dashboard was deployed:**
+
+```sql
+SELECT SYSTEM$GET_SNOWSIGHT_HOST() AS host;
+```
+
+Print this message (substituting actual values):
+
+> **Open the Airport Analytics Dashboard in Snowsight:**
+>
+> `https://<host>/api/streamlit/{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
 
 ## Cleanup
 
