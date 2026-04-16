@@ -9,9 +9,9 @@ Two independent installation approaches for per-airport analytics platforms on S
 | Approach | Entry Point | Dashboard | Audience |
 |----------|-------------|-----------|----------|
 | AI Agent (Skills) | `.cortex/skills/aviation-installer/` | `.cortex/skills/aviation-dashboard/` | Cortex Code users |
-| Streamlit Installer | `installer/installer_daily.py` | `dashboard/` | Snowsight users |
+| Streamlit Installer | `standalone/installer/installer_daily.py` | `standalone/dashboard/` | Snowsight users |
 
-Skills are fully self-contained under `.cortex/skills/` with zero runtime dependency on root-level directories. The root `dashboard/` and `installer/` serve the Streamlit installer approach.
+Skills are fully self-contained under `.cortex/skills/` with zero runtime dependency on root-level directories. The `standalone/dashboard/` and `standalone/installer/` directories serve the Streamlit installer approach.
 
 ## Repository Structure
 
@@ -32,8 +32,9 @@ Skills are fully self-contained under `.cortex/skills/` with zero runtime depend
   ├── logs/                  # Skill execution error logs
   ├── evals/                 # Eval framework (trigger, quality, xref, sql)
   └── skill-optimiser/       # Skill audit tool (Anthropic best practices)
-dashboard/                   # Streamlit app (Streamlit installer approach)
-installer/                   # Streamlit installer app + seed data
+standalone/                  # Streamlit installer approach (legacy)
+  ├── installer/             # Streamlit installer app + seed data
+  └── dashboard/             # Streamlit dashboard app
 logs/                        # Legacy error/friction logs
 ```
 
@@ -192,13 +193,13 @@ graph TD
 
 ## Streamlit Installer (Legacy Approach)
 
-- Source in `installer/` directory (root)
-- Dashboard source in `dashboard/` directory (root)
+- Source in `standalone/installer/` directory
+- Dashboard source in `standalone/dashboard/` directory
 - `installer_daily.py` — Streamlit-in-Snowflake app that generates and executes installation SQL
-- Deployed from Git Repository Stage: `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main/installer`
-- Seed data: `installer/airlines.csv` (loaded into `HELPER_AIRLINE_DIM` during base-setup)
+- Deployed from Git Repository Stage: `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main/standalone/installer`
+- Seed data: `standalone/installer/airlines.csv` (loaded into `HELPER_AIRLINE_DIM` during base-setup)
 - Secrets handling: masks `SECRET_STRING` literals in UI display while executing real SQL
-- Dashboard deployed via: `ROOT_LOCATION = '@.../dashboard'` (root-level copy)
+- Dashboard deployed via: `ROOT_LOCATION = '@.../standalone/dashboard'`
 
 ## Airport Database Schema
 
