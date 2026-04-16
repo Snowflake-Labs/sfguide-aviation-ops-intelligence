@@ -214,15 +214,20 @@ def generate_base_sql(airport: dict, database: str, schema: str, warehouse: str,
     airport_iata_sql = _sql_escape_str(airport.get("iata_code"))
     airport_icao_sql = _sql_escape_str(airport.get("icao_code"))
     airport_id_sql = _sql_escape_str(airport.get("airport_id"))
+    tracking_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
     return f"""-- =============================================================================
 -- BASE INFRASTRUCTURE FOR {airport['name']} ({airport['iata_code']})
 -- Database: {database}.{schema}
 -- Generated: {datetime.utcnow().isoformat()}
 -- =============================================================================
 
+ALTER SESSION SET query_tag = '{tracking_tag}';
+
 -- Create database and schema
-CREATE DATABASE IF NOT EXISTS {database};
-CREATE SCHEMA IF NOT EXISTS {database}.{schema};
+CREATE DATABASE IF NOT EXISTS {database}
+  COMMENT = '{tracking_tag}';
+CREATE SCHEMA IF NOT EXISTS {database}.{schema}
+  COMMENT = '{tracking_tag}';
 
 -- Grant usage (adjust roles as needed)
 GRANT USAGE ON DATABASE {database} TO ROLE PUBLIC;
@@ -234,24 +239,26 @@ GRANT USAGE ON SCHEMA {database}.{schema} TO ROLE PUBLIC;
 CREATE OR REPLACE NETWORK RULE {database}.{schema}.{schema}_pypi_network_rule
   MODE = EGRESS
   TYPE = HOST_PORT
-  VALUE_LIST = ('pypi.org', 'pypi.python.org', 'pythonhosted.org', 'files.pythonhosted.org');
+  VALUE_LIST = ('pypi.org', 'pypi.python.org', 'pythonhosted.org', 'files.pythonhosted.org')
+  COMMENT = '{tracking_tag}';
 CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {database}_{schema}_pypi_access_integration
   ALLOWED_NETWORK_RULES = ({database}.{schema}.{schema}_pypi_network_rule)
-  ENABLED = TRUE;
+  ENABLED = TRUE
+  COMMENT = '{tracking_tag}';
 -- =============================================================================
 -- SOLUTION TRACKING TAGS
 -- =============================================================================
 
 CREATE SCHEMA IF NOT EXISTS {database}.TAGS
-  COMMENT = 'Cost attribution tags for Aviation Ops Intelligence solution';
+  COMMENT = '{tracking_tag}';
 
 CREATE TAG IF NOT EXISTS {database}.TAGS.SOLUTION
   ALLOWED_VALUES 'aviation-ops-intelligence'
-  COMMENT = 'Identifies objects belonging to Aviation Ops Intelligence solution';
+  COMMENT = '{tracking_tag}';
 
 CREATE TAG IF NOT EXISTS {database}.TAGS.COMPONENT
   ALLOWED_VALUES 'etl', 'analytics', 'realtime', 'backfill', 'properties'
-  COMMENT = 'Functional component categorization';
+  COMMENT = '{tracking_tag}';
 
 -- -----------------------------------------------------------------------------
 -- 1. PROPERTIES_AIRPORT
@@ -264,6 +271,7 @@ LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('timezonefinder')
 HANDLER = 'tzid_from_latlon'
+COMMENT = '{tracking_tag}'
 AS
 $$
 from timezonefinder import TimezoneFinder
@@ -306,6 +314,8 @@ SELECT
   ) AS airport_tzid
 FROM g;
 
+ALTER TABLE {database}.{schema}.PROPERTIES_AIRPORT
+  SET COMMENT = '{tracking_tag}';
 ALTER TABLE {database}.{schema}.PROPERTIES_AIRPORT 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
           {database}.TAGS.COMPONENT = 'properties';
@@ -370,6 +380,8 @@ SELECT
 FROM raw_infra r
 LEFT JOIN tags_flat t ON r.id = t.id;
 
+ALTER TABLE {database}.{schema}.PROPERTIES_INFRASTRUCTURE
+  SET COMMENT = '{tracking_tag}';
 ALTER TABLE {database}.{schema}.PROPERTIES_INFRASTRUCTURE 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
           {database}.TAGS.COMPONENT = 'properties';
@@ -381,6 +393,7 @@ ALTER TABLE {database}.{schema}.PROPERTIES_INFRASTRUCTURE
 CREATE OR REPLACE FUNCTION {database}.{schema}.GET_OSM_TAG(source_tags VARIANT, tag_key STRING)
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS $$
   SELECT MAX(f.value:"value"::STRING)
   FROM TABLE(FLATTEN(input => source_tags:"key_value", OUTER => TRUE)) f
@@ -443,6 +456,8 @@ SELECT
 FROM picked
 WHERE gate_geojson IS NOT NULL;
 
+ALTER TABLE {database}.{schema}.PROPERTIES_GATES
+  SET COMMENT = '{tracking_tag}';
 ALTER TABLE {database}.{schema}.PROPERTIES_GATES 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
           {database}.TAGS.COMPONENT = 'properties';
@@ -506,6 +521,8 @@ SELECT
 FROM runways r
 LEFT JOIN widths w USING (id);
 
+ALTER TABLE {database}.{schema}.TEMP_RUNWAY_SEGMENTS SET COMMENT = '{tracking_tag}';
+
 -- 1b) Convert runway segments to EPSG:3857 GEOMETRY (meters) once (reduces nested geospatial expressions later)
 CREATE OR REPLACE TABLE {database}.{schema}.TEMP_RUNWAY_GEOM_3857 AS
 SELECT
@@ -514,6 +531,8 @@ SELECT
   buffer_radius_m
 FROM {database}.{schema}.TEMP_RUNWAY_SEGMENTS
 WHERE runway_geog IS NOT NULL;
+
+ALTER TABLE {database}.{schema}.TEMP_RUNWAY_GEOM_3857 SET COMMENT = '{tracking_tag}';
 
 -- 2) Buffer all runway segments in meters (EPSG:3857)
 -- NOTE: Some Snowflake accounts do not support ST_UNION_AGG over GEOMETRY, so we
@@ -525,6 +544,8 @@ SELECT
 FROM {database}.{schema}.TEMP_RUNWAY_GEOM_3857
 WHERE runway_geom_3857 IS NOT NULL;
 
+ALTER TABLE {database}.{schema}.TEMP_RUNWAY_BUFFER_3857 SET COMMENT = '{tracking_tag}';
+
 -- 3) Reproject back to 4326 and store as GEOGRAPHY (runway corridor area)
 CREATE OR REPLACE TABLE {database}.{schema}.PROPERTIES_RUNWAYS AS
 SELECT
@@ -534,6 +555,8 @@ SELECT
   ST_UNION_AGG(TO_GEOGRAPHY(ST_TRANSFORM(runway_buffer_3857, 4326))) AS runway_geog
 FROM {database}.{schema}.TEMP_RUNWAY_BUFFER_3857;
 
+ALTER TABLE {database}.{schema}.PROPERTIES_RUNWAYS SET COMMENT = '{tracking_tag}';
+
 -- 4) If runway corridor is a MULTIPOLYGON, split into one polygon per row.
 -- Snowflake doesn't expose a built-in "dump parts" function in all accounts, so we use
 -- a small JS table function that expands GeoJSON Polygon/MultiPolygon into Polygon rows.
@@ -541,6 +564,7 @@ FROM {database}.{schema}.TEMP_RUNWAY_BUFFER_3857;
 CREATE OR REPLACE FUNCTION {database}.{schema}.ST_GETPOLYGONS(G OBJECT)
 RETURNS TABLE (POLYGON OBJECT)
 LANGUAGE JAVASCRIPT
+COMMENT = '{tracking_tag}'
 AS '
 {{
 processRow: function split_multipolygon(row, rowWriter, context){{
@@ -566,11 +590,15 @@ FROM {database}.{schema}.PROPERTIES_RUNWAYS r,
 TABLE ({database}.{schema}.ST_GETPOLYGONS(ST_ASGEOJSON(r.runway_geog))) p
 WHERE r.runway_geog IS NOT NULL;
 
+ALTER TABLE {database}.{schema}.TEMP_RUNWAY_POLYGONS SET COMMENT = '{tracking_tag}';
+
 CREATE OR REPLACE TABLE {database}.{schema}.PROPERTIES_RUNWAYS AS
 SELECT runway_id, runway_geog
 FROM {database}.{schema}.TEMP_RUNWAY_POLYGONS
 WHERE runway_geog IS NOT NULL;
 
+ALTER TABLE {database}.{schema}.PROPERTIES_RUNWAYS
+  SET COMMENT = '{tracking_tag}';
 ALTER TABLE {database}.{schema}.PROPERTIES_RUNWAYS 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
           {database}.TAGS.COMPONENT = 'properties';
@@ -589,7 +617,8 @@ CREATE OR REPLACE TABLE {database}.{schema}.HELPER_AIRLINE_DIM (
   AIRLINE_CALLSIGN STRING,
   COUNTRY STRING,
   IS_ACTIVE STRING
-);
+)
+COMMENT = '{tracking_tag}';
 
 -- CSV file format for airline dim
 CREATE OR REPLACE FILE FORMAT {database}.{schema}.FF_AIRLINES_CSV
@@ -597,7 +626,8 @@ CREATE OR REPLACE FILE FORMAT {database}.{schema}.FF_AIRLINES_CSV
   FIELD_DELIMITER = ','
   SKIP_HEADER = 1
   FIELD_OPTIONALLY_ENCLOSED_BY = '\"'
-  NULL_IF = ('\\N', 'N/A', '-', '');
+  NULL_IF = ('\\N', 'N/A', '-', '')
+  COMMENT = '{tracking_tag}';
 
 -- Load from Git repository stage.
 -- NOTE: Snowflake does NOT support `COPY INTO <table>` directly from a Git Repository stage.
@@ -641,6 +671,8 @@ WHERE AIRLINE_IATA IS NOT NULL
   AND LENGTH(TRIM(AIRLINE_ICAO)) IN (2,3)
 GROUP BY 1, 2;
 
+ALTER TABLE {database}.{schema}.HELPER_AIRLINE_IATA_ICAO_MAP
+  SET COMMENT = '{tracking_tag}';
 ALTER TABLE {database}.{schema}.HELPER_AIRLINE_IATA_ICAO_MAP 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
           {database}.TAGS.COMPONENT = 'etl';
@@ -679,7 +711,8 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_SCHEDULE_RAW (
     codeshared_flight_iata VARCHAR(16),
     raw_json VARIANT,
     ingested_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
+)
+COMMENT = '{tracking_tag}';
 
 ALTER TABLE {database}.{schema}.HELPER_FLIGHT_SCHEDULE_RAW 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -714,7 +747,8 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.FLIGHT_SCHEDULE (
     IS_CODESHARE BOOLEAN,
     CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
+)
+COMMENT = '{tracking_tag}';
 
 ALTER TABLE {database}.{schema}.FLIGHT_SCHEDULE 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -742,12 +776,15 @@ def generate_adsb_sql(airport: dict, database: str, schema: str, warehouse: str,
     # Convert 50km to Nautical Miles (50 / 1.852 = 27) - larger radius to catch aircraft on approach
     radius_nm = 27
     api_url = f"https://api.adsb.lol/v2/point/{airport['lat']}/{airport['lon']}/{radius_nm}"
+    tracking_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-adsb-ingestion","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
     
     return f"""-- =============================================================================
 -- ADS-B INGESTION FOR {airport['name']} ({airport['iata_code']})
 -- Database: {database}.{schema}
 -- Source: adsb.lol API
 -- =============================================================================
+
+ALTER SESSION SET query_tag = '{tracking_tag}';
 
 -- -----------------------------------------------------------------------------
 -- MIGRATION NOTE (non-destructive):
@@ -775,11 +812,13 @@ def generate_adsb_sql(airport: dict, database: str, schema: str, warehouse: str,
 CREATE OR REPLACE NETWORK RULE {database}.{schema}.{schema}_adsb_lol_rule
   TYPE = HOST_PORT
   MODE = EGRESS
-  VALUE_LIST = ('api.adsb.lol:443');
+  VALUE_LIST = ('api.adsb.lol:443')
+  COMMENT = '{tracking_tag}';
 
 CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {eai_adsb_lol}
   ALLOWED_NETWORK_RULES = ({database}.{schema}.{schema}_adsb_lol_rule)
-  ENABLED = TRUE;
+  ENABLED = TRUE
+  COMMENT = '{tracking_tag}';
 
 -- -----------------------------------------------------------------------------
 -- HELPER raw table (Bronze layer)
@@ -802,7 +841,8 @@ CREATE OR REPLACE TABLE {database}.{schema}.HELPER_ADSB_LOL_RAW (
     category VARCHAR(8),
     timestamp TIMESTAMP_NTZ,
     ingested_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
+)
+COMMENT = '{tracking_tag}';
 
 ALTER TABLE {database}.{schema}.HELPER_ADSB_LOL_RAW 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -821,7 +861,8 @@ CREATE OR REPLACE TABLE {database}.{schema}.HELPER_AIRCRAFT_META (
     UPDATED_AT TIMESTAMP_NTZ,
     SOURCE VARCHAR(32),
     RAW_JSON VARIANT
-);
+)
+COMMENT = '{tracking_tag}';
 
 ALTER TABLE {database}.{schema}.HELPER_AIRCRAFT_META 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -863,7 +904,8 @@ CREATE OR REPLACE TABLE {database}.{schema}.ADSB_DATA (
     MATCH_METHOD VARCHAR(32),
     MATCH_CONFIDENCE INT,
     MATCHED_AT TIMESTAMP_NTZ
-);
+)
+COMMENT = '{tracking_tag}';
 
 ALTER TABLE {database}.{schema}.ADSB_DATA 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -889,7 +931,8 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_LEG (
   REGISTRATION STRING,
   POINTS INT,
   COMPUTED_AT TIMESTAMP_NTZ
-);
+)
+COMMENT = '{tracking_tag}';
 
 ALTER TABLE {database}.{schema}.HELPER_FLIGHT_LEG 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -914,7 +957,8 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES (
   ARRIVAL_AIRPORT STRING,
   SCORE INT,
   CREATED_AT TIMESTAMP_NTZ
-);
+)
+COMMENT = '{tracking_tag}';
 
 ALTER TABLE {database}.{schema}.HELPER_FLIGHT_MATCH_CANDIDATES 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -934,7 +978,8 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_FLIGHT_MATCH_RESULT (
   SCHEDULE_FLIGHT_NUMBER STRING,
   SCORE INT,
   CHOSEN_AT TIMESTAMP_NTZ
-);
+)
+COMMENT = '{tracking_tag}';
 
 ALTER TABLE {database}.{schema}.HELPER_FLIGHT_MATCH_RESULT 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -955,7 +1000,8 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_RECURRING_CALLSIGN_PRIOR (
   LEGS INT,
   LAST_SEEN_DATE DATE,
   UPDATED_AT TIMESTAMP_NTZ
-);
+)
+COMMENT = '{tracking_tag}';
 
 ALTER TABLE {database}.{schema}.HELPER_RECURRING_CALLSIGN_PRIOR 
   SET TAG {database}.TAGS.SOLUTION = 'aviation-ops-intelligence',
@@ -967,6 +1013,7 @@ ALTER TABLE {database}.{schema}.HELPER_RECURRING_CALLSIGN_PRIOR
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(p_days_back INT)
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 DECLARE
@@ -1760,6 +1807,7 @@ RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python', 'requests')
 HANDLER = 'enrich'
 EXTERNAL_ACCESS_INTEGRATIONS = ({eai_adsb_lol})
+COMMENT = '{tracking_tag}'
 AS
 $$
 import json
@@ -1875,6 +1923,7 @@ ALTER PROCEDURE {database}.{schema}.PROC_ENRICH_AIRCRAFT_META(INT, INT, INT)
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_BACKFILL_ADSB_AIRCRAFT_DESC(p_days_back INT)
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 DECLARE
@@ -1910,6 +1959,7 @@ ALTER PROCEDURE {database}.{schema}.PROC_BACKFILL_ADSB_AIRCRAFT_DESC(INT)
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL()
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 BEGIN
@@ -1927,6 +1977,7 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_AIRCRAFT_META
   WAREHOUSE = {warehouse}
   SCHEDULE = 'USING CRON 15 3 * * * UTC'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
+  COMMENT = '{tracking_tag}'
 AS
   CALL {database}.{schema}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL();
 
@@ -1944,6 +1995,7 @@ RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python', 'requests')
 HANDLER = 'ingest'
 EXTERNAL_ACCESS_INTEGRATIONS = ({eai_adsb_lol})
+COMMENT = '{tracking_tag}'
 AS
 $$
 import requests
@@ -2041,6 +2093,7 @@ ALTER PROCEDURE {database}.{schema}.PROC_INGEST_ADSB_REALTIME()
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_ETL_ADSB_TO_DATA()
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 BEGIN
@@ -2122,6 +2175,7 @@ ALTER PROCEDURE {database}.{schema}.PROC_ETL_ADSB_TO_DATA()
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_DEDUP_ADSB_DATA(p_days_back INT)
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 DECLARE
@@ -2165,6 +2219,7 @@ ALTER PROCEDURE {database}.{schema}.PROC_DEDUP_ADSB_DATA(INT)
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_ADSB_INGEST_AND_ETL()
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 BEGIN
@@ -2187,6 +2242,7 @@ CREATE OR REPLACE TASK {database}.{schema}.TASK_INGEST_ADSB
   WAREHOUSE = {warehouse}
   SCHEDULE = 'USING CRON 30 1 * * * UTC'
   ALLOW_OVERLAPPING_EXECUTION = FALSE
+  COMMENT = '{tracking_tag}'
 AS
   CALL {database}.{schema}.PROC_ADSB_INGEST_AND_ETL();
 
@@ -2200,6 +2256,7 @@ ALTER TASK {database}.{schema}.TASK_INGEST_ADSB
 CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
   WAREHOUSE = {warehouse}
   AFTER {database}.{schema}.TASK_INGEST_ADSB
+  COMMENT = '{tracking_tag}'
 AS
   CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
 
@@ -2211,6 +2268,7 @@ ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB
 CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_DERIVED
   WAREHOUSE = {warehouse}
   AFTER {database}.{schema}.TASK_ENRICH_ADSB
+  COMMENT = '{tracking_tag}'
 AS
   CALL {database}.{schema}.PROC_REFRESH_DERIVED();
 
@@ -2222,6 +2280,7 @@ ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED
 CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
   WAREHOUSE = {warehouse}
   AFTER {database}.{schema}.TASK_REFRESH_DERIVED
+  COMMENT = '{tracking_tag}'
 AS
   CALL {database}.{schema}.PROC_REFRESH_ANALYTICS();
 
@@ -2251,11 +2310,13 @@ ALTER TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
 CREATE OR REPLACE NETWORK RULE {database}.{schema}.{schema}_github_rule
   TYPE = HOST_PORT
   MODE = EGRESS
-  VALUE_LIST = ('api.github.com:443', 'github.com:443', 'objects.githubusercontent.com:443', 'release-assets.githubusercontent.com:443');
+  VALUE_LIST = ('api.github.com:443', 'github.com:443', 'objects.githubusercontent.com:443', 'release-assets.githubusercontent.com:443')
+  COMMENT = '{tracking_tag}';
 
 CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {eai_github}
   ALLOWED_NETWORK_RULES = ({database}.{schema}.{schema}_github_rule)
-  ENABLED = TRUE;
+  ENABLED = TRUE
+  COMMENT = '{tracking_tag}';
 
 
 
@@ -2266,7 +2327,8 @@ CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {eai_github}
 -- =============================================================================
 
 -- Internal stage for downloaded TAR files and extracted NDJSON
-CREATE STAGE IF NOT EXISTS {database}.{schema}.ADSB_HISTORY_STAGE;
+CREATE STAGE IF NOT EXISTS {database}.{schema}.ADSB_HISTORY_STAGE
+  COMMENT = '{tracking_tag}';
 
 -- Tracking table for backfill status
 CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_ADSB_BACKFILL_STATUS (
@@ -2283,7 +2345,8 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_ADSB_BACKFILL_STATUS (
     aircraft_found INT,
     points_inserted INT,
     error_message VARCHAR(500)
-);
+)
+COMMENT = '{tracking_tag}';
 
 -- Backward/forward compatible schema upgrades
 ALTER TABLE {database}.{schema}.HELPER_ADSB_BACKFILL_STATUS ADD COLUMN IF NOT EXISTS loaded_at TIMESTAMP_NTZ;
@@ -2296,7 +2359,8 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_ADSB_HISTORY_INTERIM (
     data_date DATE,
     raw_json VARIANT,
     loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
+)
+COMMENT = '{tracking_tag}';
 
 -- =============================================================================
 -- Procedure: Download TAR files to internal stage
@@ -2309,6 +2373,7 @@ RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python', 'requests')
 HANDLER = 'download_to_stage'
 EXTERNAL_ACCESS_INTEGRATIONS = ({eai_github})
+COMMENT = '{tracking_tag}'
 AS
 $$
 import requests
@@ -2555,6 +2620,7 @@ LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
 HANDLER = 'extract_to_stage'
+COMMENT = '{tracking_tag}'
 AS
 $$
 import tarfile
@@ -2790,6 +2856,7 @@ LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
 HANDLER = 'load_json_files'
+COMMENT = '{tracking_tag}'
 AS
 $$
 def load_json_files(session, p_date):
@@ -2872,6 +2939,7 @@ $$;
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_FILTER_AND_INSERT_SQL(p_date VARCHAR)
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 DECLARE
@@ -3009,6 +3077,7 @@ LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
 HANDLER = 'process_day'
+COMMENT = '{tracking_tag}'
 AS
 $$
 def process_day(session, p_date):
@@ -3076,6 +3145,7 @@ LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
 HANDLER = 'backfill_week'
+COMMENT = '{tracking_tag}'
 AS
 $$
 from datetime import datetime, timedelta
@@ -3157,6 +3227,7 @@ $$;
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_START_BACKFILL_HISTORY()
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 BEGIN
@@ -3185,6 +3256,7 @@ LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
 HANDLER = 'run_once'
+COMMENT = '{tracking_tag}'
 AS
 $$
 from datetime import datetime, timedelta
@@ -3291,6 +3363,7 @@ LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
 HANDLER = 'run_retry'
+COMMENT = '{tracking_tag}'
 AS
 $$
 from datetime import datetime, timedelta
@@ -3409,6 +3482,7 @@ $$;
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_START_BACKFILL_RETRY_UTC()
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 BEGIN
@@ -3433,6 +3507,7 @@ $$;
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_CLEANUP_STAGE(p_date VARCHAR)
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 BEGIN
@@ -3466,10 +3541,13 @@ def generate_derived_sql(airport: dict, database: str, schema: str, warehouse: s
     installer_sha = _get_git_sha_short()
     installer_generated_at = datetime.utcnow().isoformat()
     adsb_history_backfill_days = int(adsb_history_backfill_days or 5)
+    tracking_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
     return f"""-- =============================================================================
 -- DERIVED ANALYTICS FOR {airport['name']} ({airport['iata_code']})
 -- Database: {database}.{schema}
 -- =============================================================================
+
+ALTER SESSION SET query_tag = '{tracking_tag}';
 
 -- -----------------------------------------------------------------------------
 -- Install audit (versioning / provenance)
@@ -3482,7 +3560,8 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_INSTALL_AUDIT (
   database_name STRING,
   schema_name STRING,
   notes STRING
-);
+)
+COMMENT = '{tracking_tag}';
 
 INSERT INTO {database}.{schema}.HELPER_INSTALL_AUDIT
 SELECT
@@ -3497,11 +3576,13 @@ SELECT
 -- -----------------------------------------------------------------------------
 -- Dashboard prerequisites (ensure objects exist even in troubleshooting mode)
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS {database}.{schema}.PROPERTIES_GATES (gate_id STRING, gate_name STRING, gate_geom GEOGRAPHY);
+CREATE TABLE IF NOT EXISTS {database}.{schema}.PROPERTIES_GATES (gate_id STRING, gate_name STRING, gate_geom GEOGRAPHY)
+COMMENT = '{tracking_tag}';
 CREATE TABLE IF NOT EXISTS {database}.{schema}.PROPERTIES_RUNWAYS (
   runway_id STRING,
   runway_geog GEOGRAPHY
-);
+)
+COMMENT = '{tracking_tag}';
 
 -- PROPERTIES_RUNWAYS is the only runway object we need (single unioned GEOGRAPHY row).
 
@@ -3520,6 +3601,7 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.PROPERTIES_RUNWAYS (
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.ADSB_DATA_LOCAL
   TARGET_LAG = DOWNSTREAM
   WAREHOUSE = {warehouse}
+  COMMENT = '{tracking_tag}'
 AS
 WITH airport AS (
   SELECT
@@ -3666,6 +3748,7 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUN
   TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
   INITIALIZE = ON_SCHEDULE
+  COMMENT = '{tracking_tag}'
 AS
 WITH ap AS (
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
@@ -3728,6 +3811,7 @@ ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
   TARGET_LAG = DOWNSTREAM
   WAREHOUSE = {warehouse}
+  COMMENT = '{tracking_tag}'
 AS
 WITH ap AS (
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
@@ -3799,6 +3883,7 @@ ALTER DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_ADSB_GROUND_POINTS
 CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_GATE_TIME
   TARGET_LAG = DOWNSTREAM
   WAREHOUSE = {warehouse}
+  COMMENT = '{tracking_tag}'
 AS
 WITH per_gate AS (
   SELECT
@@ -3835,6 +3920,7 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_GATE_UTIL_DAIL
   TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
   INITIALIZE = ON_SCHEDULE
+  COMMENT = '{tracking_tag}'
 AS
 SELECT
   service_date AS date,
@@ -3853,6 +3939,7 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_GATE_AIRLINE_D
   TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
   INITIALIZE = ON_SCHEDULE
+  COMMENT = '{tracking_tag}'
 AS
 WITH dim_icao AS (
   SELECT
@@ -3948,6 +4035,7 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.GATE_ANALYSIS_FLIGHT_DWELL_W
   TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
   INITIALIZE = ON_SCHEDULE
+  COMMENT = '{tracking_tag}'
 AS
 WITH dim_icao AS (
   SELECT
@@ -4029,7 +4117,9 @@ LEFT JOIN dim_iata dj ON dj.airline_iata = REGEXP_SUBSTR(UPPER(TRIM(g.flight_num
 --   - Aviationstack schedule (FLIGHT_SCHEDULE) enrichment
 --   - planned gate (schedule) + actual gate (gate analytics)
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW {database}.{schema}.HELPER_LANDING_LIVE_TIMETABLE AS
+CREATE OR REPLACE VIEW {database}.{schema}.HELPER_LANDING_LIVE_TIMETABLE
+COMMENT = '{tracking_tag}'
+AS
 WITH airport AS (
   SELECT
     UPPER(airport_code) AS airport_code,
@@ -4230,6 +4320,7 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_DAI
   TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
   INITIALIZE = ON_SCHEDULE
+  COMMENT = '{tracking_tag}'
 AS
 WITH ap AS (
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
@@ -4252,6 +4343,7 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_ADSB_HOU
   TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
   INITIALIZE = ON_SCHEDULE
+  COMMENT = '{tracking_tag}'
 AS
 SELECT
   DATE_TRUNC('HOUR', TIMESTAMP) AS hour,
@@ -4269,6 +4361,7 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRACKER_FLIGHT_LIST
   TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
   INITIALIZE = ON_SCHEDULE
+  COMMENT = '{tracking_tag}'
 AS
 WITH airport AS (
   SELECT
@@ -4367,6 +4460,7 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_
   TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
   INITIALIZE = ON_SCHEDULE
+  COMMENT = '{tracking_tag}'
 AS
 WITH ap AS (
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
@@ -4392,6 +4486,7 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.FLIGHT_TRAFFIC_FACT_AIRLINE_
   TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
   INITIALIZE = ON_SCHEDULE
+  COMMENT = '{tracking_tag}'
 AS
 WITH ap AS (
   SELECT COALESCE(NULLIF(airport_tzid, ''), 'UTC') AS airport_tzid
@@ -4473,6 +4568,7 @@ CREATE OR REPLACE DYNAMIC TABLE {database}.{schema}.RUNWAY_CROSSINGS_DETAILED
   TARGET_LAG = '1 HOUR'
   WAREHOUSE = {warehouse}
   INITIALIZE = ON_SCHEDULE
+  COMMENT = '{tracking_tag}'
 AS
 WITH runway_union AS (
   SELECT
@@ -4591,13 +4687,15 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_MONITOR_LAST_REFRESH (
   max_ts TIMESTAMP_NTZ,
   status STRING,
   details STRING
-);
+)
+COMMENT = '{tracking_tag}';
 
 CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_QA_COUNTS_DAILY (
   metric_date DATE,
   metric_name STRING,
   metric_value NUMBER(38,0)
-);
+)
+COMMENT = '{tracking_tag}';
 
 -- Ensure columns exist if table was created by an older installer version
 ALTER TABLE {database}.{schema}.HELPER_MONITOR_LAST_REFRESH ADD COLUMN IF NOT EXISTS row_count_24h NUMBER(38,0);
@@ -4624,7 +4722,8 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.HELPER_INGEST_AUDIT (
   status STRING,
   error_message STRING,
   created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
+)
+COMMENT = '{tracking_tag}';
 
 -- -----------------------------------------------------------------------------
 -- 3c. Ops/performance placeholders (avoid dashboard hard errors; can be replaced later)
@@ -4644,13 +4743,18 @@ CREATE TABLE IF NOT EXISTS {database}.{schema}.H2H_CONFLICT_PAIRS (
   b_start TIMESTAMP_NTZ,
   b_end TIMESTAMP_NTZ,
   min_gap_seconds NUMBER(38,0)
-);
+)
+COMMENT = '{tracking_tag}';
 
-CREATE OR REPLACE VIEW {database}.{schema}.V_AIR_OPS_TIMELINE AS
+CREATE OR REPLACE VIEW {database}.{schema}.V_AIR_OPS_TIMELINE
+COMMENT = '{tracking_tag}'
+AS
 SELECT CAST(NULL AS DATE) AS service_date, CAST(NULL AS STRING) AS airline_name
 WHERE 1=0;
 
-CREATE OR REPLACE VIEW {database}.{schema}.V_AIR_OPS_DAILY_KPIS AS
+CREATE OR REPLACE VIEW {database}.{schema}.V_AIR_OPS_DAILY_KPIS
+COMMENT = '{tracking_tag}'
+AS
 SELECT
   CAST(NULL AS DATE) AS service_date,
   CAST(NULL AS STRING) AS airline_name,
@@ -4670,6 +4774,7 @@ WHERE 1=0;
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_REFRESH_DERIVED()
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 DECLARE
@@ -4771,6 +4876,7 @@ CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_SMOKE_CHECK(p_grace_minutes
 RETURNS STRING
 LANGUAGE JAVASCRIPT
 EXECUTE AS CALLER
+COMMENT = '{tracking_tag}'
 AS
 $$
 function scalar(sqlText) {{
@@ -4897,6 +5003,7 @@ UNION ALL SELECT 'HELPER_FLIGHT_SCHEDULE_RAW', COUNT(*) FROM {database}.{schema}
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_REFRESH_ANALYTICS()
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 BEGIN
@@ -4945,6 +5052,7 @@ ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB RESUME;
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_RESUME_OPTIONAL_TASK(task_name STRING)
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 BEGIN
@@ -5026,12 +5134,15 @@ def generate_flight_schedule_sql(
     backfill_days = int(backfill_days or 0)
     # Keep at least the historical window we previously used (2 days) unless explicitly larger.
     backfill_days = max(2, backfill_days)
+    tracking_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-flight-schedules","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
     
     return f"""-- =============================================================================
 -- FLIGHT SCHEDULE INGESTION FOR {airport['name']} ({airport['iata_code']})
 -- Database: {database}.{schema}
 -- Source: aviationstack API
 -- =============================================================================
+
+ALTER SESSION SET query_tag = '{tracking_tag}';
 
 -- -----------------------------------------------------------------------------
 -- External Network Access (for aviationstack API)
@@ -5040,18 +5151,21 @@ def generate_flight_schedule_sql(
 CREATE OR REPLACE NETWORK RULE {database}.{schema}.{schema}_aviationstack_rule
   TYPE = HOST_PORT
   MODE = EGRESS
-  VALUE_LIST = ('api.aviationstack.com:80');
+  VALUE_LIST = ('api.aviationstack.com:80')
+  COMMENT = '{tracking_tag}';
 
 -- Create secret for API key
 CREATE OR REPLACE SECRET {database}.{schema}.aviationstack_key
   TYPE = GENERIC_STRING
-  SECRET_STRING = '{api_key}';
+  SECRET_STRING = '{api_key}'
+  COMMENT = '{tracking_tag}';
 
 -- Create external access integration
 CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {eai_aviationstack}
   ALLOWED_NETWORK_RULES = ({database}.{schema}.{schema}_aviationstack_rule)
   ALLOWED_AUTHENTICATION_SECRETS = ({database}.{schema}.aviationstack_key)
-  ENABLED = TRUE;
+  ENABLED = TRUE
+  COMMENT = '{tracking_tag}';
 
 -- -----------------------------------------------------------------------------
 -- Note: HELPER_FLIGHT_SCHEDULE_RAW and FLIGHT_SCHEDULE tables are created
@@ -5070,6 +5184,7 @@ PACKAGES = ('snowflake-snowpark-python', 'requests')
 HANDLER = 'ingest'
 EXTERNAL_ACCESS_INTEGRATIONS = ({eai_aviationstack})
 SECRETS = ('api_key' = {database}.{schema}.aviationstack_key)
+COMMENT = '{tracking_tag}'
 AS
 $$
 import requests
@@ -5241,6 +5356,7 @@ $$;
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_ETL_SCHEDULE_TO_FLIGHT_SCHEDULE()
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 BEGIN
@@ -5298,6 +5414,7 @@ $$;
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_BACKFILL_FLIGHT_SCHEDULE(p_days_back INT)
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 DECLARE
@@ -5337,6 +5454,7 @@ $$;
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_BACKFILL_FLIGHT_SCHEDULE_WINDOW(p_days_back INT, p_days_forward INT)
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 DECLARE
@@ -5373,6 +5491,7 @@ $$;
 CREATE OR REPLACE PROCEDURE {database}.{schema}.PROC_FLIGHT_SCHEDULE_INGEST_AND_ETL()
 RETURNS STRING
 LANGUAGE SQL
+COMMENT = '{tracking_tag}'
 AS
 $$
 BEGIN
@@ -5389,6 +5508,7 @@ $$;
 CREATE OR REPLACE TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE
   WAREHOUSE = {warehouse}
   AFTER {database}.{schema}.TASK_INGEST_ADSB
+  COMMENT = '{tracking_tag}'
 AS
   CALL {database}.{schema}.PROC_FLIGHT_SCHEDULE_INGEST_AND_ETL();
 

@@ -16,7 +16,7 @@ from snowflake.snowpark.context import get_active_session
 def set_query_tag(_session):
     """Set query tag for telemetry tracking on all dashboard queries."""
     try:
-        _session.sql("ALTER SESSION SET QUERY_TAG = 'UC-FLEET-1'").collect()
+        _session.sql("ALTER SESSION SET QUERY_TAG = '{\"origin\":\"sf_sit-is-aviation\",\"name\":\"oss-aviation-dashboard\",\"version\":{\"major\":1,\"minor\":0},\"attributes\":{\"is_quickstart\":1,\"source\":\"app\"}}'").collect()
     except Exception:
         pass  # Fail silently if query tag setting fails
 

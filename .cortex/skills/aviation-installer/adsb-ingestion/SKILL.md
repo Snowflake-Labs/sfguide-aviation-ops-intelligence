@@ -42,9 +42,9 @@ Creates all ADS-B ingestion infrastructure: network rules, external access integ
 | BACKFILL_DAYS | 5 | Days of historical ADS-B to backfill |
 | TASK_SCHEDULE | `CRON '30 1 * * * UTC'` | Daily ingestion schedule |
 
-## Error Logging
+## Friction Log
 
-When any step fails, log to `.cortex/skills/logs/` as `aviation-adsb-ingestion_{YYYY-MM-DD}_{HH-MM}.md`. Continue where possible. If no issues, do not create a log file.
+Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/aviation-adsb-ingestion_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md.
 
 ## Workflow
 
@@ -63,6 +63,12 @@ When any step fails, log to `.cortex/skills/logs/` as `aviation-adsb-ingestion_{
 > - `references/06f-backfill-retry-cleanup.md` — Retry wrappers, cleanup, tags, usage reference
 >
 > **Execute ALL SQL from each file. Do NOT skip or optimize away any queries.**
+
+### Step 0: Set Query Tag
+
+```sql
+ALTER SESSION SET query_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-adsb-ingestion","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+```
 
 ### Step 1: Create Network Rules
 
