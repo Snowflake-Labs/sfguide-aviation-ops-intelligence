@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import MetricCard from '../shared/MetricCard';
 import DataTable from '../shared/DataTable';
-import { fmtNum, fmtDec } from '../shared/format';
+import { fmtNum, fmtDec, fmtChartDate } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSfQuery } from '../hooks/useSnowflake';
 import {
@@ -86,7 +86,7 @@ export default function TrafficAnalysis() {
           <ResponsiveContainer width="100%" height={250}>
             <LineChart data={dailyData}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="DATE" tick={{ fontSize: 10 }} />
+              <XAxis dataKey="DATE" tick={{ fontSize: 10 }} tickFormatter={fmtChartDate} />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip />
               <Line type="monotone" dataKey="AIRCRAFT" stroke="#29B5E8" dot={false} strokeWidth={2} name="Aircraft" />

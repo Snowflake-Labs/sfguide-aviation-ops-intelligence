@@ -403,7 +403,7 @@ else:
             pdk.Layer(
                 'GeoJsonLayer',
                 data={'type': 'FeatureCollection', 'features': [{'type': 'Feature', 'geometry': geom_json}]},
-                get_fill_color=[80, 80, 80, 100],
+                get_fill_color=[80, 80, 80, 0],
                 get_line_color=[200, 200, 200, 200],
                 line_width_min_pixels=2,
                 pickable=False

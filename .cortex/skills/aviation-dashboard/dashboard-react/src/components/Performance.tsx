@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import MetricCard from '../shared/MetricCard';
-import { fmtNum, fmtDec, fmtPct } from '../shared/format';
+import { fmtNum, fmtDec, fmtPct, fmtChartDate } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSfQuery } from '../hooks/useSnowflake';
 import {
@@ -80,7 +80,7 @@ export default function Performance() {
           <ResponsiveContainer width="100%" height={250}>
             <LineChart data={kpiData}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="DT" tick={{ fontSize: 10 }} />
+              <XAxis dataKey="DT" tick={{ fontSize: 10 }} tickFormatter={fmtChartDate} />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip />
               <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -98,7 +98,7 @@ export default function Performance() {
               OTP_ARR_PCT: d.OTP_ARR != null ? Number(d.OTP_ARR) * 100 : null,
             }))}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="DT" tick={{ fontSize: 10 }} />
+              <XAxis dataKey="DT" tick={{ fontSize: 10 }} tickFormatter={fmtChartDate} />
               <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
               <Tooltip />
               <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -114,7 +114,7 @@ export default function Performance() {
         <ResponsiveContainer width="100%" height={150}>
           <BarChart data={kpiData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="DT" tick={{ fontSize: 10 }} />
+            <XAxis dataKey="DT" tick={{ fontSize: 10 }} tickFormatter={fmtChartDate} />
             <YAxis tick={{ fontSize: 10 }} domain={[0, 1]} />
             <Tooltip />
             <Bar dataKey="H2H" fill="#E5484D" radius={[4, 4, 0, 0]} name="Head-to-Head" />

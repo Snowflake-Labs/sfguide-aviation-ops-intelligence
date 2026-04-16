@@ -63,6 +63,7 @@ tsa_checkpoints AS (
     FROM {TARGET_DB}.{SCHEMA}.TSA_THROUGHPUT
     WHERE UPPER(airport_code) = '{IATA}'
       AND checkpoint IS NOT NULL AND checkpoint != ''
+      AND LEN(checkpoint) < 40
 ),
 checkpoint_terminal_match AS (
     SELECT
@@ -96,11 +97,12 @@ tsa_daily AS (
     SELECT
         TRY_TO_DATE(date, 'MM/DD/YYYY') AS throughput_date,
         checkpoint,
-        TRY_TO_NUMBER(hour_of_day) AS hour_of_day,
+        TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) AS hour_of_day,
         TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0) AS passengers
     FROM {TARGET_DB}.{SCHEMA}.TSA_THROUGHPUT
     WHERE UPPER(airport_code) = '{IATA}'
       AND TRY_TO_DATE(date, 'MM/DD/YYYY') IS NOT NULL
+      AND LEN(checkpoint) < 40
 )
 SELECT
     td.throughput_date,

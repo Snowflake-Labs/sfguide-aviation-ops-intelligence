@@ -102,23 +102,25 @@ export default function TSAThroughput() {
   const { data: dateRangeRows } = useSfQuery(dateRangeSql, airport, 'PUBLIC', [iata, hasTable]);
 
   const dailySql = airport && iata && hasTable
-    ? `SELECT TRY_TO_DATE(date, 'MM/DD/YYYY') AS TSA_DATE,
+    ? `SELECT TO_CHAR(TRY_TO_DATE(date, 'MM/DD/YYYY'), 'YYYY-MM-DD') AS TSA_DATE,
              SUM(TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0)) AS TOTAL_PAX,
              COUNT(DISTINCT checkpoint) AS CHECKPOINT_COUNT
        FROM ${db}.TSA_THROUGHPUT
        WHERE UPPER(airport_code) = '${iata}'
          AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+         AND LEN(checkpoint) < 40
        GROUP BY TSA_DATE ORDER BY TSA_DATE`
     : '';
   const { data: dailyData } = useSfQuery(dailySql, airport, 'PUBLIC', [iata, hasTable, dateFrom, dateTo]);
 
   const hourlySql = airport && iata && hasTable
-    ? `SELECT TRY_TO_NUMBER(hour_of_day) AS HOUR_OF_DAY,
+    ? `SELECT TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) AS HOUR_OF_DAY,
              SUM(TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0)) AS TOTAL_PAX
        FROM ${db}.TSA_THROUGHPUT
        WHERE UPPER(airport_code) = '${iata}'
          AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
-         AND TRY_TO_NUMBER(hour_of_day) IS NOT NULL
+         AND TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) IS NOT NULL
+         AND LEN(checkpoint) < 40
        GROUP BY HOUR_OF_DAY ORDER BY HOUR_OF_DAY`
     : '';
   const { data: hourlyData } = useSfQuery(hourlySql, airport, 'PUBLIC', [iata, hasTable, dateFrom, dateTo]);
@@ -130,31 +132,34 @@ export default function TSAThroughput() {
        WHERE UPPER(airport_code) = '${iata}'
          AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
          AND checkpoint IS NOT NULL AND checkpoint != ''
+         AND LEN(checkpoint) < 40
        GROUP BY CHECKPOINT ORDER BY TOTAL_PAX DESC`
     : '';
   const { data: checkpointData } = useSfQuery(checkpointSql, airport, 'PUBLIC', [iata, hasTable, dateFrom, dateTo]);
 
   const heatmapSql = airport && iata && hasTable
-    ? `SELECT TRY_TO_NUMBER(hour_of_day) AS HOUR,
+    ? `SELECT TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) AS HOUR,
              DAYOFWEEK(TRY_TO_DATE(date, 'MM/DD/YYYY')) AS DAY_OF_WEEK,
              SUM(TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0)) AS TOTAL_PAX
        FROM ${db}.TSA_THROUGHPUT
        WHERE UPPER(airport_code) = '${iata}'
          AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
-         AND TRY_TO_NUMBER(hour_of_day) IS NOT NULL
+         AND TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) IS NOT NULL
+         AND LEN(checkpoint) < 40
        GROUP BY HOUR, DAY_OF_WEEK ORDER BY DAY_OF_WEEK, HOUR`
     : '';
   const { data: heatmapData } = useSfQuery(heatmapSql, airport, 'PUBLIC', [iata, hasTable, dateFrom, dateTo]);
 
   const rawSql = airport && iata && hasTable
-    ? `SELECT TRY_TO_DATE(date, 'MM/DD/YYYY') AS DATE,
-             hour_of_day AS HOUR,
+    ? `SELECT TO_CHAR(TRY_TO_DATE(date, 'MM/DD/YYYY'), 'YYYY-MM-DD') AS DATE,
+             SPLIT_PART(hour_of_day, ':', 1) AS HOUR,
              checkpoint AS CHECKPOINT,
              TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0) AS PASSENGERS,
              airport_name AS AIRPORT_NAME, city AS CITY, state AS STATE
        FROM ${db}.TSA_THROUGHPUT
        WHERE UPPER(airport_code) = '${iata}'
          AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+         AND LEN(checkpoint) < 40
        ORDER BY DATE DESC, HOUR LIMIT 1000`
     : '';
   const { data: rawData } = useSfQuery(rawSql, airport, 'PUBLIC', [iata, hasTable, dateFrom, dateTo]);
