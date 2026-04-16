@@ -34,7 +34,7 @@ USE WAREHOUSE AVIA_{IATA}_WH;
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS {TARGET_DB}.TAGS
-  COMMENT = 'Cost attribution tags for Aviation Ops Intelligence solution';
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 
 CREATE TAG IF NOT EXISTS {TARGET_DB}.TAGS.SOLUTION
   ALLOWED_VALUES 'aviation-ops-intelligence'

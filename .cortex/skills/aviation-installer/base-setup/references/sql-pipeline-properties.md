@@ -276,7 +276,8 @@ CREATE OR REPLACE FILE FORMAT {TARGET_DB}.{SCHEMA}.FF_AIRLINES_CSV
   FIELD_DELIMITER = ','
   SKIP_HEADER = 1
   FIELD_OPTIONALLY_ENCLOSED_BY = '"'
-  NULL_IF = ('\\N', 'N/A', '-', '');
+  NULL_IF = ('\\N', 'N/A', '-', '')
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 
 CREATE OR REPLACE TABLE {TARGET_DB}.{SCHEMA}.HELPER_AIRLINE_DIM (
   AIRLINE_ID INT,
