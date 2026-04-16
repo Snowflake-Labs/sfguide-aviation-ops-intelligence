@@ -1738,7 +1738,8 @@ def create_infrastructure_pydeck_layers(infra_df, show_tags: bool = False) -> li
     infra_df['color'] = infra_df[layer_col].apply(get_infrastructure_color)
     infra_df['color_with_alpha'] = infra_df['color'].apply(lambda c: c + [180])
     # Polygon fills should be more transparent to not obscure other layers
-    infra_df['color_fill'] = infra_df['color'].apply(lambda c: c + [50])
+    infra_df['color_fill'] = infra_df.apply(
+        lambda row: row['color'] + [0] if row[layer_col].lower() == 'runway' else row['color'] + [50], axis=1)
     
     # Create tooltip - optionally include source tags
     def _build_tooltip(row):

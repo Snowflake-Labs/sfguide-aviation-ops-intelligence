@@ -34,3 +34,46 @@ export function fmtSpeed(kts: unknown): string {
   if (kts == null || kts === '' || isNaN(n)) return '—';
   return `${Math.round(n)} kts`;
 }
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
+
+export function toDate(v: unknown): Date | null {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  const s = String(v).trim();
+  if (ISO_DATE_RE.test(s)) return new Date(s + 'T00:00:00');
+  if (ISO_DATETIME_RE.test(s)) return new Date(s.replace(' ', 'T'));
+  const n = Number(s);
+  if (!isNaN(n) && isFinite(n) && Math.abs(n) > 1e9) {
+    const ms = Math.abs(n) > 1e12 ? n : n * 1000;
+    const d = new Date(ms);
+    if (!isNaN(d.getTime()) && d.getFullYear() >= 2000 && d.getFullYear() <= 2100) return d;
+  }
+  return null;
+}
+
+export function fmtDate(v: unknown): string {
+  const d = toDate(v);
+  if (!d) return '—';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+export function fmtTime(v: unknown): string {
+  const d = toDate(v);
+  if (!d) return '—';
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+
+export function fmtDateTime(v: unknown): string {
+  const d = toDate(v);
+  if (!d) return '—';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+    d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+export function fmtChartDate(v: unknown): string {
+  const d = toDate(v);
+  if (!d) return String(v ?? '');
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}

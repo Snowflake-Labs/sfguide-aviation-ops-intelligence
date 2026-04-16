@@ -2,8 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import MapView from '../shared/MapView';
 import MetricCard from '../shared/MetricCard';
-import DataTable from '../shared/DataTable';
-import { fmtNum, fmtAltitude, fmtSpeed } from '../shared/format';
+import { fmtNum, fmtAltitude, fmtSpeed, fmtTime } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSnowflake, useSfQuery } from '../hooks/useSnowflake';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
@@ -12,6 +11,27 @@ interface TrackPoint {
   lat: number; lon: number; sec: number;
   alt: number; vel: number; track: number; onGround: boolean;
 }
+
+const GROUND_CATEGORIES = new Set([
+  'TOWER', 'SERVICE_VEHICLE', 'GROUND_VEHICLE', 'LIGHT_SURFACE_VEHICLE', 'UNKNOWN_SURFACE',
+]);
+
+const VEHICLE_TYPE_LABELS: Record<string, string> = {
+  HEAVY_AIRCRAFT: 'Heavy (A380, 777)',
+  MEDIUM_AIRCRAFT: 'Medium (737, A320)',
+  LARGE_AIRLINER: 'Large (A321, 38M)',
+  SMALL_COMMUTER: 'Small Commuter',
+  LIGHT_AIRCRAFT: 'Light Aircraft',
+  HELICOPTER: 'Helicopter',
+  HIGH_PERFORMANCE_MILITARY: 'Military',
+  ULTRALIGHT_EXPERIMENTAL: 'Ultralight',
+  TOWER: 'Tower',
+  SERVICE_VEHICLE: 'Service Vehicle',
+  GROUND_VEHICLE: 'Ground Vehicle',
+  LIGHT_SURFACE_VEHICLE: 'Emergency/Light',
+  UNKNOWN_SURFACE: 'Unknown Surface',
+  OTHER: 'Other',
+};
 
 function secToHMS(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -48,11 +68,25 @@ function altColor(alt: number, min: number, max: number): [number, number, numbe
   const t = max > min ? Math.max(0, Math.min(1, (alt - min) / (max - min))) : 0;
   if (t < 0.5) {
     const s = t * 2;
-    return [Math.round(0 + 255 * s), Math.round(137 + (221 - 137) * s), Math.round(123 + (53 - 123) * s)];
+    return [Math.round(0 + 255 * s), Math.round(137 + (221 - 137) * s), Math.round(53 - 70 * s)];
   }
   const s = (t - 0.5) * 2;
   return [Math.round(255 - 26 * s), Math.round(221 - 168 * s), Math.round(53 - 53 * s)];
 }
+
+function flightLabel(f: any): string {
+  const cat = String(f.VEHICLE_CATEGORY || '');
+  if (GROUND_CATEGORIES.has(cat)) {
+    return `${f.FLIGHT} | ${VEHICLE_TYPE_LABELS[cat] || cat.replace(/_/g, ' ')}`;
+  }
+  const parts = [f.FLIGHT];
+  if (f.AIRLINE) parts.push(f.AIRLINE);
+  const od = [f.ORIGIN, f.DEST].filter(Boolean).join('\u2192');
+  if (od) parts.push(od);
+  return parts.join(' | ');
+}
+
+type VehicleGroup = 'all' | 'aircraft' | 'ground';
 
 export default function FlightTracker() {
   const { airport } = useAirport();
@@ -65,6 +99,7 @@ export default function FlightTracker() {
   const [currentTime, setCurrentTime] = useState(0);
   const [minTime, setMinTime] = useState(0);
   const [maxTime, setMaxTime] = useState(0);
+  const [vehicleGroup, setVehicleGroup] = useState<VehicleGroup>('aircraft');
 
   const airportSql = airport
     ? `SELECT CENTER_LAT AS LAT, CENTER_LON AS LON, AIRPORT_TZID FROM ${db}.PROPERTIES_AIRPORT LIMIT 1`
@@ -78,16 +113,33 @@ export default function FlightTracker() {
               DESTINATION_AIRPORT AS DEST, POINTS, VEHICLE_CATEGORY
        FROM ${db}.FLIGHT_TRACKER_FLIGHT_LIST
        WHERE SERVICE_DATE = '${date}'::DATE
-       QUALIFY ROW_NUMBER() OVER (ORDER BY POINTS DESC, FLIGHT_ID ASC) <= 300`
+       QUALIFY ROW_NUMBER() OVER (ORDER BY POINTS DESC, FLIGHT_ID ASC) <= 500`
     : '';
   const { data: flightList, loading: listLoading } = useSfQuery(flightListSql, airport, 'PUBLIC', [date]);
+
+  const filteredFlights = useMemo(() => {
+    if (vehicleGroup === 'all') return flightList;
+    return flightList.filter((f: any) => {
+      const isGround = GROUND_CATEGORIES.has(String(f.VEHICLE_CATEGORY || ''));
+      return vehicleGroup === 'ground' ? isGround : !isGround;
+    });
+  }, [flightList, vehicleGroup]);
+
+  const groupCounts = useMemo(() => {
+    let aircraft = 0, ground = 0;
+    for (const f of flightList) {
+      if (GROUND_CATEGORIES.has(String(f.VEHICLE_CATEGORY || ''))) ground++;
+      else aircraft++;
+    }
+    return { aircraft, ground, all: flightList.length };
+  }, [flightList]);
 
   const loadTrack = useCallback(async (flight: string) => {
     setSelectedFlight(flight);
     const rows = await query(
       `SELECT FLIGHT, TIMESTAMP, ST_Y(LOCATION) AS LAT, ST_X(LOCATION) AS LON,
               ALTITUDE_BARO, TRACK, VELOCITY,
-              NVL(ON_GROUND, FALSE) AS ON_GROUND,
+              (ALTITUDE_BARO IS NOT NULL AND ALTITUDE_BARO <= 100 AND COALESCE(VELOCITY, 0) < 50) AS ON_GROUND,
               DATEDIFF('second',
                 DATE_TRUNC('day', CONVERT_TIMEZONE('UTC', '${tz}', TIMESTAMP)),
                 CONVERT_TIMEZONE('UTC', '${tz}', TIMESTAMP)
@@ -204,7 +256,7 @@ export default function FlightTracker() {
     return trackData
       .filter(d => d.TIMESTAMP)
       .map(d => ({
-        time: String(d.TIMESTAMP).slice(11, 19),
+        time: fmtTime(d.TIMESTAMP),
         sec: Number(d.SEC_OF_DAY) || 0,
         altitude: Number(d.ALTITUDE_BARO) || 0,
         speed: Number(d.VELOCITY) || 0,
@@ -239,7 +291,39 @@ export default function FlightTracker() {
         <h2>Flight Tracker</h2>
         <div className="form-group">
           <label>Date</label>
-          <input type="date" className="form-input" value={date} onChange={e => setDate(e.target.value)} />
+          <input type="date" className="form-input" value={date} onChange={e => { setDate(e.target.value); setSelectedFlight(null); setTrackData([]); }} />
+        </div>
+        <div className="form-group">
+          <label>Vehicle Type</label>
+          <div className="mode-toggle" style={{ width: '100%' }}>
+            {(['aircraft', 'ground', 'all'] as VehicleGroup[]).map(g => (
+              <button
+                key={g}
+                className={`mode-toggle-btn ${vehicleGroup === g ? 'active' : ''}`}
+                onClick={() => setVehicleGroup(g)}
+                style={{ flex: 1, fontSize: 12 }}
+              >
+                {g === 'aircraft' ? `Aircraft (${groupCounts.aircraft})` :
+                 g === 'ground' ? `Ground (${groupCounts.ground})` :
+                 `All (${groupCounts.all})`}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="form-group">
+          <label>Flight ({filteredFlights.length})</label>
+          <select
+            className="form-input"
+            value={selectedFlight || ''}
+            onChange={e => { const v = e.target.value; if (v) loadTrack(v); else { setSelectedFlight(null); setTrackData([]); } }}
+          >
+            <option value="">— Select flight —</option>
+            {filteredFlights.map((f: any) => (
+              <option key={f.FLIGHT} value={f.FLIGHT}>
+                {flightLabel(f)}
+              </option>
+            ))}
+          </select>
         </div>
         {selectedFlight && flightMeta && (
           <div className="flight-info-grid">
@@ -272,23 +356,6 @@ export default function FlightTracker() {
             </ResponsiveContainer>
           </div>
         )}
-        <div style={{ marginTop: 16 }}>
-          <h3 style={{ fontSize: 13, marginBottom: 8 }}>Flights ({flightList.length})</h3>
-          {listLoading ? <div className="loading-text">Loading...</div> : (
-            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-              {flightList.map((f: any) => (
-                <button
-                  key={f.FLIGHT}
-                  className={`sidebar-link ${selectedFlight === f.FLIGHT ? 'active' : ''}`}
-                  onClick={() => loadTrack(f.FLIGHT)}
-                >
-                  <span style={{ fontWeight: 500 }}>{f.FLIGHT}</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 'auto' }}>{f.POINTS} pts</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
       <div className="map-split">
         <MapView layers={layers} initialViewState={viewState} getTooltip={getTooltip}>

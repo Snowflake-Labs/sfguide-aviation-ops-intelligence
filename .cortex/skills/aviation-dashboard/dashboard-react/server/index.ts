@@ -189,6 +189,6 @@ if (!IS_SPCS) {
       res.sendFile(join(distPath, 'index.html'));
     });
   }
-  const PORT = 3001;
+  const PORT = process.env.PORT || 3001;
   app.listen(PORT, () => console.log(`Aviation dashboard SPCS on :${PORT}`));
 }

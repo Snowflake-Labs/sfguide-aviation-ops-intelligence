@@ -1,6 +1,18 @@
 import { useState, useMemo } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
-import { fmtDec } from './format';
+import { fmtDec, toDate, fmtDate, fmtDateTime } from './format';
+
+const DATETIME_COLS = /^(LAST_SEEN|LAST_REFRESHED_AT|WINDOW_START|WINDOW_END|ENTRY|EXIT|.*_SCHEDULED)$/i;
+const DATE_COLS = /^(DATE|DT|METRIC_DATE|SERVICE_DATE|.*_DATE)$/i;
+
+function fmtCell(col: string, v: unknown): string {
+  if (v == null || v === '') return '';
+  if (DATETIME_COLS.test(col) && toDate(v)) return fmtDateTime(v);
+  if (DATE_COLS.test(col) && toDate(v)) return fmtDate(v);
+  const n = Number(v);
+  if (v !== '' && !isNaN(n) && String(v).includes('.')) return fmtDec(v);
+  return String(v);
+}
 
 interface DataTableProps {
   data: Record<string, any>[];
@@ -53,7 +65,7 @@ export default function DataTable({ data, columns: explicitColumns, maxRows = 10
           {sorted.map((row, i) => (
             <tr key={i}>
               {columns.map(col => (
-                <td key={col}>{row[col] != null ? ((() => { const v = row[col]; const n = Number(v); return v !== '' && !isNaN(n) && String(v).includes('.') ? fmtDec(v) : String(v); })()) : ''}</td>
+                <td key={col}>{fmtCell(col, row[col])}</td>
               ))}
             </tr>
           ))}

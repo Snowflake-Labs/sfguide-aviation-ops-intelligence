@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import MetricCard from '../shared/MetricCard';
 import DataTable from '../shared/DataTable';
-import { fmtNum, fmtDec, fmtPct } from '../shared/format';
+import { fmtNum, fmtDec, fmtPct, fmtChartDate } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSfQuery } from '../hooks/useSnowflake';
 import {
@@ -91,7 +91,7 @@ export default function Monitoring() {
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={matchTrend}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="DT" tick={{ fontSize: 10 }} />
+              <XAxis dataKey="DT" tick={{ fontSize: 10 }} tickFormatter={fmtChartDate} />
               <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
               <Tooltip />
               <Line type="monotone" dataKey="MATCH_RATE" stroke="#29B5E8" dot={false} strokeWidth={2} name="Match Rate %" />
@@ -103,7 +103,7 @@ export default function Monitoring() {
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={dailyVol}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="DT" tick={{ fontSize: 10 }} />
+              <XAxis dataKey="DT" tick={{ fontSize: 10 }} tickFormatter={fmtChartDate} />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip />
               <Bar dataKey="POINTS" fill="#29B5E8" radius={[4, 4, 0, 0]} name="Points" />
@@ -117,7 +117,7 @@ export default function Monitoring() {
         <ResponsiveContainer width="100%" height={200}>
           <LineChart data={dailyVol}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="DT" tick={{ fontSize: 10 }} />
+            <XAxis dataKey="DT" tick={{ fontSize: 10 }} tickFormatter={fmtChartDate} />
             <YAxis tick={{ fontSize: 10 }} />
             <Tooltip />
             <Line type="monotone" dataKey="AIRCRAFT" stroke="#0DB048" strokeWidth={2} name="Aircraft" />
