@@ -1,5 +1,7 @@
 # Aviation Operations Intelligence on Snowflake
 
+![Aviation Ops Intelligence](docs/s_airport_intelligence.png)
+
 A Snowflake-native aviation analytics platform using ADS-B flight tracking, flight schedules, TSA checkpoint throughput, and airport infrastructure from Overture Maps. Deploy per-airport analytics with automated pipelines, 13 Dynamic Tables, and interactive dashboards.
 
 Deploy and extend the solution using [Cortex Code](https://docs.snowflake.com/en/user-guide/cortex-code) skills. Each skill is a self-contained playbook the AI agent follows step by step.

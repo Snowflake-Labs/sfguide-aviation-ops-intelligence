@@ -203,6 +203,8 @@ SELECT
   COALESCE(w.width_m / 2.0, 30.0) AS buffer_radius_m
 FROM runways r
 LEFT JOIN widths w USING (id);
+
+ALTER TABLE {TARGET_DB}.{SCHEMA}.TEMP_RUNWAY_SEGMENTS SET COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
 ### 7b — Convert to EPSG:3857
@@ -215,6 +217,8 @@ SELECT
   buffer_radius_m
 FROM {TARGET_DB}.{SCHEMA}.TEMP_RUNWAY_SEGMENTS
 WHERE runway_geog IS NOT NULL;
+
+ALTER TABLE {TARGET_DB}.{SCHEMA}.TEMP_RUNWAY_GEOM_3857 SET COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
 ### 7c — Buffer in meters
@@ -226,6 +230,8 @@ SELECT
   ST_BUFFER(runway_geom_3857, COALESCE(buffer_radius_m, 30.0)) AS runway_buffer_3857
 FROM {TARGET_DB}.{SCHEMA}.TEMP_RUNWAY_GEOM_3857
 WHERE runway_geom_3857 IS NOT NULL;
+
+ALTER TABLE {TARGET_DB}.{SCHEMA}.TEMP_RUNWAY_BUFFER_3857 SET COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
 ### 7d — Reproject to WGS84 and union
@@ -236,6 +242,8 @@ SELECT
   'RWY_001' AS runway_id,
   ST_UNION_AGG(TO_GEOGRAPHY(ST_TRANSFORM(runway_buffer_3857, 4326))) AS runway_geog
 FROM {TARGET_DB}.{SCHEMA}.TEMP_RUNWAY_BUFFER_3857;
+
+ALTER TABLE {TARGET_DB}.{SCHEMA}.PROPERTIES_RUNWAYS SET COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
 ### 7e — Split MultiPolygon into individual runway rows
@@ -249,10 +257,14 @@ FROM {TARGET_DB}.{SCHEMA}.PROPERTIES_RUNWAYS r,
 TABLE ({TARGET_DB}.{SCHEMA}.ST_GETPOLYGONS(ST_ASGEOJSON(r.runway_geog))) p
 WHERE r.runway_geog IS NOT NULL;
 
+ALTER TABLE {TARGET_DB}.{SCHEMA}.TEMP_RUNWAY_POLYGONS SET COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+
 CREATE OR REPLACE TABLE {TARGET_DB}.{SCHEMA}.PROPERTIES_RUNWAYS AS
 SELECT runway_id, runway_geog
 FROM {TARGET_DB}.{SCHEMA}.TEMP_RUNWAY_POLYGONS
 WHERE runway_geog IS NOT NULL;
+
+ALTER TABLE {TARGET_DB}.{SCHEMA}.PROPERTIES_RUNWAYS SET COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 
 ALTER TABLE {TARGET_DB}.{SCHEMA}.PROPERTIES_RUNWAYS
   SET TAG {TARGET_DB}.TAGS.SOLUTION = 'aviation-ops-intelligence',

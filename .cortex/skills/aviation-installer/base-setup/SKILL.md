@@ -44,9 +44,9 @@ Creates the `AIRPORT_{IATA}` database, schemas, cost-attribution tags, UDFs, air
 | CREATE FUNCTION | Schema | Creates UDFs (timezone, OSM tag, polygon splitter) |
 | IMPORTED PRIVILEGES ON OVERTURE_MAPS__BASE | Database | Reads airport geometry, infrastructure, gates |
 
-## Error Logging
+## Friction Log
 
-When any step fails, log to `.cortex/skills/logs/` as `aviation-base-setup_{YYYY-MM-DD}_{HH-MM}.md`. Continue where possible, logging all issues. If no issues, do not create a log file.
+Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/aviation-base-setup_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md.
 
 ## Workflow
 
@@ -61,6 +61,12 @@ Execute each statement using `snowflake_sql_execute`. Substitute all `{PLACEHOLD
 > 3. **Never use `SET` session variables.**
 > 4. **Verify row counts after each CTAS.**
 > 5. **All CREATE statements must include a COMMENT tracking tag:** `COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup",...}'`
+
+### Step 0: Set Query Tag
+
+```sql
+ALTER SESSION SET query_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+```
 
 ### Step 1: Create Database and Schemas
 

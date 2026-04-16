@@ -39,9 +39,46 @@ Routes installation requests to the correct sub-skills based on phase. Provision
 | GIT_REPO_STAGE | `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main` | Git repo stage for skill source files |
 | BACKFILL_DAYS | 5 | Days of historical ADS-B data to backfill |
 
-## Error Logging
+## Re-installation Behavior
 
-When any step fails or produces unexpected results (SQL errors, missing objects, wrong row counts, service failures, deployment issues), log the issue to `.cortex/skills/logs/`. Create one log file per execution: `aviation-installer_{YYYY-MM-DD}_{HH-MM}.md`. Continue execution where possible, logging all issues encountered. If execution completes with no issues, do not create a log file.
+The installer detects existing airport databases before proceeding. When `AIRPORT_{IATA}` already exists, you will be prompted to choose:
+
+- **Update dashboard only** -- redeploys the dashboard if a newer version is available; all data and pipelines remain untouched
+- **Skip** -- leave the existing installation completely untouched
+- **Full reinstall** -- destroys all accumulated data and recreates from scratch (irreversible)
+
+### Dashboard Location
+
+The dashboard is deployed once and auto-discovers all `AIRPORT_XXX` databases. When installing a second (or third) airport, the installer detects the existing dashboard and updates it in-place rather than creating a duplicate. The dashboard always lives in whichever airport database was installed first.
+
+### Object Safety Reference
+
+| Category | Pattern | Re-run Effect |
+|----------|---------|--------------|
+| Database, Warehouse, Schemas, Tags | `IF NOT EXISTS` | Safe -- no data loss |
+| HELPER_INSTALL_AUDIT | `IF NOT EXISTS` + INSERT | Safe -- appends audit rows |
+| PROPERTIES_*, ADSB_DATA, HELPER_ADSB_LOL_RAW | `CREATE OR REPLACE` | **Destructive** -- data wiped |
+| 13 Dynamic Tables | `CREATE OR REPLACE` | **Destructive** -- analytics history lost |
+| Procedures, Tasks, UDFs, Views | `CREATE OR REPLACE` | Safe -- stateless objects |
+| Streamlit app, SPCS service | `CREATE OR REPLACE` / redeploy | Safe -- idempotent |
+
+## Friction Log (Required)
+
+Every execution MUST produce a friction log at `.cortex/skills/logs/aviation-installer_{YYYY-MM-DD}_{HH-MM}.md`. Create the file at the **start** of execution and update it as each step completes.
+
+### Required Sections
+
+| Section | Content |
+|---------|---------|
+| **Header** | Airport name, IATA/ICAO, date, account, role |
+| **Configuration** | All resolved parameters (database, warehouse, API keys provided/skipped, backfill days, etc.) |
+| **Installation Summary** | Table of steps with sub-skill name, status (OK / WARN / ERROR / SKIPPED), and approximate duration |
+| **Objects Created** | Counts by category (tables, DTs, views, procedures, tasks, EAIs, etc.) |
+| **Initial Data** | Row counts for key tables after first load |
+| **Friction Points** | Numbered list. Each entry: severity (LOW / MEDIUM / HIGH), issue description, error message (if any), workaround applied, suggestion for permanent fix. Include friction even when recovered automatically. If none, write "None". |
+| **Verification Checklist** | Checkbox list of post-install health checks with pass/fail |
+
+Sub-skills executed via `runSubagent` must report friction points back. Consolidate all into this single log file.
 
 ## Workflow
 
@@ -98,6 +135,66 @@ IMPORTANT: Do NOT run a full inventory query. Use a search-based flow instead.
 - `{ICAO}` = Airport ICAO code
 - `{AIRPORT_ID}` = Overture Maps record ID
 - `{AIRPORT_NAME}` = Airport name
+
+### Step 3.1: Check for Existing Installation
+
+After resolving `{TARGET_DB}`, check if this airport database already exists:
+
+```sql
+SHOW DATABASES LIKE '{TARGET_DB}';
+```
+
+**If the database exists**, run a quick health check to understand the current state:
+
+```sql
+SELECT 'PROPERTIES_AIRPORT' AS obj, COUNT(*) AS cnt FROM {TARGET_DB}.PUBLIC.PROPERTIES_AIRPORT
+UNION ALL SELECT 'ADSB_DATA', COUNT(*) FROM {TARGET_DB}.PUBLIC.ADSB_DATA
+UNION ALL SELECT 'HELPER_AIRLINE_DIM', COUNT(*) FROM {TARGET_DB}.PUBLIC.HELPER_AIRLINE_DIM;
+```
+
+Then prompt the user with `ask_user_question` (3 options):
+
+- **Option "Update dashboard only"**: "Keep all data and pipelines intact. Redeploy the dashboard if a newer version is available. Current data: {row counts from health check}."
+- **Option "Skip this airport"**: "Leave the existing installation completely untouched. No changes will be made."
+- **Option "Full reinstall (data loss)"**: "WARNING: This will destroy ALL accumulated ADS-B data, flight schedules, Dynamic Tables, and analytics history for {AIRPORT_NAME}. This cannot be undone. The airport will be rebuilt from scratch."
+
+**Handling each choice:**
+
+- **Update dashboard only** → Jump to **Step 3.1a: Dashboard-Only Update** (below).
+- **Skip this airport** → Print "Skipping {AIRPORT_NAME} ({IATA}) — existing installation preserved." and stop.
+- **Full reinstall** → Continue with Step 3.5 and the normal installation flow (Steps 4–9).
+
+**If the database does not exist**, proceed normally with Step 3.5 (fresh install).
+
+### Step 3.1a: Dashboard-Only Update
+
+This shortcut path skips all data pipeline sub-skills and only updates the dashboard.
+
+1. Resolve `{WAREHOUSE}` from the existing installation:
+   ```sql
+   SELECT WAREHOUSE FROM {TARGET_DB}.PUBLIC.HELPER_INSTALL_AUDIT
+   ORDER BY INSTALL_TS DESC LIMIT 1;
+   ```
+   Fall back to `AVIA_{IATA}_WH` if no audit record exists.
+
+2. Locate the existing dashboard. Check if a dashboard is already deployed in ANY airport database:
+   ```sql
+   SHOW STREAMLITS IN ACCOUNT;
+   ```
+   Filter results for rows where the `comment` column contains `"sf_sit-is-aviation"` and `"oss-aviation-dashboard"`. Record the database where it was found as `{DASHBOARD_DB}`.
+
+   If no existing dashboard is found, set `{DASHBOARD_DB}` = `{TARGET_DB}`.
+
+3. Ensure the Git Repository Stage is up to date:
+   ```sql
+   ALTER GIT REPOSITORY {DASHBOARD_DB}.PUBLIC.AVIA_OPS_REPO FETCH;
+   ```
+   If the Git Repository Stage does not exist in `{DASHBOARD_DB}`, create it (same as Step 5).
+
+4. Invoke the dashboard skill: Read and follow `.cortex/skills/aviation-dashboard/SKILL.md` with `{DASHBOARD_DB}` as the target.
+   The dashboard skill's version check (Step 3.5 in that skill) determines whether to actually redeploy.
+
+5. Print summary: "Dashboard check complete for {AIRPORT_NAME} ({IATA})." and stop.
 
 ### Step 3.5: Create Dedicated Warehouse
 
@@ -182,8 +279,17 @@ Execute sub-skills in order:
 5. **Derived Analytics** -- Read and follow `.cortex/skills/aviation-installer/derived-analytics/SKILL.md`
    - Creates Dynamic Tables, monitoring views, task DAG, operational KPIs
 
-6. **Dashboard** -- Read and follow `.cortex/skills/aviation-dashboard/SKILL.md`
-   - Deploys Streamlit-in-Snowflake dashboard from Git repo stage
+6. **Dashboard** -- Before deploying, locate any existing dashboard across all airport databases:
+   ```sql
+   SHOW STREAMLITS IN ACCOUNT;
+   ```
+   Filter results for rows where the `comment` column contains `"sf_sit-is-aviation"` and `"oss-aviation-dashboard"`.
+
+   - **If a dashboard already exists** in another airport database: set `{DASHBOARD_DB}` to that database. The dashboard auto-discovers all `AIRPORT_XXX` databases, so one copy serves all airports. Do NOT create a duplicate.
+   - **If no dashboard exists anywhere**: set `{DASHBOARD_DB}` = `{TARGET_DB}`.
+
+   Then read and follow `.cortex/skills/aviation-dashboard/SKILL.md` with `{DASHBOARD_DB}` as the target.
+   The dashboard skill's version check determines whether to redeploy or skip.
 
 ### Step 7: Start Task DAG
 
@@ -249,10 +355,40 @@ Record the installation end time and compute elapsed minutes: `{ELAPSED} = TIMED
 ## Stopping Points
 
 - After Step 3: Confirm airport selection with user
+- After Step 3.1: If existing airport detected, confirm user choice (skip/update/reinstall)
 - After Step 6.1 (base-setup): Verify PROPERTIES_AIRPORT has 1 row
 - After Step 6.2 (adsb-ingestion): Verify EAIs and procedures exist
 - After Step 7: Verify all tasks are STARTED
 - After Step 8: Wait 2-3 minutes, then verify ADSB_DATA has rows
+
+## Examples
+
+### Example 1: Fresh install for San Diego International
+User says: "Install airport analytics for San Diego"
+Actions:
+1. Search Overture Maps for "San Diego" → find SAN / KSAN
+2. Confirm airport selection with user
+3. Gather config: skip flight schedules, enable TSA, 5-day backfill, default warehouse
+4. Run sub-skills in order: base-setup → adsb-ingestion → tsa-throughput → derived-analytics → dashboard
+5. Resume task DAG, trigger initial data load, verify
+Result: `AIRPORT_SAN` database with full analytics pipeline and dashboard link
+
+### Example 2: Add a second airport to existing installation
+User says: "Set up LAX — I already have SAN installed"
+Actions:
+1. Search for "LAX" → find Los Angeles International
+2. Create `AIRPORT_LAX` database (new)
+3. Existing dashboard in `AIRPORT_SAN` is detected and reused (no duplicate)
+4. Run all sub-skills for LAX
+Result: `AIRPORT_LAX` database, dashboard auto-discovers both SAN and LAX
+
+### Example 3: Update dashboard for existing airport
+User says: "Update the dashboard for my SAN airport"
+Actions:
+1. Detect `AIRPORT_SAN` exists → prompt user
+2. User selects "Update dashboard only"
+3. Fetch latest Git repo, redeploy dashboard
+Result: Dashboard updated, all data and pipelines untouched
 
 ## Troubleshooting
 
@@ -264,6 +400,8 @@ Record the installation end time and compute elapsed minutes: `{ELAPSED} = TIMED
 | Tasks not running | Wrong resume order | Resume in leaf-to-root order; check warehouse is active |
 | No ADS-B data after 5 min | Ingestion issue | Check `CALL {TARGET_DB}.{SCHEMA}.PROC_INGEST_ADSB_REALTIME()` manually |
 | Backfill stuck | Failed days | Check `HELPER_ADSB_BACKFILL_STATUS` for failed days |
+| Airport already installed | Database exists | Step 3.1 detects this automatically; choose update dashboard, skip, or full reinstall |
+| Duplicate dashboards | Dashboard in multiple DBs | Step 6.6 auto-discovers existing dashboard and reuses it; remove duplicates via `aviation-cleanup` |
 
 ## Output
 

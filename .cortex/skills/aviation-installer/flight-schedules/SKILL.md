@@ -44,9 +44,9 @@ Without this sub-skill, ADS-B tracks are still captured but won't be enriched wi
 | BACKFILL_DAYS | 5 | Days of schedule history to backfill |
 | TASK_PARENT | `TASK_INGEST_ADSB` | Parent task for DAG chaining |
 
-## Error Logging
+## Friction Log
 
-When any step fails, log to `.cortex/skills/logs/` as `aviation-flight-schedules_{YYYY-MM-DD}_{HH-MM}.md`. If no issues, do not create a log file.
+Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/aviation-flight-schedules_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md.
 
 ## Workflow
 
@@ -56,6 +56,12 @@ When any step fails, log to `.cortex/skills/logs/` as `aviation-flight-schedules
 > - `references/03-task-and-ops.md` — Task definition + initial backfill call
 >
 > **Execute ALL SQL from each file in order. Do NOT skip or optimize away any queries.**
+
+### Step 0: Set Query Tag
+
+```sql
+ALTER SESSION SET query_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-flight-schedules","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+```
 
 ### Step 1: Create Network Rule and EAI
 
