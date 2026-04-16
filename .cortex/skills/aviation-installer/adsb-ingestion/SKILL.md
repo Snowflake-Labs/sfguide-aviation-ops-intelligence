@@ -42,9 +42,9 @@ Creates all ADS-B ingestion infrastructure: network rules, external access integ
 | BACKFILL_DAYS | 5 | Days of historical ADS-B to backfill |
 | TASK_SCHEDULE | `CRON '30 1 * * * UTC'` | Daily ingestion schedule |
 
-## Friction Log
+## Friction Logging
 
-Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/aviation-adsb-ingestion_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md.
+Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer using the F1/F2/F3 format from `.cortex/skills/logs/README.md`. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/friction-log_{YYYY-MM-DD}_{HH-MM}.md`.
 
 ## Workflow
 

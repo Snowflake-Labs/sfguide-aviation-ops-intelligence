@@ -44,9 +44,9 @@ Creates the `AIRPORT_{IATA}` database, schemas, cost-attribution tags, UDFs, air
 | CREATE FUNCTION | Schema | Creates UDFs (timezone, OSM tag, polygon splitter) |
 | IMPORTED PRIVILEGES ON OVERTURE_MAPS__BASE | Database | Reads airport geometry, infrastructure, gates |
 
-## Friction Log
+## Friction Logging
 
-Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/aviation-base-setup_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md.
+Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer using the F1/F2/F3 format from `.cortex/skills/logs/README.md`. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/friction-log_{YYYY-MM-DD}_{HH-MM}.md`.
 
 ## Workflow
 
