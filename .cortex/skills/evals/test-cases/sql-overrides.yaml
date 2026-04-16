@@ -1,0 +1,23 @@
+# sql-overrides.yaml
+# Override SQL eval checks for known valid patterns in this repo.
+
+# Aviation installer uses per-airport database names (AIRPORT_{IATA})
+# rather than a fixed FLEET_INTELLIGENCE database.
+# COMMENT tags use origin "sf_sit-is-aviation" (not "sf_sit-is-fleet").
+global:
+  allowed_origins:
+    - "sf_sit-is-aviation"
+  expected_comment_pattern: '"origin":"sf_sit-is-aviation"'
+
+# Subskills contain SQL with {TARGET_DB} placeholders which are intentional
+base-setup:
+  allow_placeholder_sql: true
+
+adsb-ingestion:
+  allow_placeholder_sql: true
+
+flight-schedules:
+  allow_placeholder_sql: true
+
+derived-analytics:
+  allow_placeholder_sql: true

@@ -1,178 +1,197 @@
-# Airport Analytics Platform - Deployment Guide
+# Aviation Operations Intelligence on Snowflake
 
-A Snowflake-native solution for batch aviation analytics using ADS-B flight tracking, flight schedules, and airport infrastructure data. Deploy per-airport analytics solutions with automated pipelines and interactive dashboards.
+A Snowflake-native aviation analytics platform using ADS-B flight tracking, flight schedules, TSA checkpoint throughput, and airport infrastructure from Overture Maps. Deploy per-airport analytics with automated pipelines, 13 Dynamic Tables, and interactive dashboards.
 
-## 📖 What Does This Application Do?
+Deploy and extend the solution using [Cortex Code](https://docs.snowflake.com/en/user-guide/cortex-code) skills. Each skill is a self-contained playbook the AI agent follows step by step.
 
-The Airport Analytics Platform is a comprehensive aviation operations intelligence solution built entirely on Snowflake. It provides:
+## Prerequisites
 
-### Core Capabilities
-- **Airport Infrastructure Visualization**: Renders interactive maps showing runways, taxiways, gates, terminals, and real-time aircraft positions
-- **Historical Data Analysis**: Downloads and processes historical flight tracking data for trend analysis and reporting
-- **Gate Operations Analytics**: 
-  - Calculates aircraft proximity to gates
-  - Tracks gate occupancy and dwell times
-  - Identifies gate assignment patterns
-- **Runway Safety Monitoring**: Detects aircraft crossing active runways during taxi operations
-- **Multi-Airport Deployments**: Supports deploying separate analytics instances for different airports
+- [Cortex Code](https://docs.snowflake.com/en/user-guide/cortex-code) with an active Snowflake connection
+- Snowflake account with privileges to create databases, warehouses, external access integrations, and tasks
+- [Overture Maps - Base](https://app.snowflake.com/marketplace/listing/GZT0Z4CM1E9KV/carto-overture-maps-base) listing (free, from Snowflake Marketplace)
+- Aviationstack API key (optional, required for flight schedule ingestion)
 
-### How It Works
-1. **Data Ingestion**: Automated daily tasks pull ADS-B data from external APIs and process flight schedules
-2. **Data Processing**: Snowflake procedures and dynamic tables transform raw data into analytics-ready datasets
-3. **Analytics Engine**: Calculates proximity, crossings, dwell times, and other operational metrics
-4. **Visualization**: Interactive Streamlit dashboards provide real-time insights and historical reporting
+**Estimated deployment time:** 15 to 60 minutes depending on airport size and backfill options.
 
----
+## Quick start
 
-## 📋 Prerequisites
+1. Open this repository in Cortex Code
+2. Say **"install airport SAN"** to deploy San Diego International Airport
+3. Say **"deploy aviation dashboard"** to launch the interactive dashboard
+4. Say **"aviation-cleanup"** when you are done to tear everything down
 
-### Snowflake Account Requirements
+## What you get
 
-1. **Role**: ACCOUNTADMIN or equivalent with permissions to:
-   - CREATE DATABASE, SCHEMA
-   - CREATE EXTERNAL ACCESS INTEGRATION
-   - CREATE SECRET
-   - CREATE PROCEDURE (with Python handler)
-   - CREATE TASK, DYNAMIC TABLE
-   - CREATE STREAMLIT
+### Per-airport database
 
-2. **Warehouse**: 
-   - X-Small warehouse (recommended) or larger
+Every airport gets its own `AIRPORT_{IATA}` database with automated pipelines, analytics tables, and monitoring views.
 
-3. **Snowflake Marketplace Listings** (free):
-   - [Overture Maps - Base](https://app.snowflake.com/marketplace/listing/GZT0Z4CM1E9KV/carto-overture-maps-base)
+| Object | Description |
+|--------|-------------|
+| `ADSB_DATA` | Raw ADS-B flight telemetry (append-only, 5-min ingestion) |
+| `FLIGHT_SCHEDULE` | Flight schedule records from Aviationstack API |
+| `TSA_THROUGHPUT` | TSA checkpoint passenger throughput (weekly PDF extraction) |
+| `PROPERTIES_AIRPORT` | Airport metadata and geometry from Overture Maps |
+| `PROPERTIES_GATES` | Gate reference points |
+| `PROPERTIES_RUNWAYS` | Runway polygons |
+| `HELPER_AIRLINE_DIM` | Airline IATA/ICAO code to name lookup |
 
-### API Keys
+### Data pipelines
 
-1. **Aviationstack API Key (Optional)** (required for flight schedules)
-   - Sign up at [aviationstack.com](https://aviationstack.com)
-   - Paid tier recommended for production
+Automated task DAG runs continuously:
 
----
+| Task | Schedule | Purpose |
+|------|----------|---------|
+| `TASK_INGEST_ADSB` | Every 5 minutes | Pulls ADS-B data from adsb.lol API |
+| `TASK_ENRICH_ADSB` | After ingestion | Enriches with flight schedule data |
+| `TASK_ENRICH_AIRCRAFT_META` | After ingestion | Adds aircraft metadata from GitHub |
+| `TASK_FLIGHT_SCHEDULE` | After ingestion | Fetches schedules from Aviationstack |
+| `TASK_FETCH_TSA_PDF` | Weekly (Monday 9am PT) | Downloads TSA throughput PDF |
+| `TASK_EXTRACT_TSA_PDF` | After PDF fetch | Extracts data using AI_EXTRACT |
 
-## 🚀 Deployment via GitHub Integration
+### Dynamic Table analytics (13 tables)
 
-#### Step 1: Create a Database for Installer
+A cascade of Dynamic Tables transforms raw data into analytics-ready datasets:
 
-Execute these queries in a Snowflake worksheet (replace placeholders):
+| Category | Dynamic Tables | What they compute |
+|----------|---------------|-------------------|
+| **Gate Analysis** | 6 DTs | Ground sessions, gate proximity, dwell times, daily gate utilization, airline-level dwell |
+| **Traffic Analysis** | 4 DTs | Daily and hourly traffic volumes, per-airline traffic and delay metrics |
+| **Runway Safety** | 1 DT | Aircraft runway crossing events during taxi operations |
+| **Flight Tracking** | 1 DT | Filtered local ADS-B data within airport bounding box |
+| **Flight List** | 1 DT | Flight list for tracker dropdown |
+
+### Dashboard pages
+
+| Page | What it shows |
+|------|--------------|
+| **Live View** | Real-time and historical aircraft positions on interactive map |
+| **Flight Tracker** | Individual flight path replay with altitude and speed |
+| **Ground Activity** | Aircraft movements, taxi patterns, ground operations |
+| **Runway Crossings** | Safety analysis of aircraft crossing active runways |
+| **Traffic Analysis** | Flight volume trends, peak times, airline breakdowns |
+| **Gate Analysis** | Gate utilization, occupancy rates, dwell time analytics |
+| **TSA Throughput** | Checkpoint passenger volumes with geospatial map |
+| **Monitoring** | System health, data freshness, pipeline status |
+| **Performance** | Query performance and optimization metrics |
+
+## Data sources
+
+| Source | Data | Access |
+|--------|------|--------|
+| [adsb.lol](https://api.adsb.lol/) | ADS-B flight telemetry | Free API, no key required |
+| [Aviationstack](https://aviationstack.com) | Flight schedules (arrivals/departures) | API key required (paid tier recommended) |
+| [Overture Maps](https://overturemaps.org/) | Airport infrastructure (runways, gates, terminals) | Free Snowflake Marketplace listing |
+| [TSA.gov](https://www.tsa.gov) | Checkpoint passenger throughput PDFs | Free, public data |
+| [GitHub](https://github.com) | Aircraft metadata (type, registration) | Free, public data |
+
+## How to use
+
+### Invoking skills (Cortex Code)
+
+Open this repo in Cortex Code and type any of these phrases:
+
+| What you want | What to say |
+|---------------|-------------|
+| Deploy an airport | `install airport SAN` |
+| Deploy the dashboard | `deploy aviation dashboard` |
+| Clean up everything | `aviation-cleanup` |
+
+The installer skill walks through 5 phases automatically: base setup, ADS-B ingestion, flight schedules, TSA throughput, and derived analytics.
+
+### Streamlit installer (legacy)
+
+A standalone Streamlit-in-Snowflake installer is available in `standalone/installer/`. Deploy it via Git Repository Stage:
 
 ```sql
-CREATE OR REPLACE DATABASE AVIA_INSTALLER;
-USE ROLE ACCOUNTADMIN;
-USE DATABASE AVIA_INSTALLER;
+CREATE OR REPLACE DATABASE AIRPORT_{IATA};
+USE DATABASE AIRPORT_{IATA};
 USE SCHEMA PUBLIC;
 
-```
-
-#### Step 2: Create API Integration for GitHub (if not exists)
-
-```sql
 CREATE OR REPLACE API INTEGRATION github_api_integration
   API_PROVIDER = git_https_api
   API_ALLOWED_PREFIXES = ('https://github.com/Snowflake-Labs/')
   ENABLED = TRUE;
-```
-#### Step 3: Create Git Repository Object (NO credentials needed for public repos)
 
-```sql
-CREATE OR REPLACE GIT REPOSITORY AVIA_INSTALLER.PUBLIC.AVIA_OPS_REPO
+CREATE OR REPLACE GIT REPOSITORY AIRPORT_{IATA}.PUBLIC.AVIA_OPS_REPO
   API_INTEGRATION = github_api_integration
   ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-aviation-ops-intelligence/';
--- Fetch latest files from repository
-  ALTER GIT REPOSITORY avia_ops_repo FETCH;
-```
 
-#### Step 4: Create Installer Streamlit App from Git
+ALTER GIT REPOSITORY AIRPORT_{IATA}.PUBLIC.AVIA_OPS_REPO FETCH;
 
-```sql
-CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_INSTALLER
-  ROOT_LOCATION = '@avia_ops_repo/branches/main/installer'
-  MAIN_FILE = 'installer_daily.py'
-  QUERY_WAREHOUSE = MY_WH  -- Replace with your warehouse
-  TITLE = 'Airport Analytics Installer'
-  COMMENT = 'Installer for Airport Analytics Platform - generates and deploys airport infrastructure';
-
--- Grant usage if needed (for non-ACCOUNTADMIN users)
-GRANT USAGE ON STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_INSTALLER TO ROLE <your_role>;
-```
-
-#### Step 5: Create Dashboard Streamlit App
-
-```sql
-CREATE OR REPLACE STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD
-  ROOT_LOCATION = '@avia_ops_repo/branches/main/dashboard'
+CREATE OR REPLACE STREAMLIT AIRPORT_{IATA}.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD
+  ROOT_LOCATION = '@AIRPORT_{IATA}.PUBLIC.AVIA_OPS_REPO/branches/main/standalone/dashboard'
   MAIN_FILE = 'streamlit_app.py'
-  QUERY_WAREHOUSE = MY_WH  -- Replace with your warehouse
-  TITLE = 'Airport Analytics Dashboard'
-  COMMENT = 'Dashboard for Airport Analytics Platform';
-
--- Grant usage if needed (for non-ACCOUNTADMIN users)
-GRANT USAGE ON STREAMLIT AVIA_INSTALLER.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD TO ROLE <your_role>;
+  QUERY_WAREHOUSE = MY_WH
+  TITLE = 'Airport Analytics Dashboard';
 ```
 
----
+### Multi-airport support
 
-## 🎯 What to Do After Deployment
+The solution supports deploying separate analytics instances for different airports. Each airport gets its own database (`AIRPORT_SAN`, `AIRPORT_LAX`, etc.) and dedicated warehouse. The dashboard auto-discovers all `AIRPORT_*` databases via `SHOW DATABASES LIKE 'AIRPORT_%'`.
 
-Once you've completed the GitHub Integration steps above, follow these steps to configure and launch your airport analytics:
+### Cleanup
 
-### Step 1: Access the Installer App
-
-1. Navigate to **Streamlit** in your Snowflake UI (left sidebar)
-2. Find and open **Airport Analytics Installer** 
-3. In the app:
-- Select the airport for which you want to install the solution
-- Optionally specify the Aviationstack API Key
-- Specify how many days in the past you want to backfill (for demo we recommend 5-7days)
-- Click "Execute in Snowflake"
-
-### Step 2: Monitor Deployment
-
-The installer will show real-time progress:
-- Infrastructure download and processing
-- Database and schema creation
-- External access integration setup
-- Task and procedure creation
-- Historical data backfill (if enabled)
-
-Deployment typically takes **15-60 minutes** depending on:
-- Airport size and complexity
-- Whether historical backfill is enabled
-- Network speed for data downloads
-
-### Step 4: Launch the Dashboard
-
-Once deployment is complete:
-
-1. Navigate to **Streamlit** in Snowflake
-2. Open **Airport Analytics Dashboard** in `AVIA_INSTALLER.PUBLIC`
-3. **Select your airport from the airport selector** from the dropdown (e.g., `San Diego International Airport (SAN)`)
-4. Explore the dashboard pages:
-
-- **Flight Tracker**: Historical flight positions on interactive map
-- **Ground Activity**: Aircraft movements, taxi patterns, and ground operations
-- **Runway Crossings**: Safety analysis of aircraft crossing active runways
-- **Traffic Analysis**: Flight volume trends, peak times, and traffic patterns
-- **Gate Analysis**: Gate utilization, occupancy rates, and dwell time analytics
-- **Monitoring**: System health, data freshness, and pipeline status
-- **Performance**: Query performance and optimization metrics
-
-## Initial Data
-
-After deployment, data will begin populating:
-
-- **Infrastructure Data**: Available immediately after deployment
-- **Historical Data**: Available within 1 hours if backfill was enabled
-
-**Note**: The dashboard will show limited data until the first task executions complete. Check the **Monitoring** page to track data pipeline status.
+Say **"aviation-cleanup"** in Cortex Code to discover and remove all Snowflake objects created by the solution. The cleanup skill uses JSON COMMENT tags to find objects and generates DROP statements in reverse-dependency order.
 
 ---
 
-## 📚 Additional Resources
+## For developers
 
-- **[Streamlit in Snowflake Documentation](https://docs.snowflake.com/en/developer-guide/streamlit/about-streamlit)**: Official Streamlit in Snowflake docs
-- **[Aviationstack API Docs](https://aviationstack.com/documentation)**: Flight schedule API reference
-- **[ADSB.lol API](https://api.adsb.lol/)**: ADS-B data source
-- **[Overture Maps](https://overturemaps.org/)**: Open-source geospatial data
+### Repository structure
 
----
+```
+.cortex/skills/              # All Cortex Code skills (self-contained)
+  ├── aviation-installer/    # Router skill + 5 sub-skills
+  │   ├── base-setup/        # Database, schemas, tags, airport properties
+  │   ├── adsb-ingestion/    # ADS-B tables, EAIs, ingestion procedures, tasks
+  │   ├── flight-schedules/  # Flight schedule tables, Aviationstack API
+  │   ├── tsa-throughput/    # TSA checkpoint throughput, PDF extraction
+  │   └── derived-analytics/ # 13 Dynamic Tables, monitoring views, KPIs
+  ├── aviation-dashboard/    # Dashboard deployment (Streamlit + React/SPCS)
+  ├── aviation-cleanup/      # Tag-based object discovery and teardown
+  ├── skill-optimiser/       # Skill audit tool
+  └── evals/                 # Eval framework (trigger, quality, cross-ref)
+standalone/                  # Streamlit installer approach (legacy)
+  ├── installer/             # Streamlit installer app + seed data
+  └── dashboard/             # Streamlit dashboard app
+AGENTS.md                    # AI assistant project guidance
+```
+
+### Skills inventory
+
+| Skill | Purpose |
+|-------|---------|
+| `aviation-installer` | Router: provisions airport databases via 5 sub-skills |
+| `aviation-installer/base-setup` | Database, schemas, tags, airport properties, gates, runways, airline dimension |
+| `aviation-installer/adsb-ingestion` | ADS-B tables, external access integrations, ingestion procedures, tasks, backfill |
+| `aviation-installer/flight-schedules` | Flight schedule tables, Aviationstack API ingestion |
+| `aviation-installer/tsa-throughput` | TSA checkpoint throughput, PDF stages, AI_EXTRACT pipeline |
+| `aviation-installer/derived-analytics` | 13 Dynamic Tables, monitoring views, KPI pipeline |
+| `aviation-dashboard` | Deploys dashboard (Streamlit-in-Snowflake or React/SPCS) |
+| `aviation-cleanup` | Tag-based object discovery and teardown |
+| `skill-optimiser` | Audits and optimizes skills per Anthropic best practices |
+
+### Dependency graph
+
+```mermaid
+graph TD
+    AI[aviation-installer] --> BS[base-setup]
+    AI --> ADSB[adsb-ingestion]
+    AI --> FS[flight-schedules]
+    AI --> TSA[tsa-throughput]
+    AI --> DA[derived-analytics]
+    AI --> ADash[aviation-dashboard]
+    BS --> ADSB
+    ADSB --> FS
+    ADSB --> TSA
+    TSA --> DA
+```
+
+Deploy order: top to bottom (base-setup first, dashboard last). Teardown order: bottom to top.
+
+For skill conventions and developer rules, see [AGENTS.md](AGENTS.md).
+
+## License
+
+Apache License 2.0
