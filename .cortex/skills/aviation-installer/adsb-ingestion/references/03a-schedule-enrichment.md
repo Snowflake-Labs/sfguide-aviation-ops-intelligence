@@ -498,6 +498,8 @@ BEGIN
   LEFT JOIN best_od o USING (callsign_key)
   WHERE t.legs >= 5;
 
+  ALTER TABLE {TARGET_DB}.{SCHEMA}.HELPER_RECURRING_CALLSIGN_PRIOR SET COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-adsb-ingestion","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+
   -- 4) Apply schedule association to points in ADSB_DATA via the shared segmented table.
   MERGE INTO {TARGET_DB}.{SCHEMA}.ADSB_DATA t
   USING (

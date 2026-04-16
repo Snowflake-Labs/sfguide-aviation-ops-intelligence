@@ -68,9 +68,9 @@ Deploys the multi-page Streamlit-in-Snowflake dashboard that provides real-time 
 | GIT_REPO_STAGE | `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main` | Source files |
 | WAREHOUSE | (current warehouse) | Warehouse for app execution |
 
-## Error Logging
+## Friction Log
 
-When any step fails, log to `.cortex/skills/logs/` as `aviation-dashboard_{YYYY-MM-DD}_{HH-MM}.md`. If no issues, do not create a log file.
+When invoked by the parent installer, report all friction points back to it. When invoked standalone, write to `.cortex/skills/logs/aviation-dashboard_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md. Always create the log — even if no issues occurred (mark Friction Points as "None").
 
 ## Workflow
 
@@ -107,6 +107,28 @@ SELECT 1 FROM INFORMATION_SCHEMA.SCHEMATA WHERE CATALOG_NAME = '{DASHBOARD_DB}' 
 
 > **Note:** The airport database and PUBLIC schema already exist from the `base-setup` sub-skill.
 
+### Step 3.5: Check Dashboard Version
+
+Before deploying, check if a dashboard already exists and compare versions.
+
+```sql
+SHOW STREAMLITS LIKE '{APP_NAME}' IN {DASHBOARD_DB}.{DASHBOARD_SCHEMA};
+```
+
+If a result is returned, parse the `comment` column as JSON and extract `version.major` and `version.minor`. The current skill version is `1.0` (from `metadata.version` in the YAML frontmatter — use major=1, minor=0).
+
+**Decision logic:**
+- **No existing dashboard found** → proceed to Step 4 (fresh deploy).
+- **Existing version matches current skill version** (major and minor equal) → print "Dashboard is already up to date (v{major}.{minor}). Skipping deployment." and skip Steps 4–5.
+- **Existing version is older than current skill version** → print "Updating dashboard from v{old_major}.{old_minor} to v{new_major}.{new_minor}." and proceed to Step 4.
+- **COMMENT is missing or not parseable as JSON** → treat as outdated, proceed to Step 4.
+
+For SPCS (React) deployments, use the same logic with:
+```sql
+SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN {TARGET_DB}.PUBLIC;
+```
+Parse the `comment` column identically.
+
 ### Step 4: Create or Replace Streamlit App
 
 ```sql
@@ -129,6 +151,41 @@ SELECT SYSTEM$GET_SNOWSIGHT_HOST();
 ```
 
 The app URL follows: `https://<account>.snowflakecomputing.com/api/streamlit/{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
+
+## Stopping Points
+
+- After Step 3: Confirm target database and schema exist
+- After Step 3.5: If dashboard already exists at current version, skip deployment
+- After Step 4: Confirm Streamlit object was created (`SHOW STREAMLITS`)
+- After Step 5: Verify URL is accessible
+
+## Examples
+
+### Example 1: Deploy Streamlit dashboard for first airport
+User says: "Deploy the dashboard for SAN"
+Actions:
+1. Set query tag, verify AIRPORT_SAN exists
+2. No existing dashboard found → deploy fresh
+3. `CREATE STREAMLIT` from Git repo stage
+4. Return Snowsight URL
+Result: Dashboard at `AIRPORT_SAN.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD`
+
+### Example 2: Deploy React/SPCS dashboard
+User says: "Deploy the React dashboard for SAN"
+Actions:
+1. Set query tag, verify AIRPORT_SAN exists
+2. Create compute pool, image repo, network rule, EAI
+3. Build and push Docker image
+4. Create SPCS service
+5. Return public endpoint URL
+Result: SPCS service at `AIRPORT_SAN.PUBLIC.AVIATION_DASHBOARD_SERVICE`
+
+### Example 3: Dashboard already up to date
+User says: "Redeploy the dashboard"
+Actions:
+1. Check existing dashboard version matches current skill version (1.0)
+2. Print "Dashboard is already up to date (v1.0). Skipping deployment."
+Result: No changes made
 
 ## Dashboard Schema Contract
 
@@ -345,6 +402,22 @@ SHOW DATABASES LIKE 'AIRPORT_%';
 ```
 
 At least one `AIRPORT_XXX` database must exist. If none, run `aviation-installer` first.
+
+### Step 2.5: Check Existing SPCS Dashboard Version
+
+Before creating infrastructure, check if the SPCS dashboard service already exists:
+
+```sql
+SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN {TARGET_DB}.PUBLIC;
+```
+
+If a result is returned, parse the `comment` column as JSON and extract `version.major` and `version.minor`. The current skill version is `1.0` (major=1, minor=0).
+
+**Decision logic:**
+- **No existing service found** → proceed to Step 3 (create infrastructure).
+- **Existing version matches current skill version** → print "SPCS Dashboard is already up to date (v{major}.{minor}). Skipping deployment." and skip Steps 3–6.
+- **Existing version is older** → print "Updating SPCS dashboard from v{old_major}.{old_minor} to v{new_major}.{new_minor}." and proceed to Step 3. Use `DROP SERVICE IF EXISTS` + `CREATE SERVICE` to redeploy.
+- **COMMENT is missing or not parseable** → treat as outdated, proceed to Step 3.
 
 ### Step 3: Create SPCS Infrastructure
 

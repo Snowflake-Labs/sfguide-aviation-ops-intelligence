@@ -44,9 +44,9 @@ The pipeline fetches the latest weekly TSA throughput PDF from the TSA FOIA read
 | TASK_PARENT | `TASK_INGEST_ADSB` | Parent task for DAG chaining |
 | EAI_TSA_GOV | `{TARGET_DB}_{SCHEMA}_TSA_GOV_EAI` | External access integration name |
 
-## Error Logging
+## Friction Log
 
-When any step fails, log to `.cortex/skills/logs/` as `aviation-tsa-throughput_{YYYY-MM-DD}_{HH-MM}.md`. If no issues, do not create a log file.
+Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/aviation-tsa-throughput_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md.
 
 ## Workflow
 

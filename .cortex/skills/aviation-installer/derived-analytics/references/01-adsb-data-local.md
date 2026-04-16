@@ -30,11 +30,13 @@ SELECT
 ## Dashboard prerequisites
 
 ```sql
-CREATE TABLE IF NOT EXISTS {TARGET_DB}.{SCHEMA}.PROPERTIES_GATES (gate_id STRING, gate_name STRING, gate_geom GEOGRAPHY);
+CREATE TABLE IF NOT EXISTS {TARGET_DB}.{SCHEMA}.PROPERTIES_GATES (gate_id STRING, gate_name STRING, gate_geom GEOGRAPHY)
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 CREATE TABLE IF NOT EXISTS {TARGET_DB}.{SCHEMA}.PROPERTIES_RUNWAYS (
   runway_id STRING,
   runway_geog GEOGRAPHY
-);
+)
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
 ## FLIGHT_SCHEDULE stub (ensures DTs/views compile when flight-schedules sub-skill is skipped)

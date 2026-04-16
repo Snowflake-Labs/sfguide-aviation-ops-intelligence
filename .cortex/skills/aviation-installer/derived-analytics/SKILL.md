@@ -69,9 +69,9 @@ ADSB_DATA_LOCAL (DT, DOWNSTREAM — bbox-filtered local positions)
 | CROSSING_MAX_SEC | 120 | Max seconds for a runway crossing event |
 | CROSSING_MAX_DIST_M | 220 | Max meters proximity to runway centroid |
 
-## Error Logging
+## Friction Log
 
-When any step fails, log to `.cortex/skills/logs/` as `aviation-derived-analytics_{YYYY-MM-DD}_{HH-MM}.md`. If no issues, do not create a log file.
+Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/aviation-derived-analytics_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md.
 
 ## Workflow
 
@@ -88,6 +88,12 @@ When any step fails, log to `.cortex/skills/logs/` as `aviation-derived-analytic
 > - `references/07-tsa-checkpoint-geo.md` — V_TSA_CHECKPOINT_GEO view (TSA throughput mapped to terminal geometries)
 >
 > **Execute ALL SQL from each file in order. Do NOT skip or optimize away any queries.**
+
+### Step 0: Set Query Tag
+
+```sql
+ALTER SESSION SET query_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+```
 
 ### Step 1: Create ADSB_DATA_LOCAL Dynamic Table
 
