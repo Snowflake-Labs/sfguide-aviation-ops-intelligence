@@ -1,0 +1,92 @@
+aviation-installer:
+  should_trigger:
+    - "install airport analytics"
+    - "setup new airport"
+    - "deploy aviation platform"
+    - "provision airport"
+    - "new airport setup"
+    - "airport analytics platform"
+  should_not_trigger:
+    - "deploy dashboard"
+    - "cleanup airport"
+    - "show flight data"
+    - "change map region"
+
+base-setup:
+  should_trigger:
+    - "setup airport database"
+    - "create airport infrastructure"
+    - "airport properties setup"
+    - "setup base airport"
+  should_not_trigger:
+    - "standalone execution"
+    - "adsb ingestion"
+    - "deploy dashboard"
+    - "cleanup"
+
+adsb-ingestion:
+  should_trigger:
+    - "setup adsb ingestion"
+    - "configure aircraft tracking"
+    - "adsb.lol pipeline"
+    - "realtime aircraft data"
+    - "adsb ingestion setup"
+  should_not_trigger:
+    - "flight schedules"
+    - "deploy dashboard"
+    - "cleanup"
+    - "standalone execution"
+
+flight-schedules:
+  should_trigger:
+    - "setup flight schedules"
+    - "aviationstack ingestion"
+    - "configure schedule data"
+    - "flight timetable"
+    - "schedule ingestion"
+  should_not_trigger:
+    - "adsb ingestion"
+    - "deploy dashboard"
+    - "cleanup"
+    - "standalone execution"
+
+derived-analytics:
+  should_trigger:
+    - "deploy derived analytics"
+    - "setup dynamic tables"
+    - "gate analysis pipeline"
+    - "runway crossings detection"
+    - "airport analytics pipeline"
+  should_not_trigger:
+    - "adsb ingestion"
+    - "deploy dashboard"
+    - "cleanup"
+    - "standalone execution"
+
+aviation-dashboard:
+  should_trigger:
+    - "deploy dashboard"
+    - "aviation dashboard"
+    - "airport analytics UI"
+    - "streamlit airport app"
+    - "install dashboard"
+    - "flight tracker app"
+  should_not_trigger:
+    - "install airport pipeline"
+    - "cleanup airport"
+    - "adsb ingestion"
+    - "setup airport database"
+
+aviation-cleanup:
+  should_trigger:
+    - "cleanup airport"
+    - "teardown aviation"
+    - "remove airport analytics"
+    - "uninstall airport"
+    - "drop aviation objects"
+    - "reset aviation environment"
+  should_not_trigger:
+    - "install airport"
+    - "deploy dashboard"
+    - "show flight data"
+    - "configure pipeline"

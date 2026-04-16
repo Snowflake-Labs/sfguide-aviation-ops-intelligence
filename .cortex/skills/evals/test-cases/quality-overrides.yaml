@@ -1,0 +1,18 @@
+# quality-overrides.yaml
+# Override quality eval checks for specific skills.
+# These allow known exceptions to pass without failing the quality gate.
+
+aviation-installer:
+  allow_long_body: false
+
+base-setup:
+  is_subskill: true  # Subskills are expected to have shorter bodies
+
+adsb-ingestion:
+  is_subskill: true
+
+flight-schedules:
+  is_subskill: true
+
+derived-analytics:
+  is_subskill: true

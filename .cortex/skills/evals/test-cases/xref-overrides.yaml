@@ -1,0 +1,16 @@
+# xref-overrides.yaml
+# Override cross-reference eval checks for known valid links.
+
+# These subskill paths are intentionally referenced from parent SKILL.md files
+# using relative paths and are expected to exist.
+aviation-installer:
+  allowed_relative_refs:
+    - ".cortex/skills/aviation-installer/base-setup/SKILL.md"
+    - ".cortex/skills/aviation-installer/adsb-ingestion/SKILL.md"
+    - ".cortex/skills/aviation-installer/flight-schedules/SKILL.md"
+    - ".cortex/skills/aviation-installer/derived-analytics/SKILL.md"
+
+aviation-cleanup:
+  allowed_relative_refs:
+    - "references/discovery-queries.sql"
+    - "references/drop-order.sql"

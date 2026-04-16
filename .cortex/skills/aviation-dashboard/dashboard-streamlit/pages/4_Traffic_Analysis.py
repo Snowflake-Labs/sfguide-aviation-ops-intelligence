@@ -1,0 +1,593 @@
+"""
+Traffic Analysis Page - Temporal patterns and traffic trends
+Analyze flight patterns, peak hours, and traffic trends over time
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from snowflake.snowpark.context import get_active_session
+from datetime import datetime, timedelta
+import altair as alt
+import sys
+sys.path.append('..')
+import utils
+from config import BAR_CONFIG, TOOLTIP_FORMAT
+from config.colors import Hex as COLORS
+import ui_components
+
+# Page configuration
+st.set_page_config(
+    page_title="Traffic Analysis",
+    page_icon="📊",
+    layout="wide"
+)
+
+utils.apply_custom_css()
+
+# Get session
+session = get_active_session()
+
+# Get the selected database
+db = utils.get_selected_database()
+schema = 'PUBLIC'
+db_prefix = f"{db}.{schema}"
+
+# Header
+with st.sidebar:
+    selected_db = ui_components.render_airport_selector(sidebar=True)
+if not selected_db:
+    st.warning("No airport databases found yet. Run the installer first.")
+    st.stop()
+st.title("📊 Air Traffic Analysis")
+st.markdown("Explore temporal patterns, peak hours, and traffic trends over time for the selected airport")
+utils.render_timezone_caption(session, db_prefix)
+
+# Sidebar controls
+with st.sidebar:
+    
+    # Get date range
+    min_date, max_date = utils.get_date_range(session)
+    start_date, end_date = ui_components.render_date_range_picker(
+        min_date,
+        max_date,
+        key_prefix="traffic_analysis",
+        default_days_back=7
+    )
+    
+    st.divider()
+    
+    # Granularity selector (dropdown) - daily or weekly
+    granularity = st.selectbox(
+        "Time Granularity",
+        options=["daily", "weekly"],
+        index=0
+    )
+    
+    # Delay threshold for Flight Details classification
+    delay_threshold = st.number_input(
+        "Delay threshold (minutes)",
+        min_value=0,
+        value=15,
+        step=1,
+        help="Absolute deviation from scheduled time to consider earlier/later arrivals"
+    )
+    
+    st.divider()
+    
+    # Vehicle type filter - default to aircraft only
+    vehicle_filter = ui_components.render_vehicle_type_filter(
+        key_prefix="traffic_analysis",
+        sidebar=True,
+        default_aircraft=True,  # Aircraft selected by default
+        default_ground=False    # Ground vehicles can be selected manually
+    )
+    
+    # Always show airline breakdown and heatmap (toggles removed)
+    show_airlines = True
+    show_heatmap = True
+    # Hide Unknown functionality removed - always show all airlines
+    hide_unknown_airlines = False
+
+# Query functions
+@st.cache_data(ttl=300)
+def get_hourly_traffic(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
+    """Get hourly flight counts"""
+    local_hour_expr = utils.get_airport_local_ts_sql(db_prefix, "hour")
+    query = f"""
+    SELECT {local_hour_expr} AS hour,
+           SUM(aircraft_count) as aircraft_count,
+           SUM(data_points) as data_points
+    FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
+    WHERE {local_hour_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+      AND {vehicle_sql_filter}
+    GROUP BY hour
+    ORDER BY hour
+    """
+    return _session.sql(query).to_pandas()
+
+@st.cache_data(ttl=300)
+def get_daily_traffic(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
+    """Get daily flight statistics"""
+    query = f"""
+    SELECT date,
+           SUM(unique_aircraft) as unique_aircraft,
+           SUM(unique_flights) as unique_flights,
+           SUM(total_records) as total_records,
+           AVG(avg_altitude) as avg_altitude,
+           AVG(avg_speed) as avg_speed
+    FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
+    WHERE date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+      AND {vehicle_sql_filter}
+    GROUP BY date
+    ORDER BY date
+    """
+    return _session.sql(query).to_pandas()
+
+@st.cache_data(ttl=300)
+def get_hourly_patterns(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
+    """Get average traffic by hour of day"""
+    local_hour_expr = utils.get_airport_local_ts_sql(db_prefix, "hour")
+    query = f"""
+    SELECT 
+        HOUR({local_hour_expr}) as hour_of_day,
+        SUM(aircraft_count) as avg_aircraft,
+        SUM(data_points) as total_points
+    FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
+    WHERE {local_hour_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+      AND {vehicle_sql_filter}
+    GROUP BY hour_of_day
+    ORDER BY hour_of_day
+    """
+    return _session.sql(query).to_pandas()
+
+@st.cache_data(ttl=300)
+def get_day_of_week_patterns(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
+    """Get traffic patterns by day of week"""
+    query = f"""
+    SELECT 
+        DAYOFWEEK(date) as day_of_week,
+        SUM(unique_aircraft) as aircraft_count,
+        SUM(unique_flights) as flight_count
+    FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
+    WHERE date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+      AND {vehicle_sql_filter}
+    GROUP BY day_of_week
+    ORDER BY day_of_week
+    """
+    return _session.sql(query).to_pandas()
+
+@st.cache_data(ttl=300)
+def get_airline_traffic(_session, start_dt, end_dt):
+    """Get traffic by airline"""
+    query = f"""
+    SELECT airline_code,
+           SUM(aircraft_count) as aircraft_count,
+           SUM(flight_count) as flight_count,
+           SUM(data_points) as data_points
+    FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_AIRLINE_TRAFFIC_DAILY
+    WHERE date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+    GROUP BY airline_code
+    ORDER BY data_points DESC
+    LIMIT 15
+    """
+    return _session.sql(query).to_pandas()
+
+@st.cache_data(ttl=300)
+def get_airline_delay_stats(_session, start_dt, end_dt):
+    """Aggregate delays by airline using FLIGHT_TRAFFIC_FACT_AIRLINE_DELAY_DAILY over the selected period."""
+    query = f"""
+    SELECT airline,
+           SUM(total_delay_minutes) AS total_delay_minutes,
+           SUM(delayed_flights) AS delayed_flights,
+           SUM(total_early_minutes) AS total_early_minutes,
+           SUM(early_flights) AS early_flights
+    FROM {db_prefix}.FLIGHT_TRAFFIC_FACT_AIRLINE_DELAY_DAILY
+    WHERE date BETWEEN '{start_dt}'::DATE AND '{end_dt}'::DATE
+    GROUP BY airline
+    ORDER BY total_delay_minutes DESC
+    """
+    return _session.sql(query).to_pandas()
+
+# Load data
+with st.spinner("Analyzing traffic patterns..."):
+    # Coerce to string dates robustly to avoid transient tuple casting issues
+    def _to_date_str(d):
+        try:
+            return str(pd.to_datetime(d).date())
+        except Exception:
+            return str(datetime.now().date())
+    start_datetime = f"{_to_date_str(start_date)} 00:00:00"
+    end_datetime = f"{_to_date_str(end_date)} 23:59:59"
+    
+    if granularity.lower() == "daily":
+        traffic_data = get_hourly_traffic(session, start_datetime, end_datetime, vehicle_filter['sql_filter'])
+        time_col = 'HOUR'
+    else:
+        traffic_data = get_daily_traffic(session, start_datetime, end_datetime, vehicle_filter['sql_filter'])
+        time_col = 'DATE'
+    
+    hourly_patterns = get_hourly_patterns(session, start_datetime, end_datetime, vehicle_filter['sql_filter'])
+    dow_patterns = get_day_of_week_patterns(session, start_datetime, end_datetime, vehicle_filter['sql_filter'])
+    
+    if show_airlines:
+        airline_data = get_airline_traffic(session, start_datetime, end_datetime)
+        delay_stats = get_airline_delay_stats(session, start_date, end_date)
+        code_to_name = utils.get_airline_name_map(session, start_date, end_date)
+
+# (Traffic Summary removed)
+
+# Traffic over time
+st.subheader(f"📅 Traffic Trend - {granularity}")
+
+if not traffic_data.empty:
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    if granularity.lower() == "daily":
+        fig.add_trace(
+            go.Scatter(
+                x=traffic_data['HOUR'],
+                y=traffic_data['AIRCRAFT_COUNT'],
+                name="Aircraft Count",
+                line=dict(color='#4FC3F7', width=3),
+                fill='tozeroy',
+                fillcolor='rgba(79, 195, 247, 0.2)'
+            ),
+            secondary_y=False
+        )
+        
+        fig.update_xaxes(title_text="Time")
+        fig.update_yaxes(title_text="Number of Aircraft", secondary_y=False)
+        
+    else:  # weekly
+        fig.add_trace(
+            go.Scatter(
+                x=traffic_data['DATE'],
+                y=traffic_data['UNIQUE_AIRCRAFT'],
+                name="Unique Aircraft",
+                line=dict(color='#4FC3F7', width=3),
+                fill='tozeroy',
+                fillcolor='rgba(79, 195, 247, 0.2)'
+            ),
+            secondary_y=False
+        )
+        
+        fig.add_trace(
+            go.Scatter(
+                x=traffic_data['DATE'],
+                y=traffic_data['UNIQUE_FLIGHTS'],
+                name="Unique Flights",
+                line=dict(color='#81C784', width=3)
+            ),
+            secondary_y=True
+        )
+        
+        fig.update_xaxes(title_text="Date")
+        fig.update_yaxes(title_text="Unique Aircraft", secondary_y=False)
+        fig.update_yaxes(title_text="Unique Flights", secondary_y=True)
+    
+    fig.update_layout(
+        hovermode='x unified',
+        height=450,
+        template='plotly_white',
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+st.divider()
+
+# Hourly patterns and day of week patterns
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("🕐 Aircraft on Ground by Hour")
+    st.caption("Shows the sum of aircraft present during each hour")
+    
+    if not hourly_patterns.empty:
+        # Create bar chart with Altair
+        chart_hourly = alt.Chart(hourly_patterns).mark_bar(color=COLORS.BLUE, size=BAR_CONFIG['vertical']['size']).encode(
+            x=alt.X('HOUR_OF_DAY:Q', title='Hour of Day (24h)', scale=alt.Scale(domain=[0, 23])),
+            y=alt.Y('AVG_AIRCRAFT:Q', title='Average Aircraft Count'),
+            tooltip=[
+                alt.Tooltip('HOUR_OF_DAY:Q', title='Hour', format='02d'),
+                alt.Tooltip('AVG_AIRCRAFT:Q', title='Aircraft', format=TOOLTIP_FORMAT['integer'])
+            ]
+        ).properties(height=400)
+        
+        st.altair_chart(chart_hourly, use_container_width=True)
+        
+        # Find peak hour
+        peak_hour = hourly_patterns.loc[hourly_patterns['AVG_AIRCRAFT'].idxmax()]
+        st.info(f"🔝 Peak Hour: **{int(peak_hour['HOUR_OF_DAY']):02d}:00** with **{int(peak_hour['AVG_AIRCRAFT']):,}** aircraft")
+
+with col2:
+    st.subheader("📆 Traffic by Day of Week")
+    
+    if not dow_patterns.empty:
+        # Map day numbers to names
+        day_names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        dow_patterns['DAY_NAME'] = dow_patterns['DAY_OF_WEEK'].apply(lambda x: day_names[int(x)])
+        
+        # Create categorical order for proper weekday sequence
+        chart_dow = alt.Chart(dow_patterns).mark_bar(color=COLORS.LIGHT_GREEN, size=BAR_CONFIG['vertical']['size']).encode(
+            x=alt.X('DAY_NAME:N', title='Day of Week', sort=day_names),
+            y=alt.Y('AIRCRAFT_COUNT:Q', title='Aircraft Count'),
+            tooltip=[
+                alt.Tooltip('DAY_NAME:N', title='Day'),
+                alt.Tooltip('AIRCRAFT_COUNT:Q', title='Aircraft', format=TOOLTIP_FORMAT['integer'])
+            ]
+        ).properties(height=400)
+        
+        st.altair_chart(chart_dow, use_container_width=True)
+        
+        # Find busiest day
+        busiest_day = dow_patterns.loc[dow_patterns['AIRCRAFT_COUNT'].idxmax()]
+        st.info(f"🔝 Busiest Day: **{busiest_day['DAY_NAME']}** with **{int(busiest_day['AIRCRAFT_COUNT']):,}** aircraft")
+
+# Activity heatmap
+if show_heatmap and not traffic_data.empty:
+    st.divider()
+    st.subheader("🔥 Activity Heatmap")
+    st.caption("Color intensity shows aircraft count: darker blue = more aircraft")
+    
+    # Get data for heatmap
+    @st.cache_data(ttl=300)
+    def get_heatmap_data(_session, start_dt, end_dt, vehicle_sql_filter="1=1"):
+        local_ts_expr = utils.get_airport_local_ts_sql(db_prefix, "TIMESTAMP")
+        query = f"""
+        SELECT 
+            HOUR({local_ts_expr}) as hour,
+            DAYOFWEEK({local_ts_expr}) as day_of_week,
+            COUNT(DISTINCT ICAO_HEX) as aircraft_count
+    FROM {db_prefix}.ADSB_DATA_LOCAL
+        WHERE {local_ts_expr} BETWEEN '{start_dt}'::TIMESTAMP AND '{end_dt}'::TIMESTAMP
+          AND {vehicle_sql_filter}
+        GROUP BY hour, day_of_week
+        ORDER BY day_of_week, hour
+        """
+        return _session.sql(query).to_pandas()
+    
+    heatmap_data = get_heatmap_data(session, start_datetime, end_datetime, vehicle_sql_filter=vehicle_filter['sql_filter'])
+    
+    if not heatmap_data.empty:
+        day_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+        heatmap_data['DAY_NAME'] = heatmap_data['DAY_OF_WEEK'].apply(lambda x: day_names[int(x)])
+        heatmap_data['HOUR_LABEL'] = heatmap_data['HOUR'].apply(lambda h: f"{int(h):02d}:00")
+        
+        # Ensure proper ordering
+        heatmap_data['DAY_NAME'] = pd.Categorical(heatmap_data['DAY_NAME'], categories=day_names, ordered=True)
+        hour_labels = [f"{h:02d}:00" for h in range(24)]
+        heatmap_data['HOUR_LABEL'] = pd.Categorical(heatmap_data['HOUR_LABEL'], categories=hour_labels, ordered=True)
+        
+        chart_hm = alt.Chart(heatmap_data).mark_rect().encode(
+            x=alt.X('HOUR_LABEL:O', title='Hour of Day', sort=hour_labels),
+            y=alt.Y('DAY_NAME:O', title='Day of Week', sort=day_names),
+            color=alt.Color('AIRCRAFT_COUNT:Q',
+                           title='Aircraft Count',
+                           scale=alt.Scale(scheme='turbo')),
+            tooltip=[
+                alt.Tooltip('DAY_NAME:O', title='Day'),
+                alt.Tooltip('HOUR_LABEL:O', title='Hour'),
+                alt.Tooltip('AIRCRAFT_COUNT:Q', title='Aircraft', format=',.0f')
+            ]
+        ).properties(
+            height=300
+        )
+        
+        st.caption("**Color Scale:** Teal (low) → Yellow (medium) → Red (high) aircraft count. Color intensity shows traffic concentration by day and hour.")
+        st.altair_chart(chart_hm, use_container_width=True)
+
+# Airline breakdown
+if show_airlines and 'airline_data' in locals() and not airline_data.empty:
+    st.divider()
+    st.subheader("🏢 Top Airlines by Activity")
+    
+    # Add airline names
+    airline_data['AIRLINE_NAME'] = airline_data['AIRLINE_CODE'].apply(lambda c: code_to_name.get(str(c), str(c)))
+    if hide_unknown_airlines:
+        airline_data = airline_data[airline_data['AIRLINE_CODE'].astype(str) != 'UNK']
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Flights by airline
+        airline_sorted = airline_data.sort_values('FLIGHT_COUNT', ascending=False)
+        
+        chart_flights = alt.Chart(airline_sorted).mark_bar(color=COLORS.FLIGHT, size=BAR_CONFIG['horizontal_compact']['size']).encode(
+            x=alt.X('FLIGHT_COUNT:Q', title='Number of Flights'),
+            y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline'),
+            tooltip=[
+                alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                alt.Tooltip('FLIGHT_COUNT:Q', title='Flights', format=TOOLTIP_FORMAT['integer'])
+            ]
+        ).properties(
+            title='Flights by Airline',
+            height=alt.Step(BAR_CONFIG['horizontal_compact']['step'])
+        )
+        
+        st.altair_chart(chart_flights, use_container_width=True)
+    
+    with col2:
+        # Market share pie chart with Altair
+        chart_pie = alt.Chart(airline_data).mark_arc(innerRadius=50).encode(
+            theta=alt.Theta('FLIGHT_COUNT:Q'),
+            color=alt.Color('AIRLINE_NAME:N', legend=alt.Legend(title='Airline')),
+            tooltip=[
+                alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                alt.Tooltip('FLIGHT_COUNT:Q', title='Flights', format=',.0f')
+            ]
+        ).properties(
+            title='Market Share by Flights',
+            height=500
+        )
+        
+        st.altair_chart(chart_pie, use_container_width=True)
+
+    # Delay analytics by airline
+    if delay_stats is not None and not delay_stats.empty:
+        st.divider()
+        # Row 1: Delays (minutes) and Early Flights side-by-side
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("⏱️ Delays by Airline (Total Minutes)")
+            def _to_full_airline(val: str) -> str:
+                s = str(val).strip()
+                if len(s) > 3 or (' ' in s) or ('AIR' in s) or ('AIRLINES' in s) or ('LINES' in s):
+                    return s.title()
+                return code_to_name.get(s, s)
+            delay_stats['AIRLINE_NAME'] = delay_stats['AIRLINE'].apply(_to_full_airline)
+            d1 = delay_stats[['AIRLINE_NAME','TOTAL_DELAY_MINUTES']].copy()
+            d1 = d1.sort_values('TOTAL_DELAY_MINUTES', ascending=False).head(15)
+            
+            chart_d1 = alt.Chart(d1).mark_bar(color=COLORS.DELAY, size=BAR_CONFIG['horizontal']['size']).encode(
+                x=alt.X('TOTAL_DELAY_MINUTES:Q', title='Total Delay Minutes'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                    alt.Tooltip('TOTAL_DELAY_MINUTES:Q', title='Delay Minutes', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal']['step']))
+            
+            st.altair_chart(chart_d1, use_container_width=True)
+        with col2:
+            st.subheader("🛬 Early Flights by Airline")
+            e2 = delay_stats[['AIRLINE_NAME','EARLY_FLIGHTS']].copy().sort_values('EARLY_FLIGHTS', ascending=False).head(15)
+            
+            chart_e2 = alt.Chart(e2).mark_bar(color=COLORS.EARLY, size=BAR_CONFIG['horizontal']['size']).encode(
+                x=alt.X('EARLY_FLIGHTS:Q', title='Early Flights'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                    alt.Tooltip('EARLY_FLIGHTS:Q', title='Early Flights', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal']['step']))
+            
+            st.altair_chart(chart_e2, use_container_width=True)
+
+        # Row 2: Delayed Flights and Early Minutes side-by-side (existing pairing)
+        colA, colB = st.columns(2)
+        with colA:
+            st.subheader("✈️ Delayed Flights by Airline")
+            d2 = delay_stats[['AIRLINE_NAME','DELAYED_FLIGHTS']].copy().sort_values('DELAYED_FLIGHTS', ascending=False).head(15)
+            
+            chart_d2 = alt.Chart(d2).mark_bar(color=COLORS.DELAYED_FLIGHTS, size=BAR_CONFIG['horizontal']['size']).encode(
+                x=alt.X('DELAYED_FLIGHTS:Q', title='Delayed Flights'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                    alt.Tooltip('DELAYED_FLIGHTS:Q', title='Delayed Flights', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal']['step']))
+            
+            st.altair_chart(chart_d2, use_container_width=True)
+        with colB:
+            st.subheader("⏰ Early Arrivals by Airline (Minutes)")
+            e1 = delay_stats[['AIRLINE_NAME','TOTAL_EARLY_MINUTES']].copy().sort_values('TOTAL_EARLY_MINUTES', ascending=False).head(15)
+            
+            chart_e1 = alt.Chart(e1).mark_bar(color=COLORS.EARLY_MINUTES, size=BAR_CONFIG['horizontal']['size']).encode(
+                x=alt.X('TOTAL_EARLY_MINUTES:Q', title='Early Minutes'),
+                y=alt.Y('AIRLINE_NAME:N', sort='-x', title='Airline',
+                        axis=alt.Axis(labelLimit=BAR_CONFIG['horizontal']['label_limit'])),
+                tooltip=[
+                    alt.Tooltip('AIRLINE_NAME:N', title='Airline'),
+                    alt.Tooltip('TOTAL_EARLY_MINUTES:Q', title='Early Minutes', format=TOOLTIP_FORMAT['integer'])
+                ]
+            ).properties(height=alt.Step(BAR_CONFIG['horizontal']['step']))
+            
+            st.altair_chart(chart_e1, use_container_width=True)
+
+st.divider()
+
+# Flight Details section moved from Schedule Performance
+@st.cache_data(ttl=300)
+def get_schedule_vs_actual(_session, date, vehicle_sql_filter="1=1"):
+    query = f"""
+    WITH airport AS (
+        SELECT UPPER(airport_code) AS airport_code
+        FROM {db_prefix}.PROPERTIES_AIRPORT
+        LIMIT 1
+    ),
+    schedule AS (
+        SELECT 
+            fs.FLIGHT_NUMBER,
+            fs.FLIGHT_DATE AS TRAVEL_DATE,
+            fs.AIRLINE_NAME AS MARKETING_CARRIER,
+            IFF(UPPER(fs.DEPARTURE_AIRPORT) = a.airport_code, 'departure',
+                IFF(UPPER(fs.ARRIVAL_AIRPORT) = a.airport_code, 'arrival', 'unknown')) AS DIRECTION,
+            fs.DEPARTURE_AIRPORT AS ORIGIN_AIRPORT,
+            fs.ARRIVAL_AIRPORT AS DESTINATION_AIRPORT,
+            IFF(UPPER(fs.DEPARTURE_AIRPORT) = a.airport_code, fs.DEPARTURE_SCHEDULED, fs.ARRIVAL_SCHEDULED) AS SCHEDULED_TIME
+        FROM {db_prefix}.FLIGHT_SCHEDULE fs
+        CROSS JOIN airport a
+        WHERE fs.FLIGHT_DATE = '{date}'::DATE
+    ),
+    actual AS (
+        SELECT 
+            REGEXP_SUBSTR(FLIGHT, '[0-9]+') AS FLIGHT_NUMBER,
+            MIN(TIMESTAMP) AS FIRST_SEEN
+    FROM {db_prefix}.ADSB_DATA_LOCAL
+        WHERE {utils.get_airport_local_date_sql(db_prefix, "TIMESTAMP")} = '{date}'::DATE
+          AND {vehicle_sql_filter}
+          AND FLIGHT IS NOT NULL
+        GROUP BY 1
+    )
+    SELECT 
+        s.FLIGHT_NUMBER,
+        s.MARKETING_CARRIER,
+        s.DIRECTION,
+        s.ORIGIN_AIRPORT,
+        s.DESTINATION_AIRPORT,
+        s.SCHEDULED_TIME,
+        a.FIRST_SEEN as ACTUAL_TIME,
+        TIMESTAMPDIFF(MINUTE, s.SCHEDULED_TIME, a.FIRST_SEEN) as DELAY_MINUTES
+    FROM schedule s
+    LEFT JOIN actual a 
+        ON TO_VARCHAR(s.FLIGHT_NUMBER) = TO_VARCHAR(a.FLIGHT_NUMBER)
+    ORDER BY s.SCHEDULED_TIME
+    """
+    return _session.sql(query).to_pandas()
+
+st.subheader("✈️ Flight Details")
+flight_details = get_schedule_vs_actual(session, end_date, vehicle_sql_filter=vehicle_filter['sql_filter'])
+if not flight_details.empty:
+    # Classify by delay using threshold
+    def classify_delay(delta_minutes, threshold):
+        try:
+            if pd.isna(delta_minutes):
+                return "Unknown"
+            if abs(float(delta_minutes)) <= float(threshold):
+                return "On Time"
+            return "Arrived Earlier" if float(delta_minutes) < -float(threshold) else "Arrived Later"
+        except Exception:
+            return "Unknown"
+
+    flight_details = flight_details.copy()
+    flight_details['STATUS'] = flight_details['DELAY_MINUTES'].apply(lambda d: classify_delay(d, delay_threshold))
+    
+    # Status filter
+    status_options = ["On Time", "Arrived Earlier", "Arrived Later"]
+    selected_status = st.multiselect(
+        "Filter by status",
+        options=status_options,
+        default=status_options
+    )
+    if selected_status:
+        flight_details = flight_details[flight_details['STATUS'].isin(selected_status)]
+    else:
+        flight_details = flight_details.iloc[0:0]
+    
+    display_cols = ['FLIGHT_NUMBER', 'MARKETING_CARRIER', 'DIRECTION', 'ORIGIN_AIRPORT', 
+                   'DESTINATION_AIRPORT', 'SCHEDULED_TIME', 'ACTUAL_TIME', 'DELAY_MINUTES', 'STATUS']
+    display_df = flight_details[display_cols].copy()
+    display_df['SCHEDULED_TIME'] = display_df['SCHEDULED_TIME'].dt.strftime('%H:%M')
+    display_df['ACTUAL_TIME'] = display_df['ACTUAL_TIME'].dt.strftime('%H:%M')
+    display_df.columns = ['Flight', 'Carrier', 'Direction', 'Origin', 'Destination', 
+                         'Scheduled', 'Actual', 'Delay (min)', 'Status']
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
