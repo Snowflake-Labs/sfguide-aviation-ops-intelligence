@@ -85,9 +85,29 @@ Key rules:
 - Deployment skills must include a `## Required Privileges` table (no ACCOUNTADMIN assumptions)
 - Deployment skills must include a `## Cleanup` section with DROP statements
 
-## Error Logging
+## Friction Log (Required on Every Run)
 
-When any step fails or produces unexpected results (SQL errors, missing objects, wrong row counts, service failures, deployment issues), log the issue to `.cortex/skills/logs/`. Create one log file per execution: `<skill-name>_{YYYY-MM-DD}_{HH-MM}.md`. Continue execution where possible, logging all issues encountered. If execution completes with no issues, do not create a log file.
+Every skill execution MUST produce a friction log at `.cortex/skills/logs/<skill-name>_{YYYY-MM-DD}_{HH-MM}.md`. The log is created at the start of execution and updated throughout. It captures the full execution context — not just errors.
+
+### Required Sections
+
+| Section | Content |
+|---------|---------|
+| **Header** | Airport name, IATA/ICAO, date, account, role |
+| **Configuration** | All resolved parameters (database, warehouse, API keys provided/skipped, backfill days, etc.) |
+| **Installation Summary** | Table of steps with sub-skill name, status (OK / WARN / ERROR / SKIPPED), and approximate duration |
+| **Objects Created** | Counts by category (tables, DTs, views, procedures, tasks, EAIs, etc.) |
+| **Initial Data** | Row counts for key tables after first load |
+| **Friction Points** | Numbered list. Each entry: severity (LOW / MEDIUM / HIGH), issue description, error message (if any), workaround applied, suggestion for permanent fix. Include friction points even when recovered automatically (e.g., race conditions, retry-on-error). |
+| **Verification Checklist** | Checkbox list of post-install health checks with pass/fail |
+
+### Rules
+
+- Create the log file at the **start** of execution (not just on failure).
+- Append to it as each step completes.
+- If execution completes with zero friction points, still write the log — mark the Friction Points section as "None" and include all other sections.
+- Sub-skills executed via `runSubagent` should report their friction points back to the parent, which consolidates them into the single log file.
+- The friction log is the **source of truth** for what happened during an installation. It must be accurate and complete.
 
 ## Creating a New Skill
 

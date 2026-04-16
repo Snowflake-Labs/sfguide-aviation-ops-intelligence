@@ -30,9 +30,17 @@ This skill queries `INFORMATION_SCHEMA`, `SHOW` commands, and `ACCOUNT_USAGE` vi
 | AIRPORT_FILTER | (all) | Optional: filter to a specific airport (e.g., `AIRPORT_SAN`) |
 | DRY_RUN | `true` | When true, only generates DROP statements without executing |
 
-## Error Logging
+## Friction Log
 
-When any step fails, log to `.cortex/skills/logs/` as `aviation-cleanup_{YYYY-MM-DD}_{HH-MM}.md`. Continue execution where possible, logging all issues. If no issues, do not create a log file.
+Always write a friction log to `.cortex/skills/logs/aviation-cleanup_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md. Include configuration, objects discovered/dropped, and any errors. If no friction points, mark that section as "None".
+
+## Execution Rules
+
+1. **Always dry-run first.** Never execute DROP statements without user confirmation.
+2. **Suspend tasks before dropping.** Every TASK must be SUSPENDED before DROP.
+3. **Drop in dependency order.** Follow the phase sequence (Streamlit → Tasks → DTs → Views → Procedures → Tables → EAIs → Database).
+4. **Verify after cleanup.** Run `SHOW DATABASES LIKE 'AIRPORT_%'` and `SHOW INTEGRATIONS LIKE 'AIRPORT_%'` to confirm clean state.
+5. **All discovery queries must use the tracking tag** `sf_sit-is-aviation` — never drop objects that do not carry this tag.
 
 ## Prerequisites
 
@@ -212,6 +220,36 @@ To clean up objects from a single skill only:
 | aviation-tsa-throughput | `oss-aviation-tsa-throughput` | TSA_THROUGHPUT, TSA_PDF_STAGE, TSA_PDF_PAGES_STAGE, TSA procedures, TASK_FETCH/EXTRACT_TSA_PDF, EAI |
 | aviation-derived-analytics | `oss-aviation-derived-analytics` | All 13 Dynamic Tables, monitoring views, refresh procedures |
 | aviation-dashboard | `oss-aviation-dashboard` | Streamlit app object |
+
+## Examples
+
+### Example 1: Clean up a single airport
+User says: "Remove the SAN airport installation"
+Actions:
+1. Set AIRPORT_FILTER = `AIRPORT_SAN`
+2. Discover all tagged objects in AIRPORT_SAN
+3. Generate DROP statements (dry run), present summary
+4. User confirms → execute all DROPs
+5. Verify clean state
+Result: `AIRPORT_SAN` database, all EAIs, network rules, and warehouse removed
+
+### Example 2: Dry-run teardown of all airports
+User says: "Show me what would be cleaned up for aviation"
+Actions:
+1. DRY_RUN = true (default)
+2. Discover all AIRPORT_XXX databases and tagged objects
+3. Present summary: "Found 3 databases, 42 tasks, 39 DTs, 15 EAIs..."
+4. Do NOT execute — user reviews list
+Result: DROP statements printed, nothing executed
+
+### Example 3: Remove everything after a demo
+User says: "Tear down the entire aviation demo environment"
+Actions:
+1. Discover all tagged objects across all AIRPORT_XXX databases
+2. Generate and present DROP statements
+3. User confirms → execute in dependency order
+4. Verify no AIRPORT_XXX databases or EAIs remain
+Result: Full environment cleaned up
 
 ## Troubleshooting
 
