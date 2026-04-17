@@ -98,9 +98,11 @@ export default function App() {
                 ))}
               </div>
             ))}
+            <div style={{ padding: '8px 0' }}>
+              <AirportSwitcher />
+            </div>
           </div>
           <div className="sidebar-footer">
-            <AirportSwitcher />
             <div className="sidebar-version">v1.0.0</div>
           </div>
         </div>
