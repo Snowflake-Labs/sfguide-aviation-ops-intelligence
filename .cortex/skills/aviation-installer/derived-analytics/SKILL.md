@@ -69,9 +69,9 @@ ADSB_DATA_LOCAL (DT, DOWNSTREAM — bbox-filtered local positions)
 | CROSSING_MAX_SEC | 120 | Max seconds for a runway crossing event |
 | CROSSING_MAX_DIST_M | 220 | Max meters proximity to runway centroid |
 
-## Friction Log
+## Friction Logging
 
-Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/aviation-derived-analytics_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md.
+Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer using the F1/F2/F3 format from `.cortex/skills/logs/README.md`. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/friction-log_{YYYY-MM-DD}_{HH-MM}.md`.
 
 ## Workflow
 

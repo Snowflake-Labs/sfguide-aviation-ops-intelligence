@@ -44,9 +44,9 @@ Without this sub-skill, ADS-B tracks are still captured but won't be enriched wi
 | BACKFILL_DAYS | 5 | Days of schedule history to backfill |
 | TASK_PARENT | `TASK_INGEST_ADSB` | Parent task for DAG chaining |
 
-## Friction Log
+## Friction Logging
 
-Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/aviation-flight-schedules_{YYYY-MM-DD}_{HH-MM}.md` with the same format described in AGENTS.md.
+Report all friction points (errors, warnings, workarounds, race conditions) back to the parent installer using the F1/F2/F3 format from `.cortex/skills/logs/README.md`. The parent writes the consolidated friction log. If executing standalone, write to `.cortex/skills/logs/friction-log_{YYYY-MM-DD}_{HH-MM}.md`.
 
 ## Workflow
 
