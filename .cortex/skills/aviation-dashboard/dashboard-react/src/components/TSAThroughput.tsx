@@ -6,6 +6,7 @@ import DataTable from '../shared/DataTable';
 import { fmtNum } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSfQuery } from '../hooks/useSnowflake';
+import { useInfrastructure } from '../shared/useInfrastructure';
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Area, AreaChart,
@@ -52,6 +53,7 @@ function intensityColor(t: number): [number, number, number, number] {
 export default function TSAThroughput() {
   const { airport } = useAirport();
   const db = airport ? `${airport}.PUBLIC` : '';
+  const { layers: infraLayers } = useInfrastructure('airport-ops');
   const today = new Date().toISOString().split('T')[0];
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
   const [dateFrom, setDateFrom] = useState(weekAgo);
@@ -188,9 +190,9 @@ export default function TSAThroughput() {
   }, [heatmapData]);
 
   const mapLayers = useMemo(() => {
-    if (!geoData.length || !meta) return [];
+    if (!geoData.length || !meta) return [...infraLayers];
     const maxPax = Math.max(...geoData.map((r: any) => Number(r.TOTAL_PAX) || 0), 1);
-    const layers: any[] = [];
+    const layers: any[] = [...infraLayers];
 
     const features: any[] = [];
     const seen = new Set<string>();
@@ -253,7 +255,7 @@ export default function TSAThroughput() {
     }));
 
     return layers;
-  }, [geoData, meta]);
+  }, [geoData, meta, infraLayers]);
 
   const [showRaw, setShowRaw] = useState(false);
 

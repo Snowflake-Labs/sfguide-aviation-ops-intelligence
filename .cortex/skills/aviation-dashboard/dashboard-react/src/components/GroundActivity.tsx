@@ -5,6 +5,9 @@ import MetricCard from '../shared/MetricCard';
 import { fmtNum } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSnowflake, useSfQuery } from '../hooks/useSnowflake';
+import LayerPresetSelector from '../shared/LayerPresetSelector';
+import { useInfrastructure, type LayerPreset } from '../shared/useInfrastructure';
+import VehicleTypeFilter, { useVehicleTypeFilter } from '../shared/VehicleTypeFilter';
 
 type Aggregation = 'day' | 'hour' | '10min';
 
@@ -48,6 +51,11 @@ export default function GroundActivity() {
   const [dateTo, setDateTo] = useState(today);
   const [h3Res, setH3Res] = useState(13);
   const [metric, setMetric] = useState<'flights' | 'points'>('flights');
+  const [percentile, setPercentile] = useState(0);
+  const [infraPreset, setInfraPreset] = useState<LayerPreset>('airport-ops');
+  const [customTypes, setCustomTypes] = useState<Set<string>>(new Set());
+  const { layers: infraLayers, availableTypes } = useInfrastructure(infraPreset, customTypes);
+  const { selected: vehicleTypes, setSelected: setVehicleTypes, sqlFilter: vehicleFilter } = useVehicleTypeFilter();
 
   const [replayDate, setReplayDate] = useState(yesterday);
   const [aggregation, setAggregation] = useState<Aggregation>('hour');
@@ -77,10 +85,11 @@ export default function GroundActivity() {
          AND ST_X(LOCATION) BETWEEN ${meta.BBOX_MIN_LON} AND ${meta.BBOX_MAX_LON}
          AND ST_Y(LOCATION) BETWEEN ${meta.BBOX_MIN_LAT} AND ${meta.BBOX_MAX_LAT}
          AND LOCATION IS NOT NULL
+         ${vehicleFilter}
        GROUP BY 1
        HAVING ${metric === 'flights' ? 'flight_count' : 'obs_count'} > 0`
     : '';
-  const { data: hexData, loading } = useSfQuery(hexSql, airport, 'PUBLIC', [dateFrom, dateTo, h3Res, metric, mode]);
+  const { data: hexData, loading } = useSfQuery(hexSql, airport, 'PUBLIC', [dateFrom, dateTo, h3Res, metric, mode, vehicleFilter]);
 
   const loadReplayData = useCallback(async (date: string, agg: Aggregation) => {
     if (!airport || !meta) return;
@@ -109,6 +118,7 @@ export default function GroundActivity() {
            AND LOCATION IS NOT NULL
            AND ST_X(LOCATION) BETWEEN ${meta.BBOX_MIN_LON} AND ${meta.BBOX_MAX_LON}
            AND ST_Y(LOCATION) BETWEEN ${meta.BBOX_MIN_LAT} AND ${meta.BBOX_MAX_LAT}
+           ${vehicleFilter}
          GROUP BY 1, 2`,
         { database: airport, schema: 'PUBLIC' }
       );
@@ -117,7 +127,7 @@ export default function GroundActivity() {
     } finally {
       setReplayLoading(false);
     }
-  }, [airport, db, meta, tz, h3Res, query]);
+  }, [airport, db, meta, tz, h3Res, query, vehicleFilter]);
 
   useEffect(() => {
     if (mode === 'replay' && airport && meta) {
@@ -131,19 +141,29 @@ export default function GroundActivity() {
     return replayData.filter((d: any) => Number(d.SLOT) === slotIndex);
   }, [mode, replayData, slotIndex, aggregation]);
 
-  const activeData = mode === 'static' ? hexData : filteredHex;
+  const activeDataRaw = mode === 'static' ? hexData : filteredHex;
   const activeLoading = mode === 'static' ? loading : replayLoading;
+
+  const activeData = useMemo(() => {
+    if (percentile === 0 || !activeDataRaw.length) return activeDataRaw;
+    const key = metric === 'flights' ? 'FLIGHT_COUNT' : 'OBS_COUNT';
+    const vals = activeDataRaw.map((d: any) => Number(d[key]) || 0).sort((a: number, b: number) => a - b);
+    const threshold = vals[Math.floor(vals.length * percentile / 100)] || 0;
+    return activeDataRaw.filter((d: any) => (Number(d[key]) || 0) >= threshold);
+  }, [activeDataRaw, percentile, metric]);
 
   const totalFlights = activeData.reduce((a: number, d: any) => a + (Number(d.FLIGHT_COUNT) || 0), 0);
   const totalObs = activeData.reduce((a: number, d: any) => a + (Number(d.OBS_COUNT) || 0), 0);
 
   const layers = useMemo(() => {
-    if (!activeData.length) return [];
+    const result: any[] = [...infraLayers];
+    if (!activeData.length) return result;
     const key = metric === 'flights' ? 'FLIGHT_COUNT' : 'OBS_COUNT';
     const vals = activeData.map((d: any) => Number(d[key]) || 0);
     const maxVal = Math.max(...vals, 1);
 
     return [
+      ...result,
       new H3HexagonLayer({
         id: 'ground-hex',
         data: activeData,
@@ -167,7 +187,7 @@ export default function GroundActivity() {
         },
       }),
     ];
-  }, [activeData, metric, slotIndex]);
+  }, [activeData, metric, slotIndex, infraLayers]);
 
   const viewState = meta
     ? { longitude: Number(meta.LON), latitude: Number(meta.LAT), zoom: 14, pitch: 45, bearing: 0 }
@@ -233,6 +253,14 @@ export default function GroundActivity() {
             <option value="points">{mode === 'static' ? 'Daily Avg Points' : 'Observations'}</option>
           </select>
         </div>
+        <div className="form-group">
+          <label>Percentile Threshold: {percentile}</label>
+          <input type="range" min={0} max={99} step={5} value={percentile}
+            onChange={e => setPercentile(Number(e.target.value))} style={{ width: '100%' }} />
+        </div>
+        <LayerPresetSelector preset={infraPreset} onPresetChange={setInfraPreset}
+          customTypes={customTypes} onCustomTypesChange={setCustomTypes} availableTypes={availableTypes} />
+        <VehicleTypeFilter selected={vehicleTypes} onChange={setVehicleTypes} />
 
         <div className="metric-grid-vertical" style={{ marginTop: 16 }}>
           <MetricCard label="Hexagon Cells" value={activeLoading ? '...' : fmtNum(activeData.length)} />

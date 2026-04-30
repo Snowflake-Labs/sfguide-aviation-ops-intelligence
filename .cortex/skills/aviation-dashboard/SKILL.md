@@ -20,6 +20,8 @@ This skill contains two dashboard implementations for airport analytics:
 
 Both dashboards provide the same 8 analytics pages and auto-discover all `AIRPORT_XXX` databases.
 
+> **IMPORTANT: Single-instance deployment.** Only ONE dashboard service/app should exist per Snowflake account. The dashboard is deployed into the FIRST installed airport database (e.g., `AIRPORT_SAN`). It auto-discovers all other airport databases via `SHOW DATABASES LIKE 'AIRPORT_%'` — there is NO need to deploy a separate dashboard per airport. If multiple airports are installed, use the AirportSwitcher dropdown inside the app to switch between them.
+
 ---
 
 # Streamlit Dashboard
@@ -62,7 +64,7 @@ Deploys the multi-page Streamlit-in-Snowflake dashboard that provides real-time 
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| DASHBOARD_DB | {TARGET_DB} | Database to host the Streamlit app (same as the airport database) |
+| DASHBOARD_DB | (first AIRPORT_* database found) | Database to host the Streamlit app — deploy ONLY ONCE per account |
 | DASHBOARD_SCHEMA | PUBLIC | Schema to host the Streamlit app |
 | APP_NAME | AIRPORT_ANALYTICS_DASHBOARD | Streamlit object name |
 | GIT_REPO_STAGE | `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main` | Source files |
@@ -87,6 +89,14 @@ SHOW DATABASES LIKE 'AIRPORT_%';
 ```
 
 Confirm at least one `AIRPORT_XXX` database exists. If none, run `aviation-installer` first.
+
+**Single-instance rule:** Always deploy into the FIRST `AIRPORT_*` database (alphabetical). If a Streamlit app named `AIRPORT_ANALYTICS_DASHBOARD` already exists in ANY `AIRPORT_*` database, reuse that database — never create a second dashboard app.
+
+```sql
+SHOW STREAMLITS LIKE 'AIRPORT_ANALYTICS_DASHBOARD' IN ACCOUNT;
+```
+
+If found, use its database as `DASHBOARD_DB`.
 
 Quick check that data is flowing:
 ```sql
@@ -174,11 +184,20 @@ Result: Dashboard at `AIRPORT_SAN.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD`
 User says: "Deploy the React dashboard for SAN"
 Actions:
 1. Set query tag, verify AIRPORT_SAN exists
-2. Create compute pool, image repo, network rule, EAI
-3. Build and push Docker image
-4. Create SPCS service
-5. Return public endpoint URL
+2. Check if AVIATION_DASHBOARD_SERVICE already exists in any AIRPORT_* DB — if so, reuse it (skip Steps 3-5)
+3. Create compute pool, image repo, network rule, EAI
+4. Build and push Docker image
+5. Create SPCS service
+6. Return public endpoint URL
 Result: SPCS service at `AIRPORT_SAN.PUBLIC.AVIATION_DASHBOARD_SERVICE`
+
+### Example 4: Second airport installed, dashboard already exists
+User says: "Deploy the dashboard for DFW"
+Actions:
+1. Check if AVIATION_DASHBOARD_SERVICE already exists → found in AIRPORT_SAN
+2. Print "Dashboard already deployed at AIRPORT_SAN.PUBLIC.AVIATION_DASHBOARD_SERVICE. It auto-discovers all airports including DFW. No additional deployment needed."
+3. Return existing endpoint URL
+Result: No new service created; user directed to existing dashboard
 
 ### Example 3: Dashboard already up to date
 User says: "Redeploy the dashboard"
@@ -334,10 +353,10 @@ A React 18 + TypeScript + deck.gl dashboard deployed as a Snowpark Container Ser
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| TARGET_DB | AIRPORT_{IATA} | Airport database hosting the service |
+| TARGET_DB | (first AIRPORT_* database found) | Airport database hosting the service — deploy ONLY ONCE per account |
 | WAREHOUSE | AVIA_{IATA}_WH | Query warehouse for the service |
 | COMPUTE_POOL | AVIATION_DASHBOARD_COMPUTE_POOL | Compute pool (shared across airports) |
-| IMAGE_TAG | latest | Docker image tag |
+| IMAGE_TAG | (from `dashboard-react/image-versions.env` → `AVIATION_DASHBOARD_TAG`) | Pinned semver tag. Never use `:latest` — SPCS caches it and will not re-pull. |
 | CONTAINER_CMD | docker or podman | Auto-detected container runtime |
 | ACCOUNT | (current account) | Snowflake account identifier |
 
@@ -395,13 +414,22 @@ In SPCS, the service authenticates via OAuth token from `/snowflake/session/toke
 ALTER SESSION SET query_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-dashboard","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
-### Step 2: Verify Prerequisite Airport Data
+### Step 2: Verify Prerequisite Airport Data and Determine TARGET_DB
 
 ```sql
 SHOW DATABASES LIKE 'AIRPORT_%';
 ```
 
 At least one `AIRPORT_XXX` database must exist. If none, run `aviation-installer` first.
+
+**Single-instance rule:** Always deploy into the FIRST `AIRPORT_*` database returned (alphabetical order). If a dashboard service already exists in ANY `AIRPORT_*` database, reuse that one — never create a second service.
+
+```sql
+-- Check if a dashboard service already exists in any airport DB
+SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN ACCOUNT;
+```
+
+If a result is found, use that database as `TARGET_DB` (even if a different airport was just installed). If no existing service, use the first `AIRPORT_*` database.
 
 ### Step 2.5: Check Existing SPCS Dashboard Version
 
@@ -464,6 +492,70 @@ The `ingress_url` column contains the dashboard URL. Share this with users.
 ```sql
 GRANT USAGE ON SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE TO ROLE {CONSUMER_ROLE};
 ```
+
+## Update / Redeploy (Rolling Image Update)
+
+SPCS does NOT re-pull when the image tag is unchanged (e.g. `:latest`). To ship new code safely, always push a new semver tag and then `ALTER SERVICE ... FROM SPECIFICATION` with the new tag. SPCS sees a new image digest and pulls cleanly with zero manual cache busting.
+
+### Step A: Bump the tag
+
+Edit [dashboard-react/image-versions.env](dashboard-react/image-versions.env):
+```
+AVIATION_DASHBOARD_TAG=v1.0.1   # was v1.0.0
+```
+
+### Step B: Validate consistency
+
+```bash
+.cortex/skills/aviation-dashboard/scripts/check_image_versions.sh
+```
+
+Exit 0 = safe to build/push. Exit 1 = a YAML or doc is out of sync; fix first.
+
+### Step C: Rebuild and push with the new tag
+
+Follow `references/build-images.md` — the build command sources `image-versions.env` and tags the image as `aviation_dashboard:${AVIATION_DASHBOARD_TAG}`.
+
+### Step D: Roll the service to the new tag
+
+```sql
+-- Load the pinned tag via the dashboard skill's substitution; the YAML
+-- placeholder {AVIATION_DASHBOARD_TAG} is replaced before ALTER SERVICE.
+ALTER SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE
+  FROM SPECIFICATION $$
+spec:
+  containers:
+    - name: aviation-dashboard
+      image: /{TARGET_DB}/public/aviation_dashboard_repo/aviation_dashboard:{AVIATION_DASHBOARD_TAG}
+      env:
+        SNOWFLAKE_DATABASE: "{TARGET_DB}"
+        SNOWFLAKE_WAREHOUSE: "{WAREHOUSE}"
+      resources:
+        requests:
+          cpu: "0.5"
+          memory: "512Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
+  endpoints:
+    - name: aviation-dashboard
+      port: 3001
+      public: true
+  $$;
+```
+
+### Step E: Verify the roll
+
+```sql
+SELECT SYSTEM$GET_SERVICE_STATUS('{TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE');
+SHOW SERVICE CONTAINERS IN SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
+```
+
+The `image_digest` column should change after the roll. If it is unchanged, the registry push did not land — re-check with `snow spcs image-repository list-images`.
+
+### Rollback
+
+Set `AVIATION_DASHBOARD_TAG` back to the prior value (the old image is still in the registry) and re-run Step D. No rebuild needed — instant rollback.
 
 ## Design Notes
 

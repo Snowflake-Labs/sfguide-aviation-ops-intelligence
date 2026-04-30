@@ -7,6 +7,7 @@ import DataTable from '../shared/DataTable';
 import { fmtNum, fmtAltitude, fmtSpeed } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSnowflake, useSfQuery } from '../hooks/useSnowflake';
+import { useInfrastructure } from '../shared/useInfrastructure';
 
 interface FlightTrail {
   flight: string;
@@ -123,6 +124,7 @@ export default function LiveView() {
   const [mode, setMode] = useState<'live' | 'replay'>('live');
   const [lookback] = useState(60);
   const db = airport ? `${airport}.PUBLIC` : '';
+  const { layers: infraLayers } = useInfrastructure('airport-ops');
 
   const [replayDate, setReplayDate] = useState(yesterday);
   const [trails, setTrails] = useState<FlightTrail[]>([]);
@@ -356,7 +358,7 @@ ORDER BY h.LAST_SEEN DESC`
     ];
   }, [mode, flights]);
 
-  const layers = mode === 'live' ? liveLayers : replayLayers;
+  const layers = useMemo(() => [...infraLayers, ...(mode === 'live' ? liveLayers : replayLayers)], [infraLayers, mode, liveLayers, replayLayers]);
   const loading = mode === 'live' ? liveLoading : replayLoading;
 
   const arrivals = flights.filter((f: any) => String(f.DIRECTION).toLowerCase() === 'arrival').length;
