@@ -6,6 +6,7 @@ import { fmtNum, fmtAltitude, fmtSpeed, fmtTime } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSnowflake, useSfQuery } from '../hooks/useSnowflake';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
+import { useInfrastructure } from '../shared/useInfrastructure';
 
 interface TrackPoint {
   lat: number; lon: number; sec: number;
@@ -92,6 +93,7 @@ export default function FlightTracker() {
   const { airport } = useAirport();
   const { query } = useSnowflake();
   const db = airport ? `${airport}.PUBLIC` : '';
+  const { layers: infraLayers } = useInfrastructure('all');
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedFlight, setSelectedFlight] = useState<string | null>(null);
   const [trackData, setTrackData] = useState<any[]>([]);
@@ -200,7 +202,8 @@ export default function FlightTracker() {
   }, [trackPoints, currentTime]);
 
   const layers = useMemo(() => {
-    if (!trackPoints.length) return [];
+    const base = [...infraLayers];
+    if (!trackPoints.length) return base;
     const alts = trackPoints.map(d => d.alt);
     const minAlt = Math.min(...alts, 0);
     const maxAlt = Math.max(...alts, 1);
@@ -210,6 +213,7 @@ export default function FlightTracker() {
     const color = altColor(avgAlt, minAlt, maxAlt);
 
     const result: any[] = [
+      ...base,
       new PathLayer({
         id: 'flight-path',
         data: [{ path, color }],
@@ -250,7 +254,7 @@ export default function FlightTracker() {
     }
 
     return result;
-  }, [trackPoints, currentPos]);
+  }, [trackPoints, currentPos, infraLayers]);
 
   const profileData = useMemo(() => {
     return trackData

@@ -41,14 +41,28 @@ logs/                        # Legacy error/friction logs
 ## Build, Test, and Lint
 
 ```bash
-# Run skill evals (trigger accuracy, quality checks, cross-ref validation)
+# Run skill evals (trigger accuracy, quality checks, cross-ref, sql, image-version consistency)
 python3 .cortex/skills/evals/run_evals.py
+
+# Run only the image-version consistency eval (fast pre-deploy gate)
+python3 .cortex/skills/evals/run_evals.py --type images
 
 # Audit a single skill interactively
 # Invoke the skill-optimiser skill in Cortex Code: "audit skill <name>"
 ```
 
 No global build/lint step — each skill is independently deployable via its own SKILL.md workflow.
+
+## SPCS Image Versioning (Required Pattern)
+
+Skills that ship SPCS container images MUST follow this pattern to prevent stale-image deployments:
+
+1. **Single source of truth**: pin every image tag in `<skill>/dashboard-*/image-versions.env` (e.g. [aviation-dashboard/dashboard-react/image-versions.env](.cortex/skills/aviation-dashboard/dashboard-react/image-versions.env)).
+2. **Never use `:latest`** in service YAMLs or `ALTER SERVICE ... FROM SPECIFICATION`. SPCS caches `:latest` and will not re-pull on service update, causing stale deployments. Use semver tags (`v1.0.0`, `v1.0.1`, ...).
+3. **Service YAML uses a placeholder** (`{AVIATION_DASHBOARD_TAG}`) that the skill substitutes at deploy time with the value from `image-versions.env`.
+4. **Two-file `.dockerignore` pattern** for ARM Mac builds: `.dockerignore` excludes `dist/`, `.dockerignore.prebuilt` allows it (use with `podman build --ignorefile`).
+5. **Validator**: provide a `<skill>/scripts/check_image_versions.sh` that fails if any YAML, manifest, or doc drifts from `image-versions.env`. The `images` eval auto-discovers and runs these.
+6. **Rolling update**: bump tag in `image-versions.env` → validator → rebuild/push → `ALTER SERVICE ... FROM SPECIFICATION` with new pinned tag. Rollback = set tag back, re-run `ALTER SERVICE` (no rebuild).
 
 ## Skills Inventory
 
