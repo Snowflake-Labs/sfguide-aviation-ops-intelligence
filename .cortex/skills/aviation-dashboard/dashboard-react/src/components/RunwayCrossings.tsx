@@ -4,10 +4,14 @@ import { GeoJsonLayer } from '@deck.gl/layers';
 import MapView from '../shared/MapView';
 import MetricCard from '../shared/MetricCard';
 import DataTable from '../shared/DataTable';
+import HeatmapGrid, { DOW_LABELS, HOUR_LABELS } from '../shared/HeatmapGrid';
 import { fmtNum, fmtDec } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSfQuery } from '../hooks/useSnowflake';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
+import LayerPresetSelector from '../shared/LayerPresetSelector';
+import { useInfrastructure, type LayerPreset } from '../shared/useInfrastructure';
+import VehicleTypeFilter, { useVehicleTypeFilter } from '../shared/VehicleTypeFilter';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 export default function RunwayCrossings() {
   const { airport } = useAirport();
@@ -16,6 +20,11 @@ export default function RunwayCrossings() {
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
   const [dateFrom, setDateFrom] = useState(weekAgo);
   const [dateTo, setDateTo] = useState(today);
+  const [dirFilter, setDirFilter] = useState<Set<string>>(new Set());
+  const [infraPreset, setInfraPreset] = useState<LayerPreset>('airport-ops');
+  const [customTypes, setCustomTypes] = useState<Set<string>>(new Set());
+  const { layers: infraLayers, availableTypes } = useInfrastructure(infraPreset, customTypes);
+  const { selected: vehicleTypes, setSelected: setVehicleTypes, sqlFilter: vehicleFilter } = useVehicleTypeFilter();
 
   const airportSql = airport
     ? `SELECT CENTER_LAT AS LAT, CENTER_LON AS LON FROM ${db}.PROPERTIES_AIRPORT LIMIT 1`
@@ -24,6 +33,9 @@ export default function RunwayCrossings() {
   const meta = metaRows[0] as any;
 
   const days = Math.max(1, Math.round((new Date(dateTo).getTime() - new Date(dateFrom).getTime()) / 86400000) + 1);
+  const dirClause = dirFilter.size > 0
+    ? `AND direction IN (${Array.from(dirFilter).map(d => `'${d}'`).join(',')})`
+    : '';
 
   const summarySql = airport
     ? `SELECT ROUND(COUNT(DISTINCT flight_key)/${days}) AS avg_flights,
@@ -31,17 +43,17 @@ export default function RunwayCrossings() {
               ROUND(AVG(duration_s), 1) AS avg_duration,
               ROUND(SUM(duration_s)/60.0/${days}, 1) AS avg_total_min
        FROM ${db}.RUNWAY_CROSSINGS_DETAILED
-       WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE`
+       WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${dirClause}`
     : '';
-  const { data: summaryRows } = useSfQuery(summarySql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: summaryRows } = useSfQuery(summarySql, airport, 'PUBLIC', [dateFrom, dateTo, dirClause]);
   const summary = summaryRows[0] as any || {};
 
   const dirSql = airport
-    ? `SELECT direction, COUNT(*) AS cnt, ROUND(SUM(duration_s)/60.0, 1) AS total_min,
-              ROUND(AVG(duration_s), 1) AS avg_sec
+    ? `SELECT direction AS DIRECTION, COUNT(*) AS CNT, ROUND(SUM(duration_s)/60.0, 1) AS TOTAL_MIN,
+              ROUND(AVG(duration_s), 1) AS AVG_SEC
        FROM ${db}.RUNWAY_CROSSINGS_DETAILED
        WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
-       GROUP BY direction ORDER BY cnt DESC`
+       GROUP BY direction ORDER BY CNT DESC`
     : '';
   const { data: dirData } = useSfQuery(dirSql, airport, 'PUBLIC', [dateFrom, dateTo]);
 
@@ -50,20 +62,40 @@ export default function RunwayCrossings() {
               ROUND(COUNT(DISTINCT flight_key)/${days}) AS flight_count
        FROM ${db}.RUNWAY_CROSSINGS_DETAILED
        WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
-         AND midpoint_geom IS NOT NULL
+         AND midpoint_geom IS NOT NULL ${dirClause}
        GROUP BY 1 HAVING flight_count > 0`
     : '';
-  const { data: hexData } = useSfQuery(hexSql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: hexData } = useSfQuery(hexSql, airport, 'PUBLIC', [dateFrom, dateTo, dirClause]);
+
+  const heatmapSql = airport
+    ? `SELECT DAYOFWEEK(service_date) AS DOW, EXTRACT(HOUR FROM t_entry) AS HR, COUNT(*) AS CNT
+       FROM ${db}.RUNWAY_CROSSINGS_DETAILED
+       WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${dirClause}
+       GROUP BY 1, 2`
+    : '';
+  const { data: heatmapRaw } = useSfQuery(heatmapSql, airport, 'PUBLIC', [dateFrom, dateTo, dirClause]);
+  const heatmapData = useMemo(() =>
+    heatmapRaw.map((d: any) => ({ row: DOW_LABELS[Number(d.DOW)], col: String(Number(d.HR)), value: Number(d.CNT) || 0 })),
+    [heatmapRaw]);
+
+  const topAirlinesSql = airport
+    ? `SELECT airline_code AS AIRLINE, COUNT(*) AS CNT, ROUND(SUM(duration_s)/60.0, 1) AS TOTAL_MIN
+       FROM ${db}.RUNWAY_CROSSINGS_DETAILED
+       WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${dirClause}
+         AND airline_code IS NOT NULL AND airline_code != ''
+       GROUP BY 1 ORDER BY CNT DESC LIMIT 10`
+    : '';
+  const { data: topAirlines } = useSfQuery(topAirlinesSql, airport, 'PUBLIC', [dateFrom, dateTo, dirClause]);
 
   const recentSql = airport
     ? `SELECT flight_number AS FLIGHT, airline_code AS AIRLINE, direction AS DIR,
               t_entry AS ENTRY, t_exit AS EXIT, ROUND(duration_s,1) AS DURATION_S,
               ROUND(max_speed_kts,1) AS MAX_SPEED_KTS
        FROM ${db}.RUNWAY_CROSSINGS_DETAILED
-       WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${dirClause}
        ORDER BY t_entry DESC LIMIT 100`
     : '';
-  const { data: recentData } = useSfQuery(recentSql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: recentData } = useSfQuery(recentSql, airport, 'PUBLIC', [dateFrom, dateTo, dirClause]);
 
   const runwaySql = airport
     ? `SELECT ST_ASGEOJSON(runway_geog) AS geojson FROM ${db}.PROPERTIES_RUNWAYS`
@@ -71,7 +103,7 @@ export default function RunwayCrossings() {
   const { data: runwayRows } = useSfQuery(runwaySql, airport, 'PUBLIC');
 
   const layers = useMemo(() => {
-    const result: any[] = [];
+    const result: any[] = [...infraLayers];
     if (hexData.length) {
       const maxVal = Math.max(...hexData.map((d: any) => Number(d.FLIGHT_COUNT) || 0), 1);
       result.push(new H3HexagonLayer({
@@ -103,11 +135,18 @@ export default function RunwayCrossings() {
       }
     }
     return result;
-  }, [hexData, runwayRows]);
+  }, [hexData, runwayRows, infraLayers]);
 
   const viewState = meta
     ? { longitude: Number(meta.LON), latitude: Number(meta.LAT), zoom: 14, pitch: 40, bearing: 0 }
     : undefined;
+
+  const toggleDir = (d: string) => {
+    const next = new Set(dirFilter);
+    if (next.has(d)) next.delete(d);
+    else next.add(d);
+    setDirFilter(next);
+  };
 
   if (!airport) return <div className="page-dashboard"><p className="empty-state">Select an airport to begin.</p></div>;
 
@@ -124,6 +163,23 @@ export default function RunwayCrossings() {
           <label>To</label>
           <input type="date" className="form-input" value={dateTo} onChange={e => setDateTo(e.target.value)} />
         </div>
+        {dirData.length > 0 && (
+          <div className="form-group">
+            <label>Direction Filter</label>
+            <div style={{ fontSize: 11 }}>
+              {dirData.map((d: any) => (
+                <label key={d.DIRECTION} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={dirFilter.size === 0 || dirFilter.has(d.DIRECTION)}
+                    onChange={() => toggleDir(d.DIRECTION)} />
+                  {d.DIRECTION}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+        <LayerPresetSelector preset={infraPreset} onPresetChange={setInfraPreset}
+          customTypes={customTypes} onCustomTypesChange={setCustomTypes} availableTypes={availableTypes} />
+        <VehicleTypeFilter selected={vehicleTypes} onChange={setVehicleTypes} />
         <div className="metric-grid-vertical" style={{ marginTop: 16 }}>
           <MetricCard label="Avg Daily Flights" value={summary.AVG_FLIGHTS ?? '—'} />
           <MetricCard label="Avg Daily Crossings" value={summary.AVG_CROSSINGS ?? '—'} />
@@ -152,7 +208,26 @@ export default function RunwayCrossings() {
             style: { backgroundColor: '#24323D', color: '#fff', fontSize: '12px', padding: '6px 10px', borderRadius: '6px' },
           }}
         />
-        <div className="chart-bottom" style={{ padding: '12px 24px', maxHeight: 250, overflow: 'auto' }}>
+        <div className="chart-bottom" style={{ padding: '12px 24px', maxHeight: 400, overflow: 'auto' }}>
+          {heatmapData.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <HeatmapGrid data={heatmapData} rowLabels={DOW_LABELS} colLabels={HOUR_LABELS} title="Crossings by Day & Hour" />
+            </div>
+          )}
+          {topAirlines.length > 0 && (
+            <div className="chart-card" style={{ marginBottom: 12 }}>
+              <h4 style={{ fontSize: 12 }}>Top Airlines by Crossings</h4>
+              <ResponsiveContainer width="100%" height={Math.min(topAirlines.length * 28 + 30, 200)}>
+                <BarChart data={topAirlines} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis type="number" tick={{ fontSize: 9 }} />
+                  <YAxis type="category" dataKey="AIRLINE" tick={{ fontSize: 10 }} width={40} />
+                  <Tooltip />
+                  <Bar dataKey="CNT" fill="#E5A100" radius={[0, 4, 4, 0]} name="Crossings" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
           <h3 style={{ fontSize: 13, marginBottom: 8 }}>Recent Events</h3>
           <DataTable data={recentData} maxRows={100} />
         </div>

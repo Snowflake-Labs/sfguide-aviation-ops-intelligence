@@ -6,6 +6,8 @@ import { fmtNum, fmtAltitude, fmtSpeed, fmtTime } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSnowflake, useSfQuery } from '../hooks/useSnowflake';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
+import { useInfrastructure, type LayerPreset } from '../shared/useInfrastructure';
+import LayerPresetSelector from '../shared/LayerPresetSelector';
 
 interface TrackPoint {
   lat: number; lon: number; sec: number;
@@ -92,6 +94,9 @@ export default function FlightTracker() {
   const { airport } = useAirport();
   const { query } = useSnowflake();
   const db = airport ? `${airport}.PUBLIC` : '';
+  const [infraPreset, setInfraPreset] = useState<LayerPreset>('airport-ops');
+  const [customTypes, setCustomTypes] = useState<Set<string>>(new Set());
+  const { layers: infraLayers, availableTypes } = useInfrastructure(infraPreset, customTypes);
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedFlight, setSelectedFlight] = useState<string | null>(null);
   const [trackData, setTrackData] = useState<any[]>([]);
@@ -200,7 +205,8 @@ export default function FlightTracker() {
   }, [trackPoints, currentTime]);
 
   const layers = useMemo(() => {
-    if (!trackPoints.length) return [];
+    const base = [...infraLayers];
+    if (!trackPoints.length) return base;
     const alts = trackPoints.map(d => d.alt);
     const minAlt = Math.min(...alts, 0);
     const maxAlt = Math.max(...alts, 1);
@@ -210,6 +216,7 @@ export default function FlightTracker() {
     const color = altColor(avgAlt, minAlt, maxAlt);
 
     const result: any[] = [
+      ...base,
       new PathLayer({
         id: 'flight-path',
         data: [{ path, color }],
@@ -250,7 +257,7 @@ export default function FlightTracker() {
     }
 
     return result;
-  }, [trackPoints, currentPos]);
+  }, [trackPoints, currentPos, infraLayers]);
 
   const profileData = useMemo(() => {
     return trackData
@@ -272,7 +279,18 @@ export default function FlightTracker() {
   }, [profileData, currentTime]);
 
   const getTooltip = useCallback(({ object, layer }: any) => {
-    if (!object || layer?.id !== 'flight-current-pos') return null;
+    if (!object) return null;
+    const layerId = String(layer?.id || '');
+    if (layerId.startsWith('infra-')) {
+      const type = object.properties?.type || object.TYPE || '';
+      const name = object.properties?.name || object.NAME || '';
+      const typeLabel = String(type).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      return {
+        html: `<b>${typeLabel || 'Infrastructure'}</b>${name ? `<br/>${name}` : ''}`,
+        style: { backgroundColor: '#24323D', color: '#fff', fontSize: '12px', padding: '6px 10px', borderRadius: '6px' },
+      };
+    }
+    if (layer?.id !== 'flight-current-pos') return null;
     return {
       html: `<b>${selectedFlight}</b><br/>Alt: ${fmtAltitude(object.alt)}<br/>Speed: ${fmtSpeed(object.vel)}<br/>${object.onGround ? 'On Ground' : 'Airborne'}`,
       style: { backgroundColor: '#24323D', color: '#fff', fontSize: '12px', padding: '6px 10px', borderRadius: '6px' },
@@ -289,6 +307,8 @@ export default function FlightTracker() {
     <div className="page-full">
       <div className="page-sidebar-panel">
         <h2>Flight Tracker</h2>
+        <LayerPresetSelector preset={infraPreset} onPresetChange={setInfraPreset}
+          customTypes={customTypes} onCustomTypesChange={setCustomTypes} availableTypes={availableTypes} />
         <div className="form-group">
           <label>Date</label>
           <input type="date" className="form-input" value={date} onChange={e => { setDate(e.target.value); setSelectedFlight(null); setTrackData([]); }} />

@@ -1,53 +1,85 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import MetricCard from '../shared/MetricCard';
 import DataTable from '../shared/DataTable';
 import { fmtNum, fmtDec, fmtPct, fmtChartDate } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSfQuery } from '../hooks/useSnowflake';
+import VehicleTypeFilter, { useVehicleTypeFilter } from '../shared/VehicleTypeFilter';
 import {
-  LineChart, Line, BarChart, Bar,
-  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  LineChart, Line, BarChart, Bar, AreaChart, Area, PieChart, Pie, Cell,
+  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts';
+
+const COLORS = ['#29B5E8', '#0DB048', '#E5A100', '#E5484D', '#9B59B6', '#6E7681'];
 
 export default function Monitoring() {
   const { airport } = useAirport();
   const db = airport ? `${airport}.PUBLIC` : '';
-  const [lookbackDays] = useState(14);
+  const [lookbackDays, setLookbackDays] = useState(14);
+  const { selected: vtSelected, setSelected: setVtSelected, sqlFilter: vehicleSqlFilter } = useVehicleTypeFilter();
 
   const freshnessSql = airport
     ? `SELECT DATEDIFF('minute', MAX(TIMESTAMP), SYSDATE()) AS minutes_ago,
               COUNT(*) AS pts_24h,
               COUNT(DISTINCT ICAO_HEX) AS aircraft_24h
        FROM ${db}.ADSB_DATA_LOCAL
-       WHERE TIMESTAMP >= DATEADD('hour', -24, SYSDATE())`
+       WHERE TIMESTAMP >= DATEADD('hour', -24, SYSDATE()) ${vehicleSqlFilter}`
     : '';
-  const { data: freshnessRows, loading } = useSfQuery(freshnessSql, airport, 'PUBLIC');
+  const { data: freshnessRows, loading } = useSfQuery(freshnessSql, airport, 'PUBLIC', [vehicleSqlFilter]);
   const freshness = freshnessRows[0] as any || {};
 
   const matchSql = airport
     ? `SELECT ROUND(100.0 * COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) / NULLIF(COUNT(*), 0), 1) AS match_rate
        FROM ${db}.ADSB_DATA_LOCAL
-       WHERE TIMESTAMP >= DATEADD('hour', -24, SYSDATE())`
+       WHERE TIMESTAMP >= DATEADD('hour', -24, SYSDATE()) ${vehicleSqlFilter}`
     : '';
-  const { data: matchRows } = useSfQuery(matchSql, airport, 'PUBLIC');
+  const { data: matchRows } = useSfQuery(matchSql, airport, 'PUBLIC', [vehicleSqlFilter]);
   const matchRate = (matchRows[0] as any)?.MATCH_RATE ?? '—';
+
+  const matchDistSql = airport
+    ? `SELECT COALESCE(MATCH_METHOD, 'Unmatched') AS METHOD, COUNT(*) AS CNT
+       FROM ${db}.ADSB_DATA_LOCAL
+       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE()) ${vehicleSqlFilter}
+       GROUP BY 1 ORDER BY CNT DESC`
+    : '';
+  const { data: matchDist } = useSfQuery(matchDistSql, airport, 'PUBLIC', [lookbackDays, vehicleSqlFilter]);
+
+  const hourlyIngestSql = airport
+    ? `SELECT DATE_TRUNC('hour', TIMESTAMP) AS HR, COUNT(*) AS POINTS
+       FROM ${db}.ADSB_DATA_LOCAL
+       WHERE TIMESTAMP >= DATEADD('hour', -48, SYSDATE()) ${vehicleSqlFilter}
+       GROUP BY 1 ORDER BY 1`
+    : '';
+  const { data: hourlyIngest } = useSfQuery(hourlyIngestSql, airport, 'PUBLIC', [lookbackDays, vehicleSqlFilter]);
 
   const dailyVolSql = airport
     ? `SELECT TO_DATE(TIMESTAMP) AS DT, COUNT(*) AS POINTS, COUNT(DISTINCT ICAO_HEX) AS AIRCRAFT
        FROM ${db}.ADSB_DATA_LOCAL
-       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE())
+       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE()) ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY 1`
     : '';
-  const { data: dailyVol } = useSfQuery(dailyVolSql, airport, 'PUBLIC', [lookbackDays]);
+  const { data: dailyVol } = useSfQuery(dailyVolSql, airport, 'PUBLIC', [lookbackDays, vehicleSqlFilter]);
 
   const matchTrendSql = airport
     ? `SELECT TO_DATE(TIMESTAMP) AS DT,
               ROUND(100.0 * COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) / NULLIF(COUNT(*), 0), 1) AS MATCH_RATE
        FROM ${db}.ADSB_DATA_LOCAL
-       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE())
+       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE()) ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY 1`
     : '';
-  const { data: matchTrend } = useSfQuery(matchTrendSql, airport, 'PUBLIC', [lookbackDays]);
+  const { data: matchTrend } = useSfQuery(matchTrendSql, airport, 'PUBLIC', [lookbackDays, vehicleSqlFilter]);
+
+  const tasksSql = airport
+    ? `SELECT NAME, STATE, SCHEDULE, LAST_COMMITTED_ON
+       FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(
+         SCHEDULED_TIME_RANGE_START => DATEADD('hour', -24, CURRENT_TIMESTAMP()),
+         RESULT_LIMIT => 50
+       ))
+       WHERE DATABASE_NAME = '${airport}' AND SCHEMA_NAME = 'PUBLIC'
+       QUALIFY ROW_NUMBER() OVER (PARTITION BY NAME ORDER BY SCHEDULED_TIME DESC) = 1
+       ORDER BY NAME`
+    : '';
+  const { data: tasksData } = useSfQuery(tasksSql, airport, 'PUBLIC', [lookbackDays]);
 
   const lastRefreshSql = airport
     ? `SELECT TABLE_NAME, LAST_REFRESHED_AT, STATUS, ROW_COUNT_24H
@@ -71,12 +103,27 @@ export default function Monitoring() {
     : '';
   const { data: ingestData } = useSfQuery(ingestSql, airport, 'PUBLIC');
 
+  const taskSummary = useMemo(() => {
+    const running = tasksData.filter((t: any) => t.STATE === 'SUCCEEDED').length;
+    const total = tasksData.length;
+    return { running, total };
+  }, [tasksData]);
+
   if (!airport) return <div className="page-dashboard"><p className="empty-state">Select an airport to begin.</p></div>;
 
   return (
     <div className="page-dashboard" style={{ overflow: 'auto', maxHeight: '100vh' }}>
       <h2>Monitoring</h2>
-      <p>System health, data freshness, and pipeline status.</p>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label>Lookback: {lookbackDays} days</label>
+          <input type="range" min={1} max={90} value={lookbackDays}
+            onChange={e => setLookbackDays(Number(e.target.value))} style={{ width: 160 }} />
+        </div>
+        <div style={{ minWidth: 200 }}>
+          <VehicleTypeFilter selected={vtSelected} onChange={setVtSelected} />
+        </div>
+      </div>
 
       <div className="metric-grid">
         <MetricCard label="Flight Match Rate" value={loading ? '...' : `${matchRate}%`} />
@@ -96,6 +143,38 @@ export default function Monitoring() {
               <Tooltip />
               <Line type="monotone" dataKey="MATCH_RATE" stroke="#29B5E8" dot={false} strokeWidth={2} name="Match Rate %" />
             </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="chart-card">
+          <h3>Match Method Distribution</h3>
+          {matchDist.length > 0 && (
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie data={matchDist} dataKey="CNT" nameKey="METHOD" cx="50%" cy="50%"
+                     innerRadius={40} outerRadius={80} paddingAngle={2}>
+                  {matchDist.map((_: any, i: number) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      <div className="chart-row">
+        <div className="chart-card">
+          <h3>Hourly Ingestion (48h)</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={hourlyIngest}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="HR" tick={{ fontSize: 9 }} tickFormatter={(v: string) => v ? v.substring(11, 16) : ''} />
+              <YAxis tick={{ fontSize: 10 }} />
+              <Tooltip />
+              <Area type="monotone" dataKey="POINTS" stroke="#29B5E8" fill="#29B5E8" fillOpacity={0.3} name="Points/hr" />
+            </AreaChart>
           </ResponsiveContainer>
         </div>
         <div className="chart-card">
@@ -124,6 +203,13 @@ export default function Monitoring() {
           </LineChart>
         </ResponsiveContainer>
       </div>
+
+      {tasksData.length > 0 && (
+        <div className="chart-card" style={{ marginBottom: 16 }}>
+          <h3>Task Status ({taskSummary.running}/{taskSummary.total} succeeded)</h3>
+          <DataTable data={tasksData} maxRows={50} />
+        </div>
+      )}
 
       <div className="chart-row">
         <div className="chart-card">

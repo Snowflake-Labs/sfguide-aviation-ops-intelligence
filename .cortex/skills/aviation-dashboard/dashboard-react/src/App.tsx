@@ -77,6 +77,9 @@ export default function App() {
             <img src="/snowflake_h3.png" height="28" alt="" />
             <span>Aviation Ops</span>
           </div>
+          <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+            <AirportSwitcher />
+          </div>
           <div className="sidebar-nav">
             <button
               className={`sidebar-link ${activePage === 'home' ? 'active' : ''}`}
@@ -100,8 +103,7 @@ export default function App() {
             ))}
           </div>
           <div className="sidebar-footer">
-            <AirportSwitcher />
-            <div className="sidebar-version">v1.0.0</div>
+            <div className="sidebar-version">v1.1.3</div>
           </div>
         </div>
         <div className="app-content">
