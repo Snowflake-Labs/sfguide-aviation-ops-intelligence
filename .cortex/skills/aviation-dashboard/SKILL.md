@@ -495,63 +495,60 @@ GRANT USAGE ON SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE TO ROLE {CO
 
 ## Update / Redeploy (Rolling Image Update)
 
-SPCS does NOT re-pull when the image tag is unchanged (e.g. `:latest`). To ship new code safely, always push a new semver tag and then `ALTER SERVICE ... FROM SPECIFICATION` with the new tag. SPCS sees a new image digest and pulls cleanly with zero manual cache busting.
+SPCS does NOT re-pull when the image tag is unchanged (e.g. `:latest`) and will serve the cached digest even if you `podman push` over the same tag. To ship new code safely, always bump to a new semver tag and then `ALTER SERVICE ... FROM SPECIFICATION` with that tag. SPCS sees a new image digest and pulls cleanly.
 
-### Step A: Bump the tag
+### Recommended: scripted pipeline
 
-Edit [dashboard-react/image-versions.env](dashboard-react/image-versions.env):
+One command chains: validate -> compile -> build (`--no-cache`) -> push -> `ALTER SERVICE` -> digest verification. Any failure aborts the pipeline.
+
+```bash
+SNOWFLAKE_CONNECTION=<conn> TARGET_DB=AIRPORT_XXX WAREHOUSE=AVIA_XXX_WH \
+  .cortex/skills/aviation-dashboard/scripts/bump_tag.sh patch
+SNOWFLAKE_CONNECTION=<conn> TARGET_DB=AIRPORT_XXX WAREHOUSE=AVIA_XXX_WH \
+  .cortex/skills/aviation-dashboard/scripts/deploy.sh
 ```
-AVIATION_DASHBOARD_TAG=v1.0.1   # was v1.0.0
+
+`bump_tag.sh` refuses to run if the current tag is malformed, rewrites [image-versions.env](dashboard-react/image-versions.env), and re-runs `check_image_versions.sh` (which includes the code-drift guard). `deploy.sh` refuses to proceed if any consumer file disagrees with the env file, if `dist/` is older than any React source, or if the post-deploy service digest does not match the pinned tag.
+
+### Manual fallback (step-by-step)
+
+#### Step A: Bump the tag
+
+```bash
+.cortex/skills/aviation-dashboard/scripts/bump_tag.sh patch   # or minor/major
 ```
 
-### Step B: Validate consistency
+Do NOT hand-edit `image-versions.env` — the script enforces semver parsing and re-runs the validator automatically.
+
+#### Step B: Validate consistency (includes code-drift guard)
 
 ```bash
 .cortex/skills/aviation-dashboard/scripts/check_image_versions.sh
 ```
 
-Exit 0 = safe to build/push. Exit 1 = a YAML or doc is out of sync; fix first.
+Exit 0 = safe to build/push. Exit 1 = a YAML/doc is out of sync OR React/server sources changed since the tag was cut; fix first.
 
-### Step C: Rebuild and push with the new tag
+#### Step C: Rebuild and push with the new tag
 
-Follow `references/build-images.md` — the build command sources `image-versions.env` and tags the image as `aviation_dashboard:${AVIATION_DASHBOARD_TAG}`.
+Follow `references/build-images.md`. **Always pass `--no-cache`** — cached layers can silently reuse stale `dist/` COPY steps and ship old bytes under a new tag.
 
-### Step D: Roll the service to the new tag
+#### Step D: Roll the service to the new tag
 
-```sql
--- Load the pinned tag via the dashboard skill's substitution; the YAML
--- placeholder {AVIATION_DASHBOARD_TAG} is replaced before ALTER SERVICE.
-ALTER SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE
-  FROM SPECIFICATION $$
-spec:
-  containers:
-    - name: aviation-dashboard
-      image: /{TARGET_DB}/public/aviation_dashboard_repo/aviation_dashboard:{AVIATION_DASHBOARD_TAG}
-      env:
-        SNOWFLAKE_DATABASE: "{TARGET_DB}"
-        SNOWFLAKE_WAREHOUSE: "{WAREHOUSE}"
-      resources:
-        requests:
-          cpu: "0.5"
-          memory: "512Mi"
-        limits:
-          cpu: "1"
-          memory: "1Gi"
-  endpoints:
-    - name: aviation-dashboard
-      port: 3001
-      public: true
-  $$;
+```bash
+SNOWFLAKE_CONNECTION=<conn> TARGET_DB=AIRPORT_XXX WAREHOUSE=AVIA_XXX_WH \
+  .cortex/skills/aviation-dashboard/scripts/apply_service_spec.sh
 ```
 
-### Step E: Verify the roll
+This reads the YAML template, substitutes `{TARGET_DB}` / `{WAREHOUSE}` / `{AVIATION_DASHBOARD_TAG}`, fails if any placeholder is unresolved, and runs `ALTER SERVICE ... FROM SPECIFICATION`.
 
-```sql
-SELECT SYSTEM$GET_SERVICE_STATUS('{TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE');
-SHOW SERVICE CONTAINERS IN SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
+#### Step E: Verify the roll
+
+```bash
+SNOWFLAKE_CONNECTION=<conn> TARGET_DB=AIRPORT_XXX \
+  .cortex/skills/aviation-dashboard/scripts/verify_service_image.sh
 ```
 
-The `image_digest` column should change after the roll. If it is unchanged, the registry push did not land — re-check with `snow spcs image-repository list-images`.
+Parses `SYSTEM$GET_SERVICE_STATUS` and asserts the running image ends with `:${AVIATION_DASHBOARD_TAG}`. Fails loudly if SPCS is serving a stale digest.
 
 ### Rollback
 

@@ -7,7 +7,8 @@ import DataTable from '../shared/DataTable';
 import { fmtNum, fmtAltitude, fmtSpeed } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSnowflake, useSfQuery } from '../hooks/useSnowflake';
-import { useInfrastructure } from '../shared/useInfrastructure';
+import { useInfrastructure, type LayerPreset } from '../shared/useInfrastructure';
+import LayerPresetSelector from '../shared/LayerPresetSelector';
 
 interface FlightTrail {
   flight: string;
@@ -124,7 +125,9 @@ export default function LiveView() {
   const [mode, setMode] = useState<'live' | 'replay'>('live');
   const [lookback] = useState(60);
   const db = airport ? `${airport}.PUBLIC` : '';
-  const { layers: infraLayers } = useInfrastructure('airport-ops');
+  const [infraPreset, setInfraPreset] = useState<LayerPreset>('airport-ops');
+  const [customTypes, setCustomTypes] = useState<Set<string>>(new Set());
+  const { layers: infraLayers, availableTypes } = useInfrastructure(infraPreset, customTypes);
 
   const [replayDate, setReplayDate] = useState(yesterday);
   const [trails, setTrails] = useState<FlightTrail[]>([]);
@@ -405,8 +408,18 @@ ORDER BY h.LAST_SEEN DESC`
       .sort((a, b) => a.localeCompare(b));
   }, [visiblePositions]);
 
-  const getTooltip = useCallback(({ object }: any) => {
+  const getTooltip = useCallback(({ object, layer }: any) => {
     if (!object) return null;
+    const layerId = String(layer?.id || '');
+    if (layerId.startsWith('infra-')) {
+      const type = object.properties?.type || object.TYPE || '';
+      const name = object.properties?.name || object.NAME || '';
+      const typeLabel = String(type).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      return {
+        html: `<b>${typeLabel || 'Infrastructure'}</b>${name ? `<br/>${name}` : ''}`,
+        style: { backgroundColor: '#24323D', color: '#fff', fontSize: '12px', padding: '6px 10px', borderRadius: '6px' },
+      };
+    }
     if (mode === 'live') {
       const cat = CATEGORY_LABELS[String(object.VEHICLE_CATEGORY || 'OTHER')] || 'Unknown';
       return {
@@ -498,6 +511,10 @@ ORDER BY h.LAST_SEEN DESC`
       </div>
       <div style={{ flex: 1, position: 'relative', minHeight: 400 }}>
         <MapView layers={layers} initialViewState={viewState} getTooltip={getTooltip}>
+          <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(255,255,255,0.95)', padding: '8px 10px', borderRadius: 6, minWidth: 180, boxShadow: '0 1px 4px rgba(0,0,0,0.15)' }}>
+            <LayerPresetSelector preset={infraPreset} onPresetChange={setInfraPreset}
+              customTypes={customTypes} onCustomTypesChange={setCustomTypes} availableTypes={availableTypes} />
+          </div>
           <div className="map-legend">
             {visibleCategories.map(cat => (
               <div key={cat} className="map-legend-item">

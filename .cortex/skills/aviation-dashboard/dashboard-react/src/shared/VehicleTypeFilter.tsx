@@ -5,23 +5,30 @@ export interface VehicleTypeSelection {
   allSelected: boolean;
 }
 
-const AIRCRAFT_CATEGORIES = [
-  { key: 'HEAVY_AIRCRAFT', label: 'Heavy' },
-  { key: 'LARGE_AIRLINER', label: 'Large Airliner' },
-  { key: 'MEDIUM_AIRCRAFT', label: 'Medium' },
-  { key: 'SMALL_COMMUTER', label: 'Small Commuter' },
-  { key: 'LIGHT_AIRCRAFT', label: 'Light' },
-  { key: 'HELICOPTER', label: 'Helicopter' },
-  { key: 'HIGH_PERFORMANCE_MILITARY', label: 'Military' },
-  { key: 'ULTRALIGHT_EXPERIMENTAL', label: 'Ultralight' },
+interface Category {
+  key: string;
+  label: string;
+  examples: string;
+  desc: string;
+}
+
+const AIRCRAFT_CATEGORIES: Category[] = [
+  { key: 'HEAVY_AIRCRAFT', label: 'Heavy', examples: 'A380, 747, 777', desc: 'Wake >136 t; long-haul intl' },
+  { key: 'LARGE_AIRLINER', label: 'Large Airliner', examples: 'A321, 757, 767', desc: '34-136 t; medium-haul, high pax' },
+  { key: 'MEDIUM_AIRCRAFT', label: 'Medium', examples: '737, A320 (cat A0)', desc: 'Typical narrow-body' },
+  { key: 'SMALL_COMMUTER', label: 'Small Commuter', examples: 'ATR 72, Dash 8', desc: 'Regional turboprop / RJ' },
+  { key: 'LIGHT_AIRCRAFT', label: 'Light', examples: 'C172, PA-28', desc: '<15.5 t; general aviation' },
+  { key: 'HELICOPTER', label: 'Helicopter', examples: 'EC135, AW139', desc: 'Medical, corporate, tour' },
+  { key: 'HIGH_PERFORMANCE_MILITARY', label: 'Military', examples: 'F-16, F-35', desc: 'Fighters / trainers (cat A6)' },
+  { key: 'ULTRALIGHT_EXPERIMENTAL', label: 'Ultralight', examples: 'gliders, UAVs, balloons', desc: 'ADS-B cat B* (exp/ultralight)' },
 ];
 
-const GROUND_CATEGORIES = [
-  { key: 'TOWER', label: 'Tower' },
-  { key: 'SERVICE_VEHICLE', label: 'Service Vehicle' },
-  { key: 'GROUND_VEHICLE', label: 'Ground Vehicle' },
-  { key: 'LIGHT_SURFACE_VEHICLE', label: 'Light Surface' },
-  { key: 'UNKNOWN_SURFACE', label: 'Unknown Surface' },
+const GROUND_CATEGORIES: Category[] = [
+  { key: 'TOWER', label: 'Tower', examples: 'ATC towers', desc: 'Fixed ground stations (TYPE=TWR)' },
+  { key: 'SERVICE_VEHICLE', label: 'Service Vehicle', examples: 'fuel, catering, pushback', desc: 'Ground support equipment' },
+  { key: 'GROUND_VEHICLE', label: 'Ground Vehicle', examples: 'ops, follow-me cars', desc: 'Airport authority vehicles (C2)' },
+  { key: 'LIGHT_SURFACE_VEHICLE', label: 'Light Surface', examples: 'emergency, utility', desc: 'Emergency / light surface (C1)' },
+  { key: 'UNKNOWN_SURFACE', label: 'Unknown Surface', examples: 'unclassified', desc: 'ADS-B cat C0 (unknown)' },
 ];
 
 const ALL_CATEGORIES = [...AIRCRAFT_CATEGORIES, ...GROUND_CATEGORIES].map(c => c.key);
@@ -43,7 +50,7 @@ export default function VehicleTypeFilter({ selected, onChange }: VehicleTypeFil
     else onChange(new Set(ALL_CATEGORIES));
   };
 
-  const toggleGroup = (group: typeof AIRCRAFT_CATEGORIES) => {
+  const toggleGroup = (group: Category[]) => {
     const keys = group.map(c => c.key);
     const allIn = keys.every(k => selected.has(k));
     const next = new Set(selected);
@@ -58,6 +65,32 @@ export default function VehicleTypeFilter({ selected, onChange }: VehicleTypeFil
     else next.add(key);
     onChange(next);
   };
+
+  const renderCategoryRow = (c: Category) => (
+    <label
+      key={c.key}
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 6,
+        padding: '4px 0 4px 16px',
+        cursor: 'pointer',
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={selected.has(c.key)}
+        onChange={() => toggleOne(c.key)}
+        style={{ marginTop: 2 }}
+      />
+      <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+        <span>{c.label}</span>
+        <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
+          {c.examples} - {c.desc}
+        </span>
+      </div>
+    </label>
+  );
 
   return (
     <div className="form-group">
@@ -76,7 +109,7 @@ export default function VehicleTypeFilter({ selected, onChange }: VehicleTypeFil
         </div>
       )}
       {expanded && (
-        <div style={{ fontSize: 11, maxHeight: 240, overflowY: 'auto' }}>
+        <div style={{ fontSize: 11, maxHeight: 360, overflowY: 'auto' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 0', cursor: 'pointer', fontWeight: 600 }}>
             <input type="checkbox" checked={allSelected} onChange={toggleAll} />
             All
@@ -86,23 +119,13 @@ export default function VehicleTypeFilter({ selected, onChange }: VehicleTypeFil
             <input type="checkbox" checked={allAircraft} onChange={() => toggleGroup(AIRCRAFT_CATEGORIES)} />
             All Aircraft
           </label>
-          {AIRCRAFT_CATEGORIES.map(c => (
-            <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0 2px 16px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={selected.has(c.key)} onChange={() => toggleOne(c.key)} />
-              {c.label}
-            </label>
-          ))}
+          {AIRCRAFT_CATEGORIES.map(renderCategoryRow)}
           <div style={{ marginTop: 4, fontWeight: 600, fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Ground</div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0 2px 8px', cursor: 'pointer' }}>
             <input type="checkbox" checked={allGround} onChange={() => toggleGroup(GROUND_CATEGORIES)} />
             All Ground
           </label>
-          {GROUND_CATEGORIES.map(c => (
-            <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0 2px 16px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={selected.has(c.key)} onChange={() => toggleOne(c.key)} />
-              {c.label}
-            </label>
-          ))}
+          {GROUND_CATEGORIES.map(renderCategoryRow)}
         </div>
       )}
     </div>

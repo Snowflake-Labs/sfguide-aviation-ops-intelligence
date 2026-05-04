@@ -5,6 +5,7 @@ import HeatmapGrid, { DOW_LABELS, HOUR_LABELS } from '../shared/HeatmapGrid';
 import { fmtNum, fmtDec, fmtChartDate } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSfQuery } from '../hooks/useSnowflake';
+import VehicleTypeFilter, { useVehicleTypeFilter } from '../shared/VehicleTypeFilter';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -22,46 +23,47 @@ export default function TrafficAnalysis() {
   const [dateTo, setDateTo] = useState(today);
   const [granularity, setGranularity] = useState<'daily' | 'weekly'>('daily');
   const [delayThreshold, setDelayThreshold] = useState(15);
+  const { selected: vtSelected, setSelected: setVtSelected, sqlFilter: vehicleSqlFilter } = useVehicleTypeFilter();
 
   const dailySql = airport
     ? granularity === 'daily'
       ? `SELECT DATE, SUM(UNIQUE_AIRCRAFT) AS AIRCRAFT, SUM(UNIQUE_FLIGHTS) AS FLIGHTS,
                 SUM(TOTAL_RECORDS) AS RECORDS
          FROM ${db}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
-         WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+         WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
          GROUP BY 1 ORDER BY 1`
       : `SELECT DATE_TRUNC('week', DATE) AS DATE, SUM(UNIQUE_AIRCRAFT) AS AIRCRAFT, SUM(UNIQUE_FLIGHTS) AS FLIGHTS,
                 SUM(TOTAL_RECORDS) AS RECORDS
          FROM ${db}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
-         WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+         WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
          GROUP BY 1 ORDER BY 1`
     : '';
-  const { data: dailyData, loading } = useSfQuery(dailySql, airport, 'PUBLIC', [dateFrom, dateTo, granularity]);
+  const { data: dailyData, loading } = useSfQuery(dailySql, airport, 'PUBLIC', [dateFrom, dateTo, granularity, vehicleSqlFilter]);
 
   const hourlySql = airport
     ? `SELECT HOUR, SUM(AIRCRAFT_COUNT) AS AIRCRAFT
        FROM ${db}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY 1`
     : '';
-  const { data: hourlyData } = useSfQuery(hourlySql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: hourlyData } = useSfQuery(hourlySql, airport, 'PUBLIC', [dateFrom, dateTo, vehicleSqlFilter]);
 
   const dowSql = airport
     ? `SELECT DAYOFWEEK(DATE) AS DOW, SUM(UNIQUE_AIRCRAFT) AS AIRCRAFT
        FROM ${db}.FLIGHT_TRAFFIC_FACT_ADSB_DAILY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY 1`
     : '';
-  const { data: dowRaw } = useSfQuery(dowSql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: dowRaw } = useSfQuery(dowSql, airport, 'PUBLIC', [dateFrom, dateTo, vehicleSqlFilter]);
   const dowData = useMemo(() => dowRaw.map((d: any) => ({ DOW: DOW_SHORT[Number(d.DOW)], AIRCRAFT: Number(d.AIRCRAFT) || 0 })), [dowRaw]);
 
   const heatmapSql = airport
     ? `SELECT DAYOFWEEK(DATE) AS DOW, HOUR, SUM(AIRCRAFT_COUNT) AS CNT
        FROM ${db}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
        GROUP BY 1, 2`
     : '';
-  const { data: heatmapRaw } = useSfQuery(heatmapSql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: heatmapRaw } = useSfQuery(heatmapSql, airport, 'PUBLIC', [dateFrom, dateTo, vehicleSqlFilter]);
   const heatmapData = useMemo(() =>
     heatmapRaw.map((d: any) => ({ row: DOW_LABELS[Number(d.DOW)], col: String(Number(d.HOUR)), value: Number(d.CNT) || 0 })),
     [heatmapRaw]);
@@ -69,10 +71,10 @@ export default function TrafficAnalysis() {
   const airlineSql = airport
     ? `SELECT AIRLINE_CODE AS AIRLINE, SUM(FLIGHT_COUNT) AS FLIGHTS, SUM(AIRCRAFT_COUNT) AS AIRCRAFT
        FROM ${db}.FLIGHT_TRAFFIC_FACT_AIRLINE_TRAFFIC_DAILY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY FLIGHTS DESC LIMIT 15`
     : '';
-  const { data: airlineData } = useSfQuery(airlineSql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: airlineData } = useSfQuery(airlineSql, airport, 'PUBLIC', [dateFrom, dateTo, vehicleSqlFilter]);
 
   const delaySql = airport
     ? `SELECT AIRLINE, SUM(TOTAL_DELAY_MINUTES) AS DELAY_MIN, SUM(DELAYED_FLIGHTS) AS DELAYED,
@@ -114,6 +116,9 @@ export default function TrafficAnalysis() {
           <label>Delay Threshold (min)</label>
           <input type="number" className="form-input" style={{ width: 70 }} value={delayThreshold}
             min={1} max={120} onChange={e => setDelayThreshold(Number(e.target.value) || 15)} />
+        </div>
+        <div style={{ minWidth: 200 }}>
+          <VehicleTypeFilter selected={vtSelected} onChange={setVtSelected} />
         </div>
       </div>
 

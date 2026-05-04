@@ -4,6 +4,7 @@ import DataTable from '../shared/DataTable';
 import { fmtNum, fmtDec, fmtPct, fmtChartDate } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSfQuery } from '../hooks/useSnowflake';
+import VehicleTypeFilter, { useVehicleTypeFilter } from '../shared/VehicleTypeFilter';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
@@ -15,57 +16,58 @@ export default function Monitoring() {
   const { airport } = useAirport();
   const db = airport ? `${airport}.PUBLIC` : '';
   const [lookbackDays, setLookbackDays] = useState(14);
+  const { selected: vtSelected, setSelected: setVtSelected, sqlFilter: vehicleSqlFilter } = useVehicleTypeFilter();
 
   const freshnessSql = airport
     ? `SELECT DATEDIFF('minute', MAX(TIMESTAMP), SYSDATE()) AS minutes_ago,
               COUNT(*) AS pts_24h,
               COUNT(DISTINCT ICAO_HEX) AS aircraft_24h
        FROM ${db}.ADSB_DATA_LOCAL
-       WHERE TIMESTAMP >= DATEADD('hour', -24, SYSDATE())`
+       WHERE TIMESTAMP >= DATEADD('hour', -24, SYSDATE()) ${vehicleSqlFilter}`
     : '';
-  const { data: freshnessRows, loading } = useSfQuery(freshnessSql, airport, 'PUBLIC');
+  const { data: freshnessRows, loading } = useSfQuery(freshnessSql, airport, 'PUBLIC', [vehicleSqlFilter]);
   const freshness = freshnessRows[0] as any || {};
 
   const matchSql = airport
     ? `SELECT ROUND(100.0 * COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) / NULLIF(COUNT(*), 0), 1) AS match_rate
        FROM ${db}.ADSB_DATA_LOCAL
-       WHERE TIMESTAMP >= DATEADD('hour', -24, SYSDATE())`
+       WHERE TIMESTAMP >= DATEADD('hour', -24, SYSDATE()) ${vehicleSqlFilter}`
     : '';
-  const { data: matchRows } = useSfQuery(matchSql, airport, 'PUBLIC');
+  const { data: matchRows } = useSfQuery(matchSql, airport, 'PUBLIC', [vehicleSqlFilter]);
   const matchRate = (matchRows[0] as any)?.MATCH_RATE ?? '—';
 
   const matchDistSql = airport
     ? `SELECT COALESCE(MATCH_METHOD, 'Unmatched') AS METHOD, COUNT(*) AS CNT
        FROM ${db}.ADSB_DATA_LOCAL
-       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE())
+       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE()) ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY CNT DESC`
     : '';
-  const { data: matchDist } = useSfQuery(matchDistSql, airport, 'PUBLIC', [lookbackDays]);
+  const { data: matchDist } = useSfQuery(matchDistSql, airport, 'PUBLIC', [lookbackDays, vehicleSqlFilter]);
 
   const hourlyIngestSql = airport
     ? `SELECT DATE_TRUNC('hour', TIMESTAMP) AS HR, COUNT(*) AS POINTS
        FROM ${db}.ADSB_DATA_LOCAL
-       WHERE TIMESTAMP >= DATEADD('hour', -48, SYSDATE())
+       WHERE TIMESTAMP >= DATEADD('hour', -48, SYSDATE()) ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY 1`
     : '';
-  const { data: hourlyIngest } = useSfQuery(hourlyIngestSql, airport, 'PUBLIC', [lookbackDays]);
+  const { data: hourlyIngest } = useSfQuery(hourlyIngestSql, airport, 'PUBLIC', [lookbackDays, vehicleSqlFilter]);
 
   const dailyVolSql = airport
     ? `SELECT TO_DATE(TIMESTAMP) AS DT, COUNT(*) AS POINTS, COUNT(DISTINCT ICAO_HEX) AS AIRCRAFT
        FROM ${db}.ADSB_DATA_LOCAL
-       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE())
+       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE()) ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY 1`
     : '';
-  const { data: dailyVol } = useSfQuery(dailyVolSql, airport, 'PUBLIC', [lookbackDays]);
+  const { data: dailyVol } = useSfQuery(dailyVolSql, airport, 'PUBLIC', [lookbackDays, vehicleSqlFilter]);
 
   const matchTrendSql = airport
     ? `SELECT TO_DATE(TIMESTAMP) AS DT,
               ROUND(100.0 * COUNT_IF(SCHEDULE_FLIGHT_KEY IS NOT NULL) / NULLIF(COUNT(*), 0), 1) AS MATCH_RATE
        FROM ${db}.ADSB_DATA_LOCAL
-       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE())
+       WHERE TIMESTAMP >= DATEADD('day', -${lookbackDays}, SYSDATE()) ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY 1`
     : '';
-  const { data: matchTrend } = useSfQuery(matchTrendSql, airport, 'PUBLIC', [lookbackDays]);
+  const { data: matchTrend } = useSfQuery(matchTrendSql, airport, 'PUBLIC', [lookbackDays, vehicleSqlFilter]);
 
   const tasksSql = airport
     ? `SELECT NAME, STATE, SCHEDULE, LAST_COMMITTED_ON
@@ -112,11 +114,14 @@ export default function Monitoring() {
   return (
     <div className="page-dashboard" style={{ overflow: 'auto', maxHeight: '100vh' }}>
       <h2>Monitoring</h2>
-      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'flex-end' }}>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div className="form-group" style={{ marginBottom: 0 }}>
           <label>Lookback: {lookbackDays} days</label>
           <input type="range" min={1} max={90} value={lookbackDays}
             onChange={e => setLookbackDays(Number(e.target.value))} style={{ width: 160 }} />
+        </div>
+        <div style={{ minWidth: 200 }}>
+          <VehicleTypeFilter selected={vtSelected} onChange={setVtSelected} />
         </div>
       </div>
 

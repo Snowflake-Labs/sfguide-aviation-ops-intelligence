@@ -59,10 +59,14 @@ Skills that ship SPCS container images MUST follow this pattern to prevent stale
 
 1. **Single source of truth**: pin every image tag in `<skill>/dashboard-*/image-versions.env` (e.g. [aviation-dashboard/dashboard-react/image-versions.env](.cortex/skills/aviation-dashboard/dashboard-react/image-versions.env)).
 2. **Never use `:latest`** in service YAMLs or `ALTER SERVICE ... FROM SPECIFICATION`. SPCS caches `:latest` and will not re-pull on service update, causing stale deployments. Use semver tags (`v1.0.0`, `v1.0.1`, ...).
-3. **Service YAML uses a placeholder** (`{AVIATION_DASHBOARD_TAG}`) that the skill substitutes at deploy time with the value from `image-versions.env`.
-4. **Two-file `.dockerignore` pattern** for ARM Mac builds: `.dockerignore` excludes `dist/`, `.dockerignore.prebuilt` allows it (use with `podman build --ignorefile`).
-5. **Validator**: provide a `<skill>/scripts/check_image_versions.sh` that fails if any YAML, manifest, or doc drifts from `image-versions.env`. The `images` eval auto-discovers and runs these.
-6. **Rolling update**: bump tag in `image-versions.env` → validator → rebuild/push → `ALTER SERVICE ... FROM SPECIFICATION` with new pinned tag. Rollback = set tag back, re-run `ALTER SERVICE` (no rebuild).
+3. **Bump tags only via `scripts/bump_tag.sh`** (`patch|minor|major`). Hand-editing `image-versions.env` is discouraged — the script enforces semver parsing and re-runs the validator automatically so a silent tag reuse is impossible.
+4. **Service YAML uses a placeholder** (`{AVIATION_DASHBOARD_TAG}`) that the skill substitutes at deploy time with the value from `image-versions.env`. `scripts/apply_service_spec.sh` performs the substitution and fails if any placeholder remains unresolved.
+5. **Two-file `.dockerignore` pattern** for ARM Mac builds: `.dockerignore` excludes `dist/`, `.dockerignore.prebuilt` allows it (use with `podman build --ignorefile`).
+6. **Always build with `--no-cache`**. Cached layers can silently reuse a stale `dist/` COPY step and ship old bytes under a new tag. `scripts/deploy.sh` enforces this.
+7. **Validator with code-drift guard**: `scripts/check_image_versions.sh` fails if any YAML/manifest/doc drifts from `image-versions.env` AND fails if React/server sources have changed since the tag-bump commit (or are uncommitted). The `images` eval auto-discovers and runs these.
+8. **Orchestrator**: `scripts/deploy.sh` is the entry point — it chains validate -> compile -> build (`--no-cache`) -> push -> `ALTER SERVICE` -> digest verification, aborting on any failure.
+9. **Post-deploy digest verification**: `scripts/verify_service_image.sh` parses `SYSTEM$GET_SERVICE_STATUS` and asserts the running container image ends with the pinned tag. Catches the case where SPCS served a cached digest despite the `ALTER SERVICE`.
+10. **Rolling update**: run `scripts/bump_tag.sh <level>` then `scripts/deploy.sh`. Rollback = edit `image-versions.env` back and re-run `scripts/deploy.sh` with `SKIP_BUILD=1` (no rebuild needed).
 
 ## Skills Inventory
 

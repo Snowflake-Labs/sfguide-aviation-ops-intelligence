@@ -8,7 +8,11 @@ import type { Layer } from '@deck.gl/core';
 export type LayerPreset = 'none' | 'airport-ops' | 'all' | 'custom';
 
 const AIRPORT_OPS_TYPES = new Set([
-  'runway', 'taxiway', 'taxilane', 'gate', 'apron', 'helipad', 'jet_bridge', 'stopway',
+  'runway', 'taxiway', 'taxilane', 'gate', 'airport_gate', 'apron', 'helipad', 'jet_bridge', 'stopway',
+]);
+
+const BACKDROP_TYPES = new Set([
+  'aerodrome', 'international_airport', 'terminal', 'building', 'parking', 'landuse', 'fence', 'wall', 'bridge',
 ]);
 
 const TYPE_COLORS: Record<string, [number, number, number, number]> = {
@@ -16,11 +20,13 @@ const TYPE_COLORS: Record<string, [number, number, number, number]> = {
   taxiway:      [255, 193, 7, 160],
   taxilane:     [255, 213, 79, 140],
   gate:         [41, 181, 232, 220],
+  airport_gate: [41, 181, 232, 220],
   apron:        [158, 158, 158, 100],
   helipad:      [255, 152, 0, 200],
   jet_bridge:   [171, 71, 188, 180],
   stopway:      [229, 72, 77, 160],
   aerodrome:    [66, 66, 66, 60],
+  international_airport: [66, 66, 66, 60],
   terminal:     [120, 120, 120, 80],
   fence:        [117, 117, 117, 140],
   wall:         [97, 97, 97, 160],
@@ -73,7 +79,8 @@ export function useInfrastructure(preset: LayerPreset, customTypes: Set<string> 
     if (preset === 'none' || !data.length) return [];
 
     const filtered = data.filter((d: any) => visibleTypes.has(d.TYPE));
-    const polygons: any[] = [];
+    const backdropPolygons: any[] = [];
+    const opPolygons: any[] = [];
     const lines: any[] = [];
     const points: any[] = [];
 
@@ -82,7 +89,10 @@ export function useInfrastructure(preset: LayerPreset, customTypes: Set<string> 
       try {
         const geom = JSON.parse(f.GEOJSON);
         const feature = { type: 'Feature' as const, geometry: geom, properties: { type: f.TYPE, name: f.NAME } };
-        if (f.GEOM_TYPE === 'polygon') polygons.push(feature);
+        if (f.GEOM_TYPE === 'polygon') {
+          if (BACKDROP_TYPES.has(f.TYPE)) backdropPolygons.push(feature);
+          else opPolygons.push(feature);
+        }
         else if (f.GEOM_TYPE === 'line') lines.push(feature);
         else points.push(f);
       } catch { /* skip malformed */ }
@@ -90,13 +100,29 @@ export function useInfrastructure(preset: LayerPreset, customTypes: Set<string> 
 
     const result: Layer[] = [];
 
-    if (polygons.length) {
+    if (backdropPolygons.length) {
+      result.push(new GeoJsonLayer({
+        id: 'infra-backdrop',
+        data: { type: 'FeatureCollection' as const, features: backdropPolygons },
+        filled: false,
+        stroked: true,
+        getLineColor: (f: any) => {
+          const c = getColor(f.properties?.type);
+          return [c[0], c[1], c[2], 140] as [number, number, number, number];
+        },
+        getLineWidth: 1,
+        lineWidthMinPixels: 1,
+        pickable: false,
+      }));
+    }
+
+    if (opPolygons.length) {
       result.push(new GeoJsonLayer({
         id: 'infra-polygons',
-        data: { type: 'FeatureCollection' as const, features: polygons },
+        data: { type: 'FeatureCollection' as const, features: opPolygons },
         getFillColor: (f: any) => {
           const c = getColor(f.properties?.type);
-          return [c[0], c[1], c[2], 60] as [number, number, number, number];
+          return [c[0], c[1], c[2], 140] as [number, number, number, number];
         },
         getLineColor: (f: any) => getColor(f.properties?.type),
         getLineWidth: 2,
