@@ -64,10 +64,12 @@ echo $REPO_URL
 
 ```bash
 source dashboard-react/image-versions.env   # loads AVIATION_DASHBOARD_TAG
-$CONTAINER_CMD build --rm --platform linux/amd64 \
+$CONTAINER_CMD build --no-cache --rm --platform linux/amd64 \
   -f Dockerfile.runtime \
   -t $REPO_URL/aviation_dashboard:${AVIATION_DASHBOARD_TAG} .
 ```
+
+> **Always pass `--no-cache`.** Cached layers can silently reuse a stale `dist/` COPY step and produce an image that looks new (new tag, new digest) but ships old bytes. `--no-cache` adds ~1-2 min to the build and eliminates this class of bug.
 
 ### ARM Mac Flow (Apple Silicon)
 
@@ -83,7 +85,7 @@ npm run build:server
 **Step 2a — Podman: use `--ignorefile`:**
 ```bash
 source image-versions.env
-$CONTAINER_CMD build --rm --platform linux/amd64 \
+$CONTAINER_CMD build --no-cache --rm --platform linux/amd64 \
   --ignorefile .dockerignore.prebuilt \
   -f Dockerfile.runtime \
   -t $REPO_URL/aviation_dashboard:${AVIATION_DASHBOARD_TAG} .
@@ -94,7 +96,7 @@ $CONTAINER_CMD build --rm --platform linux/amd64 \
 cp .dockerignore .dockerignore.bak
 cp .dockerignore.prebuilt .dockerignore
 source image-versions.env
-docker build --rm --platform linux/amd64 \
+docker build --no-cache --rm --platform linux/amd64 \
   -f Dockerfile.runtime \
   -t $REPO_URL/aviation_dashboard:${AVIATION_DASHBOARD_TAG} .
 cp .dockerignore.bak .dockerignore && rm .dockerignore.bak
@@ -112,6 +114,10 @@ The `.dockerignore.prebuilt` allows `dist/` and `dist-server/` into the build co
 
 ```bash
 ls -la dist/index.html dist-server/index.js 2>/dev/null && echo "Build OK" || echo "ERROR: dist/ or dist-server/ missing — do not push"
+
+# Staleness guard: refuse to push if any src file is newer than dist/index.html.
+NEWEST_SRC=$(find src server -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \) -print0 | xargs -0 ls -t | head -1)
+[ "$NEWEST_SRC" -nt dist/index.html ] && { echo "STALE: $NEWEST_SRC newer than dist/index.html — rebuild"; exit 1; } || echo "dist/ is up to date"
 ```
 
 ## 5. Push Image
@@ -150,13 +156,23 @@ Exit 0 = safe to deploy. Exit 1 = a file is out of sync; fix before `ALTER SERVI
 
 ## Release / Redeploy Procedure
 
-1. Edit [image-versions.env](../dashboard-react/image-versions.env) — bump `AVIATION_DASHBOARD_TAG` (e.g. `v1.0.0` → `v1.0.1`).
-2. Run `scripts/check_image_versions.sh` — must pass.
-3. Rebuild and push the image with the new tag.
-4. `ALTER SERVICE ... FROM SPECIFICATION` with the new tag (see SKILL.md "Update / Redeploy" section). SPCS pulls the new image because the digest changed.
-5. Commit `image-versions.env` change so the tag history matches git history.
+**Recommended (scripted):** run the orchestrator — it chains validate → compile → build (`--no-cache`) → push → `ALTER SERVICE` → digest verification and aborts on any failure.
 
-**Rollback:** set `AVIATION_DASHBOARD_TAG` back to the previous value (old image is still in the SPCS registry) and re-run `ALTER SERVICE` — instant rollback, no rebuild needed.
+```bash
+SNOWFLAKE_CONNECTION=<conn> TARGET_DB=AIRPORT_XXX WAREHOUSE=AVIA_XXX_WH \
+  .cortex/skills/aviation-dashboard/scripts/bump_tag.sh patch
+SNOWFLAKE_CONNECTION=<conn> TARGET_DB=AIRPORT_XXX WAREHOUSE=AVIA_XXX_WH \
+  .cortex/skills/aviation-dashboard/scripts/deploy.sh
+```
+
+**Manual fallback:**
+1. `scripts/bump_tag.sh patch|minor|major` — rewrites [image-versions.env](../dashboard-react/image-versions.env) and re-runs the validator (including code-drift guard).
+2. Rebuild and push the image with the new tag (steps above, with `--no-cache`).
+3. `ALTER SERVICE ... FROM SPECIFICATION` with the new tag (see SKILL.md "Update / Redeploy"). SPCS pulls the new image because the digest changed.
+4. Run `scripts/verify_service_image.sh` to confirm the service is on the pinned tag.
+5. Commit `image-versions.env` so tag history matches git history.
+
+**Rollback:** `scripts/bump_tag.sh` is one-way; to rollback, edit `image-versions.env` back to the prior value (old image is still in the SPCS registry) and re-run `scripts/deploy.sh` with `SKIP_BUILD=1` — instant rollback, no rebuild needed.
 
 ## Pre-Build Checklist
 
@@ -168,7 +184,7 @@ Before rebuilding, verify these version pins in `package.json` haven't drifted:
 
 | Image:Tag | Approx Size | Build | First Push |
 |-----------|-------------|-------|------------|
-| aviation_dashboard:v1.0.0 | ~150 MB | 2-3 min | 2-4 min |
+| aviation_dashboard:v1.1.4 | ~150 MB | 2-3 min | 2-4 min |
 
 Tag above must match `AVIATION_DASHBOARD_TAG` in [image-versions.env](../dashboard-react/image-versions.env). The validator enforces this.
 

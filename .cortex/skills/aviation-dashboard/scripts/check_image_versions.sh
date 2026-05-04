@@ -85,6 +85,38 @@ for image in $IMAGE_NAMES; do
   i=$((i + 1))
 done
 
+# Code-drift guard: if React/server sources or the Dockerfile have changed
+# since image-versions.env was last modified, the tag MUST be bumped before
+# deploy — otherwise `podman push` overwrites the tag and SPCS serves the
+# cached old digest. Only runs when inside a git working tree.
+if command -v git >/dev/null 2>&1 && git -C "$SKILL_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  TAG_COMMIT=$(git -C "$SKILL_DIR" log -1 --format=%H -- "$VERSION_FILE" 2>/dev/null || true)
+  if [ -n "$TAG_COMMIT" ]; then
+    DRIFT=$(git -C "$SKILL_DIR" diff --name-only "$TAG_COMMIT" HEAD -- \
+      "dashboard-react/src" \
+      "dashboard-react/server" \
+      "dashboard-react/Dockerfile.runtime" \
+      "dashboard-react/package.json" \
+      "dashboard-react/package-lock.json" \
+      "dashboard-react/vite.config.ts" 2>/dev/null | head -10 || true)
+    UNCOMMITTED=$(git -C "$SKILL_DIR" status --porcelain -- \
+      "dashboard-react/src" \
+      "dashboard-react/server" \
+      "dashboard-react/Dockerfile.runtime" \
+      "dashboard-react/package.json" \
+      "dashboard-react/package-lock.json" \
+      "dashboard-react/vite.config.ts" 2>/dev/null | head -10 || true)
+    if [ -n "$DRIFT" ] || [ -n "$UNCOMMITTED" ]; then
+      echo ""
+      echo "CODE DRIFT: sources changed since AVIATION_DASHBOARD_TAG=${AVIATION_DASHBOARD_TAG} was cut."
+      [ -n "$DRIFT" ] && { echo "Committed changes after tag bump:"; echo "$DRIFT" | sed 's/^/  /'; }
+      [ -n "$UNCOMMITTED" ] && { echo "Uncommitted changes:"; echo "$UNCOMMITTED" | sed 's/^/  /'; }
+      echo "Run scripts/bump_tag.sh patch|minor|major before deploy."
+      error "code drift vs. pinned tag"
+    fi
+  fi
+fi
+
 echo ""
 if [ "$errors" -gt 0 ]; then
   echo "FAIL: $errors mismatch(es) found. Update files or image-versions.env."

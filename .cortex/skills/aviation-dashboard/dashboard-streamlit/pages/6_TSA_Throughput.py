@@ -236,7 +236,7 @@ if not hourly_data.empty:
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total Passengers", f"{total_pax:,}")
-col2.metric("Daily Average", f"{daily_avg:,}")
+col2.metric("Daily Average", f"{daily_avg:,}" if num_days >= 2 else "\u2014")
 col3.metric("Peak Hour", peak_hour_label)
 col4.metric("Checkpoints", num_checkpoints)
 

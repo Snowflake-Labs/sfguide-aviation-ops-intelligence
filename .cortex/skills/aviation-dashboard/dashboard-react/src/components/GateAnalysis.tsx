@@ -5,6 +5,7 @@ import HeatmapGrid, { DOW_LABELS } from '../shared/HeatmapGrid';
 import { fmtNum, fmtDec } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSfQuery } from '../hooks/useSnowflake';
+import VehicleTypeFilter, { useVehicleTypeFilter } from '../shared/VehicleTypeFilter';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts';
@@ -23,48 +24,49 @@ export default function GateAnalysis() {
   const [dateFrom, setDateFrom] = useState(weekAgo);
   const [dateTo, setDateTo] = useState(today);
   const [airlineFilter, setAirlineFilter] = useState('');
+  const { selected: vtSelected, setSelected: setVtSelected, sqlFilter: vehicleSqlFilter } = useVehicleTypeFilter();
 
   const airlineListSql = airport
     ? `SELECT DISTINCT airline_code AS AIRLINE FROM ${db}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE AND airline_code IS NOT NULL
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE AND airline_code IS NOT NULL ${vehicleSqlFilter}
        ORDER BY 1`
     : '';
-  const { data: airlineList } = useSfQuery(airlineListSql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: airlineList } = useSfQuery(airlineListSql, airport, 'PUBLIC', [dateFrom, dateTo, vehicleSqlFilter]);
 
   const airlineClause = airlineFilter ? `AND airline_code = '${airlineFilter}'` : '';
 
   const fillSql = airport
     ? `WITH ops AS (
          SELECT COUNT(DISTINCT ground_session_id) AS total FROM ${db}.GATE_ANALYSIS_AIRCRAFT_GROUND_SESSIONS
-         WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+         WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
        ),
        gated AS (
          SELECT COUNT(DISTINCT ground_session_id) AS gated FROM ${db}.GATE_ANALYSIS_FLIGHT_GATE_TIME
-         WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+         WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
        )
        SELECT ops.total, gated.gated, ROUND(100.0 * gated.gated / NULLIF(ops.total, 0), 1) AS fill_rate
        FROM ops, gated`
     : '';
-  const { data: fillRows } = useSfQuery(fillSql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: fillRows } = useSfQuery(fillSql, airport, 'PUBLIC', [dateFrom, dateTo, vehicleSqlFilter]);
   const fill = fillRows[0] as any || {};
 
   const gateSql = airport
     ? `SELECT gate_name AS GATE, SUM(dwell_minutes) AS DWELL_MIN, SUM(flights) AS FLIGHTS
        FROM ${db}.GATE_ANALYSIS_GATE_UTIL_DAILY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY DWELL_MIN DESC LIMIT 20`
     : '';
-  const { data: gateDataRaw } = useSfQuery(gateSql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: gateDataRaw } = useSfQuery(gateSql, airport, 'PUBLIC', [dateFrom, dateTo, vehicleSqlFilter]);
   const gateData = useMemo(() => [...gateDataRaw].sort((a: any, b: any) => naturalSort(a.GATE || '', b.GATE || '')), [gateDataRaw]);
 
   const gateAirlineStackSql = airport
     ? `SELECT gate_name AS GATE, airline_code AS AIRLINE, SUM(dwell_minutes) AS DWELL_MIN
        FROM ${db}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${airlineClause}
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${airlineClause} ${vehicleSqlFilter}
        GROUP BY 1, 2
        ORDER BY DWELL_MIN DESC`
     : '';
-  const { data: gateAirlineRaw } = useSfQuery(gateAirlineStackSql, airport, 'PUBLIC', [dateFrom, dateTo, airlineClause]);
+  const { data: gateAirlineRaw } = useSfQuery(gateAirlineStackSql, airport, 'PUBLIC', [dateFrom, dateTo, airlineClause, vehicleSqlFilter]);
 
   const { stackedData, stackedAirlines } = useMemo(() => {
     const gateMap = new Map<string, Record<string, any>>();
@@ -88,18 +90,18 @@ export default function GateAnalysis() {
   const airlineSql = airport
     ? `SELECT airline_code AS AIRLINE, SUM(dwell_minutes) AS DWELL_MIN, SUM(flights) AS FLIGHTS
        FROM ${db}.GATE_ANALYSIS_GATE_AIRLINE_DWELL_DAILY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${airlineClause}
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${airlineClause} ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY DWELL_MIN DESC LIMIT 15`
     : '';
-  const { data: airlineData } = useSfQuery(airlineSql, airport, 'PUBLIC', [dateFrom, dateTo, airlineClause]);
+  const { data: airlineData } = useSfQuery(airlineSql, airport, 'PUBLIC', [dateFrom, dateTo, airlineClause, vehicleSqlFilter]);
 
   const heatmapSql = airport
     ? `SELECT DAYOFWEEK(date) AS DOW, gate_name AS GATE, SUM(dwell_minutes) AS DWELL
        FROM ${db}.GATE_ANALYSIS_GATE_UTIL_DAILY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
+       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
        GROUP BY 1, 2`
     : '';
-  const { data: heatmapRaw } = useSfQuery(heatmapSql, airport, 'PUBLIC', [dateFrom, dateTo]);
+  const { data: heatmapRaw } = useSfQuery(heatmapSql, airport, 'PUBLIC', [dateFrom, dateTo, vehicleSqlFilter]);
 
   const { heatmapData, gateLabels } = useMemo(() => {
     const gates = new Set<string>();
@@ -114,10 +116,10 @@ export default function GateAnalysis() {
     ? `SELECT flight_number AS FLIGHT, airline_name AS AIRLINE, service_date AS DATE,
               gate_name AS GATE, ROUND(dwell_minutes, 1) AS DWELL_MIN
        FROM ${db}.GATE_ANALYSIS_FLIGHT_DWELL_WITH_AIRLINE
-       WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${airlineClause}
+       WHERE service_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${airlineClause} ${vehicleSqlFilter}
        ORDER BY dwell_minutes DESC LIMIT 20`
     : '';
-  const { data: topFlights } = useSfQuery(topFlightsSql, airport, 'PUBLIC', [dateFrom, dateTo, airlineClause]);
+  const { data: topFlights } = useSfQuery(topFlightsSql, airport, 'PUBLIC', [dateFrom, dateTo, airlineClause, vehicleSqlFilter]);
 
   if (!airport) return <div className="page-dashboard"><p className="empty-state">Select an airport to begin.</p></div>;
 
@@ -139,6 +141,9 @@ export default function GateAnalysis() {
             <option value="">All Airlines</option>
             {airlineList.map((r: any) => <option key={r.AIRLINE} value={r.AIRLINE}>{r.AIRLINE}</option>)}
           </select>
+        </div>
+        <div style={{ minWidth: 200 }}>
+          <VehicleTypeFilter selected={vtSelected} onChange={setVtSelected} />
         </div>
       </div>
 
