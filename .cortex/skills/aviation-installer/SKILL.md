@@ -293,7 +293,7 @@ Execute sub-skills in order:
    - **If neither exists anywhere**: set `{DASHBOARD_DB}` = `{TARGET_DB}`.
 
    Then read and follow `.cortex/skills/aviation-dashboard/SKILL.md` with `{DASHBOARD_DB}` as the target (`{TARGET_DB}` = `{DASHBOARD_DB}`).
-   The skill always runs **both** phases (Streamlit then React/SPCS). Per-stack version checks determine whether each stack is redeployed or skipped. React hard-fails if Docker/Podman or SPCS prerequisites are missing.
+   The skill always runs Phase A (Streamlit) then attempts Phase B (React/SPCS). Per-stack version checks determine whether each stack is redeployed or skipped. If Docker/Podman, `snow` CLI, or SPCS privileges are missing, Phase B is skipped and installation **still succeeds** with Streamlit only (`{REACT_DEPLOYED}` = false from the dashboard skill).
 
 ### Step 7: Start Task DAG
 
@@ -439,21 +439,27 @@ After Step 9 verification completes, print the following summary to the user (su
 - Dynamic Tables: 13 cascading DTs (traffic facts, gate analysis, runway crossings, flight tracker)
 - Views: V_AIR_OPS_DAILY_KPIS, HELPER_MONITOR_LAST_REFRESH, HELPER_QA_COUNTS_DAILY
 - Task DAG: TASK_INGEST_ADSB (root, 5-min schedule) with child tasks for enrichment, derived analytics, and optional flight schedule / TSA ingestion
-- Dashboards: Streamlit app + React SPCS service (see links below)
+- Dashboards: Streamlit app (always); React SPCS service when Phase B deployed (see links below)
 
 ---
 
 ### Final Step: Open the Dashboards
 
-The installer always deploys **both** stacks via the dashboard skill. Print **both** URLs (use `{DASHBOARD_DB}` from Step 6; default `{DASHBOARD_SCHEMA}` = `PUBLIC`, `{APP_NAME}` = `AIRPORT_ANALYTICS_DASHBOARD`).
+Use `{DASHBOARD_DB}` from Step 6; default `{DASHBOARD_SCHEMA}` = `PUBLIC`, `{APP_NAME}` = `AIRPORT_ANALYTICS_DASHBOARD`. Follow the dashboard skill [Final Output](.cortex/skills/aviation-dashboard/SKILL.md#final-output) — Streamlit URL always; React/SPCS only when `{REACT_DEPLOYED}` = true.
 
-**Streamlit (Snowsight):**
+**Streamlit (Snowsight)** — always:
 
 ```sql
 SELECT SYSTEM$GET_SNOWSIGHT_HOST() AS host;
 ```
 
-**React (SPCS public endpoint):**
+**React (SPCS public endpoint)** — only if the service exists:
+
+```sql
+SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN {DASHBOARD_DB}.PUBLIC;
+```
+
+If a row is returned:
 
 ```sql
 SHOW ENDPOINTS IN SERVICE {DASHBOARD_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
@@ -462,7 +468,7 @@ FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
 WHERE "name" = 'dashboard';
 ```
 
-Print this message to the user (substituting actual values):
+**When both stacks deployed** (`{REACT_DEPLOYED}` = true), print:
 
 > **Airport Analytics Dashboards deployed (both stacks):**
 >
@@ -475,6 +481,8 @@ Then open the SPCS URL automatically when running locally:
 ```bash
 open "https://<ingress_url>"
 ```
+
+**When React/SPCS was skipped** (`{REACT_DEPLOYED}` = false), print the Streamlit URL and the skip reason from the dashboard skill (container runtime, CLI, or privileges).
 
 ## Cleanup
 
