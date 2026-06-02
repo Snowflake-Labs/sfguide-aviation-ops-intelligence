@@ -1,6 +1,6 @@
 ---
 name: aviation-dashboard
-description: "Deploy the Airport Analytics dashboard (Streamlit-in-Snowflake or React/SPCS): upload app files, create the Streamlit object or SPCS service, and verify accessibility. Use when: deploying dashboard, setting up airport analytics UI, installing flight tracker, monitoring page, SPCS dashboard, React dashboard. Do NOT use for: installing airport data pipeline (use aviation-installer), cleaning up objects (use aviation-cleanup). Triggers: deploy dashboard, aviation dashboard, airport analytics UI, streamlit airport, install dashboard, flight tracker app, react dashboard, SPCS dashboard."
+description: "Deploy both Airport Analytics dashboards (Streamlit-in-Snowflake and React/SPCS): create the Streamlit app and SPCS service, build/push the container image, and verify both URLs. Use when: deploying dashboard, setting up airport analytics UI, installing flight tracker, monitoring page, SPCS dashboard, React dashboard. Do NOT use for: installing airport data pipeline (use aviation-installer), cleaning up objects (use aviation-cleanup). Triggers: deploy dashboard, aviation dashboard, airport analytics UI, streamlit airport, install dashboard, flight tracker app, react dashboard, SPCS dashboard."
 depends_on:
   - aviation-installer
 metadata:
@@ -11,16 +11,33 @@ metadata:
 
 # Deploy Airport Analytics Dashboard
 
-This skill contains two dashboard implementations for airport analytics:
+Every invocation of this skill deploys **both** dashboard stacks for airport analytics:
 
 | Variant | Directory | Stack | Deployment |
 |---------|-----------|-------|------------|
 | Streamlit | `dashboard-streamlit/` | Python, Streamlit, pydeck, Altair | Streamlit-in-Snowflake |
 | React | `dashboard-react/` | React 18, TypeScript, deck.gl, recharts | SPCS (Docker + Express) |
 
-Both dashboards provide the same 8 analytics pages and auto-discover all `AIRPORT_XXX` databases.
+Both dashboards provide the same analytics pages and auto-discover all `AIRPORT_XXX` databases.
 
-> **IMPORTANT: Single-instance deployment.** Only ONE dashboard service/app should exist per Snowflake account. The dashboard is deployed into the FIRST installed airport database (e.g., `AIRPORT_SAN`). It auto-discovers all other airport databases via `SHOW DATABASES LIKE 'AIRPORT_%'` — there is NO need to deploy a separate dashboard per airport. If multiple airports are installed, use the AirportSwitcher dropdown inside the app to switch between them.
+> **IMPORTANT: Single-instance deployment.** Deploy exactly **one Streamlit app** and **one SPCS service** per Snowflake account. Both live in the same host database (the first installed `AIRPORT_*`, or whichever database already hosts an existing dashboard). They auto-discover all other airport databases via `SHOW DATABASES LIKE 'AIRPORT_%'` — do NOT deploy a separate dashboard pair per airport. Use the AirportSwitcher inside either app to switch airports.
+
+## Deployment Order
+
+Execute **both** phases on every run (standalone or via `aviation-installer` Step 6). Do not deploy only one stack unless the user explicitly asks to update a single stack (e.g. "redeploy React only").
+
+| Phase | Section | What it deploys |
+|-------|---------|-----------------|
+| **A** | [Streamlit Dashboard](#streamlit-dashboard) — Workflow Steps 1–5 | `CREATE OR REPLACE STREAMLIT` from Git repo stage |
+| **B** | [React Dashboard (SPCS)](#react-dashboard-spcs) — SPCS Deployment Workflow | SPCS infrastructure, Docker image build/push, `AVIATION_DASHBOARD_SERVICE` |
+
+**Shared host database:** Resolve `{DASHBOARD_DB}` in Phase A and set `{TARGET_DB}` = `{DASHBOARD_DB}` for Phase B (same database for both objects).
+
+**Version checks:** Independent per stack — Streamlit Step 3.5 (`SHOW STREAMLITS`) and React Step 2.5 (`SHOW SERVICES`). Either stack may skip its deploy steps when already at the current skill version; the other stack still runs.
+
+**React hard-fail:** Phase B runs the [Prerequisite Gate](#prerequisite-gate-required-before-step-3) before SPCS infrastructure. If Docker/Podman or required SPCS privileges are missing, **abort the entire skill** with a clear error. Do not fall back to Streamlit-only completion.
+
+**Final output:** After both phases, print **both** URLs per [Final Output](#final-output).
 
 ---
 
@@ -133,12 +150,6 @@ If a result is returned, parse the `comment` column as JSON and extract `version
 - **Existing version is older than current skill version** → print "Updating dashboard from v{old_major}.{old_minor} to v{new_major}.{new_minor}." and proceed to Step 4.
 - **COMMENT is missing or not parseable as JSON** → treat as outdated, proceed to Step 4.
 
-For SPCS (React) deployments, use the same logic with:
-```sql
-SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN {TARGET_DB}.PUBLIC;
-```
-Parse the `comment` column identically.
-
 ### Step 4: Create or Replace Streamlit App
 
 ```sql
@@ -171,40 +182,30 @@ The app URL follows: `https://<account>.snowflakecomputing.com/api/streamlit/{DA
 
 ## Examples
 
-### Example 1: Deploy Streamlit dashboard for first airport
+### Example 1: Deploy both dashboards for first airport
 User says: "Deploy the dashboard for SAN"
 Actions:
-1. Set query tag, verify AIRPORT_SAN exists
-2. No existing dashboard found → deploy fresh
-3. `CREATE STREAMLIT` from Git repo stage
-4. Return Snowsight URL
-Result: Dashboard at `AIRPORT_SAN.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD`
+1. Phase A: Set query tag, verify AIRPORT_SAN exists, `CREATE STREAMLIT` from Git repo stage
+2. Phase B: Prerequisite gate (Docker/Podman + SPCS privileges), SPCS infra, build/push image, create service
+3. Print both Snowsight Streamlit URL and SPCS ingress URL
+Result: Streamlit at `AIRPORT_SAN.PUBLIC.AIRPORT_ANALYTICS_DASHBOARD` and SPCS at `AIRPORT_SAN.PUBLIC.AVIATION_DASHBOARD_SERVICE`
 
-### Example 2: Deploy React/SPCS dashboard
-User says: "Deploy the React dashboard for SAN"
-Actions:
-1. Set query tag, verify AIRPORT_SAN exists
-2. Check if AVIATION_DASHBOARD_SERVICE already exists in any AIRPORT_* DB — if so, reuse it (skip Steps 3-5)
-3. Create compute pool, image repo, network rule, EAI
-4. Build and push Docker image
-5. Create SPCS service
-6. Return public endpoint URL
-Result: SPCS service at `AIRPORT_SAN.PUBLIC.AVIATION_DASHBOARD_SERVICE`
-
-### Example 4: Second airport installed, dashboard already exists
+### Example 2: Second airport installed, dashboards already exist
 User says: "Deploy the dashboard for DFW"
 Actions:
-1. Check if AVIATION_DASHBOARD_SERVICE already exists → found in AIRPORT_SAN
-2. Print "Dashboard already deployed at AIRPORT_SAN.PUBLIC.AVIATION_DASHBOARD_SERVICE. It auto-discovers all airports including DFW. No additional deployment needed."
-3. Return existing endpoint URL
-Result: No new service created; user directed to existing dashboard
+1. `SHOW STREAMLITS` / `SHOW SERVICES` → both found in AIRPORT_SAN
+2. Version checks per stack; redeploy only stacks that are outdated
+3. Print "Dashboards already deployed in AIRPORT_SAN. They auto-discover all airports including DFW."
+4. Return existing Streamlit and SPCS URLs
+Result: No duplicate objects; user directed to existing dashboards in AIRPORT_SAN
 
-### Example 3: Dashboard already up to date
+### Example 3: Both dashboards already up to date
 User says: "Redeploy the dashboard"
 Actions:
-1. Check existing dashboard version matches current skill version (1.0)
-2. Print "Dashboard is already up to date (v1.0). Skipping deployment."
-Result: No changes made
+1. Streamlit version check → v1.0 matches → skip Phase A deploy steps
+2. SPCS version check → v1.0 matches → skip Phase B deploy steps
+3. Print both URLs from existing objects
+Result: No changes made; both URLs still returned
 
 ## Dashboard Schema Contract
 
@@ -291,23 +292,13 @@ The dashboard queries these tables and views per airport. All objects live in `A
 | Multi-airport selector missing airports | Missing properties | Verify each AIRPORT_XXX database has PROPERTIES_AIRPORT with 1 row |
 | Performance page always empty | Insufficient history | V_AIR_OPS_DAILY_KPIS requires 2+ days of history to compute KPIs |
 
-## Output
+## Output (Streamlit phase)
 
-Streamlit-in-Snowflake dashboard deployed:
+After Phase A completes (or skips as up to date), record:
 - App: `{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
-- 9 analytics pages: Live View, Flight Tracker, Ground Activity, Runway Crossings, Traffic Analysis, Gate Analysis, TSA Throughput, Monitoring, Performance
-- Auto-discovers all `AIRPORT_XXX` databases
+- 9 analytics pages; auto-discovers all `AIRPORT_XXX` databases
 
-Retrieve the URL:
-```sql
-SELECT SYSTEM$GET_SNOWSIGHT_HOST() AS host;
-```
-
-Print this message to the user:
-
-> **Open the Airport Analytics Dashboard in Snowsight:**
->
-> `https://<host>/api/streamlit/{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
+Continue to Phase B, then print both URLs in [Final Output](#final-output).
 
 ## Cleanup
 
@@ -447,6 +438,52 @@ If a result is returned, parse the `comment` column as JSON and extract `version
 - **Existing version is older** → print "Updating SPCS dashboard from v{old_major}.{old_minor} to v{new_major}.{new_minor}." and proceed to Step 3. Use `DROP SERVICE IF EXISTS` + `CREATE SERVICE` to redeploy.
 - **COMMENT is missing or not parseable** → treat as outdated, proceed to Step 3.
 
+### Prerequisite Gate (required before Step 3)
+
+Run this gate **before Step 3** whenever Phase B will create or update SPCS infrastructure (Steps 3–6 are not skipped by the Step 2.5 version check). If any check fails, **stop the entire skill** with an explicit error. Do not report Streamlit-only success when a deploy was attempted.
+
+**1. Container runtime (hard-fail)**
+
+> Read and run section 1 in `references/build-images.md` (Detect Container Runtime).
+
+```bash
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+  CONTAINER_CMD=docker
+elif command -v podman &>/dev/null; then
+  CONTAINER_CMD=podman
+  podman machine start 2>/dev/null || true
+else
+  echo "ERROR: Neither docker nor podman found. React/SPCS deployment requires a container runtime. Install Docker or Podman and retry."
+  exit 1
+fi
+```
+
+If `docker info` or `podman` machine fails after detection, abort with the same error — do not skip React.
+
+**2. Snowflake CLI (hard-fail)**
+
+```bash
+command -v snow &>/dev/null || { echo "ERROR: snow CLI not found. Install Snowflake CLI and configure a connection."; exit 1; }
+```
+
+**3. SPCS privileges (hard-fail)**
+
+Verify the active role can create SPCS objects. If any check fails, abort — do not deploy Streamlit-only as a workaround.
+
+```sql
+SHOW GRANTS TO ROLE CURRENT_ROLE();
+```
+
+Confirm grants include (or equivalent via a parent role):
+- `CREATE COMPUTE POOL` on account
+- `CREATE SERVICE` on `{TARGET_DB}.PUBLIC` (or schema)
+- `CREATE IMAGE REPOSITORY` on `{TARGET_DB}.PUBLIC`
+- `BIND SERVICE ENDPOINT` on account
+
+If privileges are missing, print which grant is absent and stop.
+
+Set `{CONTAINER_CMD}` from step 1 for Phase B build steps.
+
 ### Step 3: Create SPCS Infrastructure
 
 > Read and follow `references/spcs-infrastructure.md` — steps 2 through 6.
@@ -581,34 +618,14 @@ Set `AVIATION_DASHBOARD_TAG` back to the prior value (the old image is still in 
 | `CREATE OR REPLACE SERVICE` fails | Not supported for SPCS services | Use `DROP SERVICE IF EXISTS` + `CREATE SERVICE` to redeploy |
 | Docker `--ignorefile` not recognized | Docker 29.x does not support `--ignorefile` | Swap `.dockerignore` manually (see `references/build-images.md`) |
 
-## Output
+## Output (React phase)
 
-React SPCS dashboard deployed:
+After Phase B completes (or skips as up to date), record:
 - Service: `{TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE`
 - Compute pool: `AVIATION_DASHBOARD_COMPUTE_POOL`
-- 10 pages: Home, Live View, Flight Tracker, Ground Activity, Runway Crossings, Traffic Analysis, Gate Analysis, TSA Throughput, Monitoring, Performance
-- Auto-discovers all `AIRPORT_XXX` databases
+- 10 pages; auto-discovers all `AIRPORT_XXX` databases
 
-### Final Step: Open the Dashboard
-
-Retrieve the endpoint URL:
-```sql
-SHOW ENDPOINTS IN SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
-SELECT 'https://' || "ingress_url" AS dashboard_url
-FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
-WHERE "name" = 'dashboard';
-```
-
-Print this exact message to the user (substituting the actual URL):
-
-> **Open this URL and log in with your Snowflake credentials to see the Airport Analytics Dashboard:**
->
-> `<url>`
-
-Then open it automatically:
-```bash
-open "<url>"
-```
+Continue to [Final Output](#final-output).
 
 ## Cleanup
 
@@ -621,3 +638,73 @@ DROP NETWORK RULE IF EXISTS {TARGET_DB}.PUBLIC.AVIATION_CARTO_NETWORK_RULE;
 ```
 
 > **Tip:** Use the `aviation-cleanup` skill to auto-discover all tagged objects via COMMENT tracking.
+
+---
+
+## Final Output
+
+After **both** Phase A and Phase B finish, retrieve and print **both** dashboard URLs.
+
+**Streamlit (Snowsight):**
+
+```sql
+SELECT SYSTEM$GET_SNOWSIGHT_HOST() AS host;
+```
+
+**React (SPCS public endpoint):**
+
+```sql
+SHOW ENDPOINTS IN SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
+SELECT 'https://' || "ingress_url" AS dashboard_url
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'dashboard';
+```
+
+Print this message to the user (substitute actual values):
+
+> **Airport Analytics Dashboards deployed (both stacks):**
+>
+> **Streamlit (Snowsight):** `https://<host>/api/streamlit/{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
+>
+> **React (SPCS):** `https://<ingress_url>` — log in with your Snowflake credentials.
+
+Then open the SPCS URL automatically when running locally:
+
+```bash
+open "https://<ingress_url>"
+```
+
+---
+
+## Final Output
+
+After **both** Phase A and Phase B finish, retrieve and print **both** dashboard URLs.
+
+**Streamlit (Snowsight):**
+
+```sql
+SELECT SYSTEM$GET_SNOWSIGHT_HOST() AS host;
+```
+
+**React (SPCS public endpoint):**
+
+```sql
+SHOW ENDPOINTS IN SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
+SELECT 'https://' || "ingress_url" AS dashboard_url
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'dashboard';
+```
+
+Print this message to the user (substitute actual values):
+
+> **Airport Analytics Dashboards deployed (both stacks):**
+>
+> **Streamlit (Snowsight):** `https://<host>/api/streamlit/{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
+>
+> **React (SPCS):** `https://<ingress_url>` — log in with your Snowflake credentials.
+
+Then open the SPCS URL automatically when running locally:
+
+```bash
+open "https://<ingress_url>"
+```
