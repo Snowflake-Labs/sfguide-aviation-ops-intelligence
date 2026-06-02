@@ -35,9 +35,9 @@ Execute **both** phases on every run (standalone or via `aviation-installer` Ste
 
 **Version checks:** Independent per stack — Streamlit Step 3.5 (`SHOW STREAMLITS`) and React Step 2.5 (`SHOW SERVICES`). Either stack may skip its deploy steps when already at the current skill version; the other stack still runs.
 
-**React hard-fail:** Phase B runs the [Prerequisite Gate](#prerequisite-gate-required-before-step-3) before SPCS infrastructure. If Docker/Podman or required SPCS privileges are missing, **abort the entire skill** with a clear error. Do not fall back to Streamlit-only completion.
+**React prerequisite gate:** Phase B runs the [Prerequisite Gate](#prerequisite-gate-required-before-step-3) before SPCS infrastructure. On the default both-stacks path, if Docker/Podman, `snow` CLI, or required SPCS privileges are missing, **skip Phase B** and complete successfully with Streamlit only — print a clear warning (what was skipped and why). Set `{REACT_DEPLOYED}` = false. **Hard-fail** only when the user explicitly requested React/SPCS only (e.g. "redeploy React only", "SPCS dashboard only").
 
-**Final output:** After both phases, print **both** URLs per [Final Output](#final-output).
+**Final output:** Print URLs per [Final Output](#final-output) — Streamlit always; React/SPCS only when `{REACT_DEPLOYED}` = true.
 
 ---
 
@@ -440,9 +440,13 @@ If a result is returned, parse the `comment` column as JSON and extract `version
 
 ### Prerequisite Gate (required before Step 3)
 
-Run this gate **before Step 3** whenever Phase B will create or update SPCS infrastructure (Steps 3–6 are not skipped by the Step 2.5 version check). If any check fails, **stop the entire skill** with an explicit error. Do not report Streamlit-only success when a deploy was attempted.
+Run this gate **before Step 3** whenever Phase B will create or update SPCS infrastructure (Steps 3–6 are not skipped by the Step 2.5 version check).
 
-**1. Container runtime (hard-fail)**
+**Default (both stacks):** If any check below fails, print a warning, set `{REACT_DEPLOYED}` = false, skip Steps 3–6, and proceed to [Final Output](#final-output) with Streamlit only. Phase A is already complete — this is a **successful** outcome.
+
+**React-only request:** If the user explicitly asked for React/SPCS only, hard-fail on any failed check (same error messages as below, then `exit 1`).
+
+**1. Container runtime**
 
 > Read and run section 1 in `references/build-images.md` (Detect Container Runtime).
 
@@ -453,22 +457,22 @@ elif command -v podman &>/dev/null; then
   CONTAINER_CMD=podman
   podman machine start 2>/dev/null || true
 else
-  echo "ERROR: Neither docker nor podman found. React/SPCS deployment requires a container runtime. Install Docker or Podman and retry."
-  exit 1
+  echo "WARNING: Neither docker nor podman found. Skipping React/SPCS (Streamlit deployed)."
+  REACT_SKIP=container_runtime
 fi
 ```
 
-If `docker info` or `podman` machine fails after detection, abort with the same error — do not skip React.
+If `docker info` or `podman` machine fails after detection, treat as `REACT_SKIP=container_runtime` on the default path; hard-fail on React-only.
 
-**2. Snowflake CLI (hard-fail)**
+**2. Snowflake CLI**
 
 ```bash
-command -v snow &>/dev/null || { echo "ERROR: snow CLI not found. Install Snowflake CLI and configure a connection."; exit 1; }
+command -v snow &>/dev/null || REACT_SKIP=snow_cli
 ```
 
-**3. SPCS privileges (hard-fail)**
+On React-only: `echo "ERROR: snow CLI not found."; exit 1`
 
-Verify the active role can create SPCS objects. If any check fails, abort — do not deploy Streamlit-only as a workaround.
+**3. SPCS privileges**
 
 ```sql
 SHOW GRANTS TO ROLE CURRENT_ROLE();
@@ -480,9 +484,9 @@ Confirm grants include (or equivalent via a parent role):
 - `CREATE IMAGE REPOSITORY` on `{TARGET_DB}.PUBLIC`
 - `BIND SERVICE ENDPOINT` on account
 
-If privileges are missing, print which grant is absent and stop.
+If any grant is missing: on the default path, set `REACT_SKIP=spcs_privileges` and print which grant is absent; on React-only, stop with an error.
 
-Set `{CONTAINER_CMD}` from step 1 for Phase B build steps.
+If all checks pass, set `{REACT_DEPLOYED}` = true and `{CONTAINER_CMD}` from step 1 for Phase B build steps.
 
 ### Step 3: Create SPCS Infrastructure
 
@@ -643,15 +647,21 @@ DROP NETWORK RULE IF EXISTS {TARGET_DB}.PUBLIC.AVIATION_CARTO_NETWORK_RULE;
 
 ## Final Output
 
-After **both** Phase A and Phase B finish, retrieve and print **both** dashboard URLs.
+After Phase A finishes (and Phase B when `{REACT_DEPLOYED}` = true), retrieve and print dashboard URL(s).
 
-**Streamlit (Snowsight):**
+**Streamlit (Snowsight)** — always:
 
 ```sql
 SELECT SYSTEM$GET_SNOWSIGHT_HOST() AS host;
 ```
 
-**React (SPCS public endpoint):**
+**React (SPCS public endpoint)** — only when `{REACT_DEPLOYED}` = true:
+
+```sql
+SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN {TARGET_DB}.PUBLIC;
+```
+
+If a service exists:
 
 ```sql
 SHOW ENDPOINTS IN SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
@@ -660,7 +670,7 @@ FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
 WHERE "name" = 'dashboard';
 ```
 
-Print this message to the user (substitute actual values):
+**When both stacks deployed** (`{REACT_DEPLOYED}` = true), print:
 
 > **Airport Analytics Dashboards deployed (both stacks):**
 >
@@ -674,37 +684,10 @@ Then open the SPCS URL automatically when running locally:
 open "https://<ingress_url>"
 ```
 
----
+**When React/SPCS was skipped** (`{REACT_DEPLOYED}` = false), print:
 
-## Final Output
-
-After **both** Phase A and Phase B finish, retrieve and print **both** dashboard URLs.
-
-**Streamlit (Snowsight):**
-
-```sql
-SELECT SYSTEM$GET_SNOWSIGHT_HOST() AS host;
-```
-
-**React (SPCS public endpoint):**
-
-```sql
-SHOW ENDPOINTS IN SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
-SELECT 'https://' || "ingress_url" AS dashboard_url
-FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
-WHERE "name" = 'dashboard';
-```
-
-Print this message to the user (substitute actual values):
-
-> **Airport Analytics Dashboards deployed (both stacks):**
+> **Airport Analytics Dashboard deployed (Streamlit):**
 >
 > **Streamlit (Snowsight):** `https://<host>/api/streamlit/{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
 >
-> **React (SPCS):** `https://<ingress_url>` — log in with your Snowflake credentials.
-
-Then open the SPCS URL automatically when running locally:
-
-```bash
-open "https://<ingress_url>"
-```
+> **React (SPCS):** Skipped — `<reason>` (e.g. no container runtime, missing `snow` CLI, or insufficient SPCS privileges). Install Docker/Podman, configure Snowflake CLI, and grant SPCS privileges, then re-run to deploy React.
