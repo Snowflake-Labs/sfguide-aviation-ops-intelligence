@@ -206,7 +206,7 @@ After completing all steps, return to the `aviation-installer` router to proceed
 
 ## Cleanup
 
-Derived analytics creates 13 Dynamic Tables and multiple views/procedures. Use the `aviation-cleanup` skill which reads `references/drop-order.sql` to tear down objects in the correct dependency order.
+Derived analytics creates 13 Dynamic Tables and multiple views/procedures. Use the `aviation-cleanup` skill which reads `.cortex/skills/aviation-cleanup/references/drop-order.sql` to tear down objects in the correct dependency order.
 
 For manual cleanup, suspend tasks first:
 
@@ -215,4 +215,4 @@ ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_REFRESH_DERIVED SUSPEND;
 ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_REFRESH_ANALYTICS SUSPEND;
 ```
 
-Then drop objects in reverse dependency order — see `aviation-cleanup` skill's `references/drop-order.sql` for the full sequence.
+Then drop objects in reverse dependency order — see `.cortex/skills/aviation-cleanup/references/drop-order.sql` for the full sequence.
