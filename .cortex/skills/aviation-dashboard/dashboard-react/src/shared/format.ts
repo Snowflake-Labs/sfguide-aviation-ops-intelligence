@@ -45,6 +45,12 @@ export function toDate(v: unknown): Date | null {
   if (ISO_DATE_RE.test(s)) return new Date(s + 'T00:00:00');
   if (ISO_DATETIME_RE.test(s)) return new Date(s.replace(' ', 'T'));
   const n = Number(s);
+  // Snowflake SQL REST API serializes DATE columns as integer days since 1970-01-01.
+  // Decode plausible epoch-day values (~1997-2134) before the epoch-millis/seconds check.
+  if (!isNaN(n) && isFinite(n) && Number.isInteger(n) && n >= 10000 && n <= 60000) {
+    const d = new Date(n * 86400000);
+    if (!isNaN(d.getTime()) && d.getFullYear() >= 2000 && d.getFullYear() <= 2100) return d;
+  }
   if (!isNaN(n) && isFinite(n) && Math.abs(n) > 1e9) {
     const ms = Math.abs(n) > 1e12 ? n : n * 1000;
     const d = new Date(ms);
