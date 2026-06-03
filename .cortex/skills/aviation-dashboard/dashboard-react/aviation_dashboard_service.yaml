@@ -5,6 +5,7 @@ spec:
       env:
         SNOWFLAKE_DATABASE: "{TARGET_DB}"
         SNOWFLAKE_WAREHOUSE: "{WAREHOUSE}"
+        APP_VERSION: "{AVIATION_DASHBOARD_VERSION}"
       resources:
         requests:
           cpu: "0.5"
