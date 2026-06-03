@@ -184,7 +184,7 @@ Before rebuilding, verify these version pins in `package.json` haven't drifted:
 
 | Image:Tag | Approx Size | Build | First Push |
 |-----------|-------------|-------|------------|
-| aviation_dashboard:v1.1.4 | ~150 MB | 2-3 min | 2-4 min |
+| aviation_dashboard:v1.1.10 | ~150 MB | 2-3 min | 2-4 min |
 
 Tag above must match `AVIATION_DASHBOARD_TAG` in [image-versions.env](../dashboard-react/image-versions.env). The validator enforces this.
 
