@@ -17,6 +17,9 @@ SPEC_TEMPLATE="$REACT_DIR/aviation_dashboard_service.yaml"
 # shellcheck disable=SC1091
 source "$REACT_DIR/image-versions.env"
 : "${AVIATION_DASHBOARD_TAG:?AVIATION_DASHBOARD_TAG missing}"
+# Bare semver (strip leading 'v') drives the runtime APP_VERSION env so the
+# in-app footer always tracks the deployed image tag.
+AVIATION_DASHBOARD_VERSION="${AVIATION_DASHBOARD_TAG#v}"
 
 if [ ! -f "$SPEC_TEMPLATE" ]; then
   echo "ERROR: spec template not found at $SPEC_TEMPLATE" >&2
@@ -27,6 +30,7 @@ SPEC_RESOLVED=$(sed \
   -e "s|{TARGET_DB}|${TARGET_DB}|g" \
   -e "s|{WAREHOUSE}|${WAREHOUSE}|g" \
   -e "s|{AVIATION_DASHBOARD_TAG}|${AVIATION_DASHBOARD_TAG}|g" \
+  -e "s|{AVIATION_DASHBOARD_VERSION}|${AVIATION_DASHBOARD_VERSION}|g" \
   "$SPEC_TEMPLATE")
 
 if echo "$SPEC_RESOLVED" | grep -q '{[A-Z_]*}'; then

@@ -12,6 +12,7 @@ REACT_DIR="$SKILL_DIR/dashboard-react"
 
 VERSION_FILE="$REACT_DIR/image-versions.env"
 SERVICE_YAML="$REACT_DIR/aviation_dashboard_service.yaml"
+APP_TSX="$REACT_DIR/src/App.tsx"
 BUILD_MD="$SKILL_DIR/references/build-images.md"
 SKILL_MD="$SKILL_DIR/SKILL.md"
 
@@ -52,6 +53,20 @@ echo ""
 # the placeholder exists AND that build-images.md references the pinned tag.
 if ! grep -qF "aviation_dashboard:{AVIATION_DASHBOARD_TAG}" "$SERVICE_YAML"; then
   error "$SERVICE_YAML missing placeholder aviation_dashboard:{AVIATION_DASHBOARD_TAG}"
+fi
+
+# The in-app footer version must be driven at runtime by the APP_VERSION env so
+# it can never drift from the deployed image tag. Validate the wiring:
+#   1. service YAML carries the APP_VERSION placeholder (resolved at deploy time
+#      to the bare semver, i.e. AVIATION_DASHBOARD_TAG without the leading 'v').
+#   2. App.tsx does NOT hardcode a vMAJOR.MINOR.PATCH literal in sidebar-version.
+if ! grep -qF 'APP_VERSION: "{AVIATION_DASHBOARD_VERSION}"' "$SERVICE_YAML"; then
+  error "$SERVICE_YAML missing env APP_VERSION: \"{AVIATION_DASHBOARD_VERSION}\" (runtime footer version)"
+fi
+if [ -f "$APP_TSX" ]; then
+  if grep -qE 'sidebar-version">v[0-9]+\.[0-9]+\.[0-9]+' "$APP_TSX"; then
+    error "App.tsx hardcodes a sidebar-version literal — render the runtime version from /api/status instead"
+  fi
 fi
 
 i=1

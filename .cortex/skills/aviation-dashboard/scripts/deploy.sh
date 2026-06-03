@@ -15,6 +15,7 @@
 # Optional env vars:
 #   SKIP_BUILD=1          reuse existing dist/ and image (push + ALTER only)
 #   CONTAINER_CMD         override autodetected docker/podman
+#   ALLOW_DIRTY=1         allow deploying with uncommitted changes (default: refused)
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,6 +25,19 @@ SCRIPTS_DIR="$SKILL_DIR/scripts"
 : "${SNOWFLAKE_CONNECTION:?SNOWFLAKE_CONNECTION env var required}"
 : "${TARGET_DB:?TARGET_DB env var required (e.g. AIRPORT_SFO)}"
 : "${WAREHOUSE:?WAREHOUSE env var required (e.g. AVIA_SFO_WH)}"
+
+# Refuse to deploy from a dirty working tree so every pushed image maps to a
+# committed source state (override with ALLOW_DIRTY=1). Only enforced inside a
+# git work tree; harmless outside one.
+if command -v git >/dev/null 2>&1 && git -C "$SKILL_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if [ -n "$(git -C "$SKILL_DIR" status --porcelain -- "$REACT_DIR")" ] && [ "${ALLOW_DIRTY:-0}" != "1" ]; then
+    echo "ERROR: dashboard sources have uncommitted changes." >&2
+    echo "       Commit them so the image tag maps to a git commit, or set ALLOW_DIRTY=1 to override." >&2
+    git -C "$SKILL_DIR" status --short -- "$REACT_DIR" >&2
+    exit 1
+  fi
+fi
+
 
 # shellcheck disable=SC1091
 source "$REACT_DIR/image-versions.env"
