@@ -18,6 +18,12 @@ const GROUND_CATEGORIES = new Set([
   'TOWER', 'SERVICE_VEHICLE', 'GROUND_VEHICLE', 'LIGHT_SURFACE_VEHICLE', 'UNKNOWN_SURFACE',
 ]);
 
+// Max seconds between consecutive ADS-B points to still treat them as one
+// continuous segment. Larger gaps (coverage holes, or separate legs that share
+// a callsign on the same day) are NOT interpolated across: the path is split
+// and the replay marker holds at the last real point instead of gliding.
+const MAX_GAP_SEC = 90;
+
 const VEHICLE_TYPE_LABELS: Record<string, string> = {
   HEAVY_AIRCRAFT: 'Heavy (A380, 777)',
   MEDIUM_AIRCRAFT: 'Medium (737, A320)',
@@ -44,7 +50,7 @@ function secToHMS(sec: number): string {
 
 function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
 
-function interpolateTrackPoint(pts: TrackPoint[], sec: number): TrackPoint | null {
+function interpolateTrackPoint(pts: TrackPoint[], sec: number, maxGap = MAX_GAP_SEC): TrackPoint | null {
   if (!pts.length) return null;
   if (sec <= pts[0].sec) return { ...pts[0] };
   if (sec >= pts[pts.length - 1].sec) return { ...pts[pts.length - 1] };
@@ -54,6 +60,9 @@ function interpolateTrackPoint(pts: TrackPoint[], sec: number): TrackPoint | nul
     if (pts[mid].sec <= sec) lo = mid; else hi = mid;
   }
   const a = pts[lo], b = pts[hi];
+  // Don't interpolate across a large coverage gap (e.g. between two legs that
+  // share a callsign). Hold at the last real point until the next segment.
+  if (b.sec - a.sec > maxGap) return { ...a };
   const t = b.sec > a.sec ? (sec - a.sec) / (b.sec - a.sec) : 0;
   return {
     lat: lerp(a.lat, b.lat, t),
@@ -66,14 +75,16 @@ function interpolateTrackPoint(pts: TrackPoint[], sec: number): TrackPoint | nul
   };
 }
 
+// Matches the on-screen altitude legend gradient:
+// low #00897B (teal) -> mid #FDD835 (yellow) -> high #E53935 (red)
 function altColor(alt: number, min: number, max: number): [number, number, number] {
   const t = max > min ? Math.max(0, Math.min(1, (alt - min) / (max - min))) : 0;
   if (t < 0.5) {
-    const s = t * 2;
-    return [Math.round(0 + 255 * s), Math.round(137 + (221 - 137) * s), Math.round(53 - 70 * s)];
+    const s = t * 2; // #00897B -> #FDD835
+    return [Math.round(0 + 253 * s), Math.round(137 + 79 * s), Math.round(123 - 70 * s)];
   }
-  const s = (t - 0.5) * 2;
-  return [Math.round(255 - 26 * s), Math.round(221 - 168 * s), Math.round(53 - 53 * s)];
+  const s = (t - 0.5) * 2; // #FDD835 -> #E53935
+  return [Math.round(253 - 24 * s), Math.round(216 - 159 * s), 53];
 }
 
 function flightLabel(f: any): string {
@@ -187,7 +198,7 @@ export default function FlightTracker() {
   }, [airport, db, date, tz, query]);
 
   const trackPoints = useMemo<TrackPoint[]>(() => {
-    return trackData
+    const raw = trackData
       .filter((d: any) => d.LAT != null && d.LON != null)
       .map((d: any) => ({
         lat: Number(d.LAT),
@@ -198,6 +209,15 @@ export default function FlightTracker() {
         track: Number(d.TRACK) || 0,
         onGround: d.ON_GROUND === true || d.ON_GROUND === 'true',
       }));
+    // Collapse multiple pings stamped to the same second (keep the last) so the
+    // scrubber doesn't jitter between near-duplicate positions at one tick.
+    const out: TrackPoint[] = [];
+    for (const p of raw) {
+      const last = out[out.length - 1];
+      if (last && last.sec === p.sec) out[out.length - 1] = p;
+      else out.push(p);
+    }
+    return out;
   }, [trackData]);
 
   const currentPos = useMemo(() => {
@@ -215,11 +235,26 @@ export default function FlightTracker() {
     const avgAlt = alts.length ? alts.reduce((a, b) => a + b, 0) / alts.length : 0;
     const color = altColor(avgAlt, minAlt, maxAlt);
 
+    // Split the path at large time gaps so the line doesn't draw a straight
+    // chord across coverage holes / between separate legs of the same callsign.
+    const segments: number[][][] = [];
+    let cur: number[][] = [];
+    let prevSec: number | null = null;
+    for (const d of trackPoints) {
+      if (prevSec !== null && d.sec - prevSec > MAX_GAP_SEC) {
+        if (cur.length > 1) segments.push(cur);
+        cur = [];
+      }
+      cur.push([d.lon, d.lat]);
+      prevSec = d.sec;
+    }
+    if (cur.length > 1) segments.push(cur);
+
     const result: any[] = [
       ...base,
       new PathLayer({
         id: 'flight-path',
-        data: [{ path, color }],
+        data: segments.map(s => ({ path: s, color })),
         getPath: (d: any) => d.path,
         getColor: (d: any) => [...d.color, 200],
         widthMinPixels: 3,
