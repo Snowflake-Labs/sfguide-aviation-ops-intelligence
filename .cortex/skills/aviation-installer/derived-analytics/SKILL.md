@@ -85,7 +85,7 @@ Report all friction points (errors, warnings, workarounds, race conditions) back
 > - `references/06a-procedures.md` — PROC_REFRESH_DERIVED, PROC_SMOKE_CHECK, PROC_REFRESH_ANALYTICS, PROC_RESUME_OPTIONAL_TASK
 > - `references/06b-tasks.md` — Task CREATE statements (no COMMENT on AFTER tasks) + ALTER TAG
 > - `references/06c-operations.md` — DT refresh, DT resume, install-time calls, verification
-> - `references/07-tsa-checkpoint-geo.md` — V_TSA_CHECKPOINT_GEO view (TSA throughput mapped to terminal geometries)
+> - `references/07-tsa-checkpoint-geo.md` — V_TSA_THROUGHPUT_CLEAN view (REQUIRED by TSA dashboard KPIs/charts) + V_TSA_CHECKPOINT_GEO view (TSA throughput mapped to terminal geometries)
 >
 > **Execute ALL SQL from each file in order. Do NOT skip or optimize away any queries.**
 
@@ -140,6 +140,7 @@ In dependency order:
 - `H2H_CONFLICT_PAIRS` — head-to-head conflict placeholder table
 - `V_AIR_OPS_TIMELINE` — operational timeline view (placeholder structure)
 - `V_AIR_OPS_DAILY_KPIS` — daily KPI view (placeholder structure for Performance page)
+- `V_TSA_THROUGHPUT_CLEAN` — typed/cleaned TSA throughput (REQUIRED by the TSA dashboard page; airport-agnostic, parses date/hour/passengers, drops misaligned-extraction rows)
 - `V_TSA_CHECKPOINT_GEO` — TSA checkpoint throughput mapped to terminal building geometries (fuzzy-matched from PROPERTIES_INFRASTRUCTURE)
 
 ### Step 6: Create Refresh Procedures
