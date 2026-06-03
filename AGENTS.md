@@ -262,8 +262,7 @@ graph TD
     MAIN_FILE = 'streamlit_app.py'
     QUERY_WAREHOUSE = {WAREHOUSE};
   ```
-- React deployed via **Snowflake App Runtime** (preferred): `app.yml` + `snowflake.yml` + `snow app deploy` (CLI ≥ 3.19). Deploys to `SNOWFLAKE_APPS.PUBLIC.AVIATION_DASHBOARD` (Application Service) + `AVIATION_DASHBOARD_REPO`. See [`dashboard-react/app.yml`](.cortex/skills/aviation-dashboard/dashboard-react/app.yml) and [`references/app-runtime-deploy.md`](.cortex/skills/aviation-dashboard/references/app-runtime-deploy.md). Two non-obvious requirements: install with `npm ci --include=dev` (builder runs `NODE_ENV=production`); do NOT add an `app.yml` `artifacts:` block (it breaks the package layout — let the builder package the whole working dir). No EAI under App Runtime, so the carto basemap loads client-side in `MapView.tsx` (no `/api/tiles` proxy).
-- React deployed via **SPCS** (fallback): manual Docker pipeline (see `dashboard-react/Dockerfile.runtime`, `aviation_dashboard_service.yaml`, `image-versions.env`, `scripts/`). Retained while App Runtime is in public preview.
+- React deployed via **SPCS**: manual Docker pipeline (see `dashboard-react/Dockerfile.runtime`, `aviation_dashboard_service.yaml`, `image-versions.env`, `scripts/`). CARTO basemap tiles proxied through Express server (requires CARTO EAI attached to service).
 
 ## Streamlit Installer (Legacy Approach)
 

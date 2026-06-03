@@ -20,11 +20,7 @@ interface MapViewProps {
 }
 
 const DEFAULT_VIEW = { longitude: 0, latitude: 30, zoom: 2, pitch: 0, bearing: 0 };
-// Load carto basemap tiles directly from the CDN in the browser.
-// Snowflake App Runtime's managed Application Service does not support binding an
-// External Access Integration, so the server can't proxy tiles. The browser has
-// internet access, so deck.gl fetches tiles directly (no server egress, no EAI).
-const CARTO_TILES = 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png';
+const CARTO_TILES = '/api/tiles/{z}/{x}/{y}';
 
 function cartoBasemap() {
   return new TileLayer({

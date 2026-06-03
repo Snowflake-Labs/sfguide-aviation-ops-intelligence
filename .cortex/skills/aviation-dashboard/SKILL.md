@@ -1,6 +1,6 @@
 ---
 name: aviation-dashboard
-description: "Deploy the Airport Analytics dashboards: Streamlit-in-Snowflake plus the React dashboard via Snowflake App Runtime (managed; default) or the manual SPCS pipeline (fallback). Create the Streamlit app, run snow app deploy for the React app, and verify the URLs. Use when: deploying dashboard, setting up airport analytics UI, installing flight tracker, monitoring page, App Runtime dashboard, SPCS dashboard, React dashboard. Do NOT use for: installing airport data pipeline (use aviation-installer), cleaning up objects (use aviation-cleanup). Triggers: deploy dashboard, aviation dashboard, airport analytics UI, streamlit airport, install dashboard, flight tracker app, react dashboard, app runtime dashboard, snow app deploy, SPCS dashboard."
+description: "Deploy the Airport Analytics dashboards: Streamlit-in-Snowflake plus the React dashboard via SPCS (Docker build + CREATE SERVICE). Create the Streamlit app, build/push the Docker image, create the SPCS service, and verify the URLs. Use when: deploying dashboard, setting up airport analytics UI, installing flight tracker, monitoring page, SPCS dashboard, React dashboard. Do NOT use for: installing airport data pipeline (use aviation-installer), cleaning up objects (use aviation-cleanup). Triggers: deploy dashboard, aviation dashboard, airport analytics UI, streamlit airport, install dashboard, flight tracker app, react dashboard, SPCS dashboard."
 depends_on:
   - aviation-installer
 metadata:
@@ -16,14 +16,7 @@ Every invocation of this skill deploys **both** dashboard stacks for airport ana
 | Variant | Directory | Stack | Deployment |
 |---------|-----------|-------|------------|
 | Streamlit | `dashboard-streamlit/` | Python, Streamlit, pydeck, Altair | Streamlit-in-Snowflake |
-| React | `dashboard-react/` | React 18, TypeScript, deck.gl, recharts | **Snowflake App Runtime** (`snow app deploy`, default) or manual SPCS (fallback) |
-
-> **React deploy path:** Prefer **Snowflake App Runtime** — it replaces the manual
-> Docker/image-repo/compute-pool/EAI/version-script pipeline with `snow app deploy`
-> (remote build, managed compute, stable SSO URL). See
-> [references/app-runtime-deploy.md](references/app-runtime-deploy.md). The manual
-> SPCS path ([React Dashboard (SPCS)](#react-dashboard-spcs--fallback)) is retained as a
-> fallback while App Runtime is in public preview. Requires Snowflake CLI ≥ 3.19.
+| React | `dashboard-react/` | React 18, TypeScript, deck.gl, recharts | **SPCS** (`docker build` + `CREATE SERVICE`) |
 
 Both dashboards provide the same analytics pages and auto-discover all `AIRPORT_XXX` databases.
 
@@ -36,7 +29,7 @@ Execute **both** phases on every run (standalone or via `aviation-installer` Ste
 | Phase | Section | What it deploys |
 |-------|---------|-----------------|
 | **A** | [Streamlit Dashboard](#streamlit-dashboard) — Workflow Steps 1–5 | `CREATE OR REPLACE STREAMLIT` from Git repo stage |
-| **B** | [React Dashboard (SPCS)](#react-dashboard-spcs--fallback) — SPCS Deployment Workflow | SPCS infrastructure, Docker image build/push, `AVIATION_DASHBOARD_SERVICE` |
+| **B** | [React Dashboard (SPCS)](#react-dashboard-spcs) — SPCS Deployment Workflow | SPCS infrastructure, Docker image build/push, `AVIATION_DASHBOARD_SERVICE` |
 
 **Shared host database:** Resolve `{DASHBOARD_DB}` in Phase A and set `{TARGET_DB}` = `{DASHBOARD_DB}` for Phase B (same database for both objects).
 
@@ -317,38 +310,7 @@ DROP STREAMLIT IF EXISTS {DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME};
 
 ---
 
-# React Dashboard (App Runtime) — preferred
-
-Deploy the same React 18 + Express dashboard (`dashboard-react/`) with **Snowflake
-App Runtime** instead of the manual SPCS pipeline. App Runtime builds remotely,
-packages an immutable version, creates/upgrades an **Application Service**, and
-returns a stable SSO URL — no Docker, image repo, compute pool, EAI, or version
-scripts to manage.
-
-> **Full workflow, manifests, gotchas, grants, and cleanup:**
-> [references/app-runtime-deploy.md](references/app-runtime-deploy.md).
-
-Quick summary:
-
-1. **Prereqs:** Snowflake CLI **≥ 3.19** (`snow app --help` lists `setup`/`deploy`), paid account, an `AIRPORT_*` database installed.
-2. **Destination:** deploy to `SNOWFLAKE_APPS` (standard DB → shareable). Create `SNOWFLAKE_APPS` / `PUBLIC` / `SNOWFLAKE_APPS_QUERY_WH` once (with tracking COMMENTs), or run Snowsight App Development Setup.
-3. **Manifests** in `dashboard-react/`: `app.yml` (build) + `snowflake.yml` (deploy, from `snow app setup`).
-   - **`npm ci --include=dev`** is mandatory (builder runs `NODE_ENV=production`; vite/tsc are devDeps → otherwise `tsc: not found`).
-   - **No `app.yml` `artifacts:` block** — let the builder package the whole working dir (a `dest` rewrite breaks the `dist-server/index.js` entry and `node_modules`).
-4. **Deploy:** `snow app validate` → `snow app deploy`. A `provisioning in progress` / `Upgrade failed` CLI timeout is usually a wait timeout, not a failure — verify with `SHOW APPLICATION SERVICES` (RUNNING + `is_upgrading` FALSE) and `SYSTEM$GET_APPLICATION_SERVICE_LOGS` (healthy startup ends `Aviation dashboard SPCS on :8080`).
-5. **Data access:** owner's rights — the service owner role needs USAGE/SELECT on `AIRPORT_*` + the query warehouse (satisfied automatically if owner is ACCOUNTADMIN).
-6. **Basemap:** loaded client-side from the carto CDN (`MapView.tsx`); App Runtime can't bind an EAI, so there is no server-side `/api/tiles` proxy.
-7. **Cleanup:** `snow app teardown`.
-
-Deployed reference: `SNOWFLAKE_APPS.PUBLIC.AVIATION_DASHBOARD` (Application Service) + `AVIATION_DASHBOARD_REPO` (artifact repo).
-
----
-
-# React Dashboard (SPCS) — fallback
-
-> **Fallback path.** Prefer [App Runtime](#react-dashboard-app-runtime--preferred)
-> above. Use this manual SPCS pipeline only when App Runtime is unavailable (e.g.
-> CLI < 3.19) or explicitly requested.
+# React Dashboard (SPCS)
 
 A React 18 + TypeScript + deck.gl dashboard deployed as a Snowpark Container Service. Supports both Docker and Podman. Uses the same Snowflake design system as the ORS Control App from the routing solution.
 

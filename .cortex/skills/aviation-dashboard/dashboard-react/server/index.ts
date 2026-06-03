@@ -144,7 +144,38 @@ app.get('/api/airports', async (_req, res) => {
 });
 
 app.get('/api/status', (_req, res) => {
-  res.json({ status: 'ok', version: process.env.APP_VERSION || '0.0.0' });
+  res.json({ status: 'ok', version: '1.0.0' });
+});
+
+const tileCache = new Map<string, { data: Buffer; ts: number }>();
+const TILE_TTL = 3600_000;
+const MAX_TILES = 5000;
+
+app.get('/api/tiles/:z/:x/:y', async (req, res) => {
+  const { z, x, y } = req.params;
+  const key = `${z}/${x}/${y}`;
+  const cached = tileCache.get(key);
+  if (cached && Date.now() - cached.ts < TILE_TTL) {
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=3600');
+    return res.send(cached.data);
+  }
+  try {
+    const url = `https://a.basemaps.cartocdn.com/light_all/${z}/${x}/${y}@2x.png`;
+    const tileRes = await fetch(url);
+    if (!tileRes.ok) return res.status(tileRes.status).end();
+    const buf = Buffer.from(await tileRes.arrayBuffer());
+    if (tileCache.size >= MAX_TILES) {
+      const oldest = tileCache.keys().next().value;
+      if (oldest) tileCache.delete(oldest);
+    }
+    tileCache.set(key, { data: buf, ts: Date.now() });
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.send(buf);
+  } catch {
+    res.status(502).end();
+  }
 });
 
 if (!IS_SPCS) {
