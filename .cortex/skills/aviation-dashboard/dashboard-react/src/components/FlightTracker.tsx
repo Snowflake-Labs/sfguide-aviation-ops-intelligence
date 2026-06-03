@@ -232,29 +232,26 @@ export default function FlightTracker() {
     const maxAlt = Math.max(...alts, 1);
 
     const path = trackPoints.map(d => [d.lon, d.lat]);
-    const avgAlt = alts.length ? alts.reduce((a, b) => a + b, 0) / alts.length : 0;
-    const color = altColor(avgAlt, minAlt, maxAlt);
 
-    // Split the path at large time gaps so the line doesn't draw a straight
-    // chord across coverage holes / between separate legs of the same callsign.
-    const segments: number[][][] = [];
-    let cur: number[][] = [];
-    let prevSec: number | null = null;
-    for (const d of trackPoints) {
-      if (prevSec !== null && d.sec - prevSec > MAX_GAP_SEC) {
-        if (cur.length > 1) segments.push(cur);
-        cur = [];
-      }
-      cur.push([d.lon, d.lat]);
-      prevSec = d.sec;
+    // Build per-edge segments colored by altitude so the trajectory matches the
+    // on-screen Low -> High legend gradient (teal -> yellow -> red). Edges that
+    // straddle a large time gap (coverage hole / separate leg of the same
+    // callsign) are dropped so the line doesn't draw a straight chord across them.
+    const segments: { path: number[][]; color: [number, number, number] }[] = [];
+    for (let i = 0; i < trackPoints.length - 1; i++) {
+      const a = trackPoints[i], b = trackPoints[i + 1];
+      if (b.sec - a.sec > MAX_GAP_SEC) continue;
+      segments.push({
+        path: [[a.lon, a.lat], [b.lon, b.lat]],
+        color: altColor((a.alt + b.alt) / 2, minAlt, maxAlt),
+      });
     }
-    if (cur.length > 1) segments.push(cur);
 
     const result: any[] = [
       ...base,
       new PathLayer({
         id: 'flight-path',
-        data: segments.map(s => ({ path: s, color })),
+        data: segments,
         getPath: (d: any) => d.path,
         getColor: (d: any) => [...d.color, 200],
         widthMinPixels: 3,
