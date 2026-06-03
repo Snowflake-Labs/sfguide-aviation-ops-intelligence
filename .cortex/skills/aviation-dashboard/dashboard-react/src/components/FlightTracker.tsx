@@ -5,7 +5,7 @@ import MetricCard from '../shared/MetricCard';
 import { fmtNum, fmtAltitude, fmtSpeed, fmtTime } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSnowflake, useSfQuery } from '../hooks/useSnowflake';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { useInfrastructure, type LayerPreset } from '../shared/useInfrastructure';
 import LayerPresetSelector from '../shared/LayerPresetSelector';
 
@@ -314,13 +314,16 @@ export default function FlightTracker() {
       }));
   }, [trackData]);
 
-  const currentProfilePoint = useMemo(() => {
-    const match = profileData.find((d, i) => {
+  const currentIndex = useMemo(() => {
+    let idx = -1;
+    for (let i = 0; i < profileData.length; i++) {
       const next = profileData[i + 1];
-      return d.sec <= currentTime && (!next || next.sec > currentTime);
-    });
-    return match || null;
+      if (profileData[i].sec <= currentTime && (!next || next.sec > currentTime)) { idx = i; break; }
+    }
+    return idx;
   }, [profileData, currentTime]);
+
+  const currentProfilePoint = currentIndex >= 0 ? profileData[currentIndex] : null;
 
   const currentTimeLabel = currentProfilePoint?.time || secToHMS(currentTime);
 
@@ -414,19 +417,22 @@ export default function FlightTracker() {
                 <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                 <YAxis tick={{ fontSize: 10 }} />
                 <Tooltip />
-                <Line type="monotone" dataKey="altitude" stroke="#29B5E8" dot={false} strokeWidth={1.5} />
+                <Line
+                  type="monotone"
+                  dataKey="altitude"
+                  stroke="#29B5E8"
+                  strokeWidth={1.5}
+                  isAnimationActive={false}
+                  dot={(props: any) => {
+                    if (props.index !== currentIndex) return <g key={`d-${props.index}`} />;
+                    return (
+                      <circle key={`d-${props.index}`} cx={props.cx} cy={props.cy} r={5}
+                        fill="#E53935" stroke="#fff" strokeWidth={2} />
+                    );
+                  }}
+                />
                 {trackData.length > 0 && (
                   <ReferenceLine x={currentTimeLabel} stroke="#E53935" strokeWidth={2} strokeDasharray="3 3" />
-                )}
-                {currentProfilePoint && (
-                  <ReferenceDot
-                    x={currentProfilePoint.time}
-                    y={currentProfilePoint.altitude}
-                    r={5}
-                    fill="#E53935"
-                    stroke="#fff"
-                    strokeWidth={2}
-                  />
                 )}
               </LineChart>
             </ResponsiveContainer>
