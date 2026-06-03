@@ -1,0 +1,30 @@
+# Snowflake App Runtime build manifest for the Aviation Ops dashboard.
+# Keeps the existing Vite (client) + Express (server) app — no Next.js rewrite.
+# The remote builder runs install -> build, packages the whole post-build working
+# directory into an immutable version, then starts the container with run.command.
+
+install:
+  commands:
+    # Force dev deps even though the builder sets NODE_ENV=production — vite + tsc
+    # live in devDependencies and are required for the build. They are stripped
+    # again by `npm prune --omit=dev` below before packaging.
+    - [ npm, ci, "--include=dev" ]
+
+build:
+  commands:
+    - [ npm, run, build ]            # tsc -b && vite build  -> dist/
+    - [ npm, run, "build:server" ]   # tsc server -> dist-server/
+    - [ npm, prune, "--omit=dev" ]   # strip dev deps; keep runtime deps only
+
+# No `artifacts` section: the builder packages the whole post-build working
+# directory, preserving real paths (dist/, dist-server/, node_modules/,
+# package.json). A custom `artifacts` block rewrites paths via `dest` and breaks
+# the dist-server/index.js entry + node_modules layout — so we omit it.
+
+run:
+  command: [ node, dist-server/index.js ]
+
+profile:
+  icon: public/snowflake_h3.png
+  label: Aviation Ops Dashboard
+  description: Real-time airport operations analytics (ADS-B, gates, runways, TSA throughput).
