@@ -5,7 +5,7 @@ import MetricCard from '../shared/MetricCard';
 import { fmtNum, fmtAltitude, fmtSpeed, fmtTime } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSnowflake, useSfQuery } from '../hooks/useSnowflake';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import { useInfrastructure, type LayerPreset } from '../shared/useInfrastructure';
 import LayerPresetSelector from '../shared/LayerPresetSelector';
 
@@ -314,13 +314,15 @@ export default function FlightTracker() {
       }));
   }, [trackData]);
 
-  const currentTimeLabel = useMemo(() => {
+  const currentProfilePoint = useMemo(() => {
     const match = profileData.find((d, i) => {
       const next = profileData[i + 1];
       return d.sec <= currentTime && (!next || next.sec > currentTime);
     });
-    return match?.time || secToHMS(currentTime);
+    return match || null;
   }, [profileData, currentTime]);
+
+  const currentTimeLabel = currentProfilePoint?.time || secToHMS(currentTime);
 
   const getTooltip = useCallback(({ object, layer }: any) => {
     if (!object) return null;
@@ -415,6 +417,16 @@ export default function FlightTracker() {
                 <Line type="monotone" dataKey="altitude" stroke="#29B5E8" dot={false} strokeWidth={1.5} />
                 {trackData.length > 0 && (
                   <ReferenceLine x={currentTimeLabel} stroke="#E53935" strokeWidth={2} strokeDasharray="3 3" />
+                )}
+                {currentProfilePoint && (
+                  <ReferenceDot
+                    x={currentProfilePoint.time}
+                    y={currentProfilePoint.altitude}
+                    r={5}
+                    fill="#E53935"
+                    stroke="#fff"
+                    strokeWidth={2}
+                  />
                 )}
               </LineChart>
             </ResponsiveContainer>
