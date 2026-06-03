@@ -41,9 +41,9 @@ export default function TrafficAnalysis() {
   const { data: dailyData, loading } = useSfQuery(dailySql, airport, 'PUBLIC', [dateFrom, dateTo, granularity, vehicleSqlFilter]);
 
   const hourlySql = airport
-    ? `SELECT HOUR, SUM(AIRCRAFT_COUNT) AS AIRCRAFT
+    ? `SELECT HOUR(HOUR) AS HOUR, SUM(AIRCRAFT_COUNT) AS AIRCRAFT
        FROM ${db}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
+       WHERE HOUR::DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
        GROUP BY 1 ORDER BY 1`
     : '';
   const { data: hourlyData } = useSfQuery(hourlySql, airport, 'PUBLIC', [dateFrom, dateTo, vehicleSqlFilter]);
@@ -58,9 +58,9 @@ export default function TrafficAnalysis() {
   const dowData = useMemo(() => dowRaw.map((d: any) => ({ DOW: DOW_SHORT[Number(d.DOW)], AIRCRAFT: Number(d.AIRCRAFT) || 0 })), [dowRaw]);
 
   const heatmapSql = airport
-    ? `SELECT DAYOFWEEK(DATE) AS DOW, HOUR, SUM(AIRCRAFT_COUNT) AS CNT
+    ? `SELECT DAYOFWEEK(HOUR) AS DOW, HOUR(HOUR) AS HOUR, SUM(AIRCRAFT_COUNT) AS CNT
        FROM ${db}.FLIGHT_TRAFFIC_FACT_ADSB_HOURLY
-       WHERE DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
+       WHERE HOUR::DATE BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE ${vehicleSqlFilter}
        GROUP BY 1, 2`
     : '';
   const { data: heatmapRaw } = useSfQuery(heatmapSql, airport, 'PUBLIC', [dateFrom, dateTo, vehicleSqlFilter]);
