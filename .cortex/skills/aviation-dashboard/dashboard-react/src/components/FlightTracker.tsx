@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
+import { ScatterplotLayer, PathLayer, IconLayer } from '@deck.gl/layers';
 import MapView from '../shared/MapView';
 import MetricCard from '../shared/MetricCard';
 import { fmtNum, fmtAltitude, fmtSpeed, fmtTime } from '../shared/format';
@@ -240,17 +240,29 @@ export default function FlightTracker() {
 
     if (currentPos) {
       result.push(
-        new ScatterplotLayer({
+        new IconLayer({
           id: 'flight-current-pos',
           data: [currentPos],
           getPosition: (d: TrackPoint) => [d.lon, d.lat],
-          getFillColor: [41, 181, 232, 230],
-          getLineColor: [255, 255, 255, 220],
-          getRadius: 120,
-          radiusMinPixels: 7,
-          radiusMaxPixels: 14,
-          stroked: true,
-          lineWidthMinPixels: 2,
+          getIcon: () => ({
+            url: '/plane.png',
+            width: 256,
+            height: 256,
+            anchorX: 128,
+            anchorY: 128,
+            // mask:false preserves the PNG's own colors instead of tinting
+            mask: false,
+          }),
+          // ADS-B TRACK is degrees clockwise from north; the plane.png nose
+          // points northwest (~315deg) at rest. deck.gl getAngle is CCW-positive
+          // and displayed_bearing = 315 - getAngle, so align nose with heading
+          // via getAngle = -45 - track (equivalent to 315 - track).
+          getAngle: (d: TrackPoint) => -45 - (d.track || 0),
+          getSize: 40,
+          sizeUnits: 'pixels',
+          sizeMinPixels: 20,
+          sizeMaxPixels: 64,
+          billboard: true,
           pickable: true,
         })
       );
