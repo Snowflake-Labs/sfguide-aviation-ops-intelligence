@@ -155,11 +155,13 @@ In dependency order:
 ```sql
 CREATE TASK {TARGET_DB}.{SCHEMA}.TASK_REFRESH_DERIVED
   WAREHOUSE = {WAREHOUSE}
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
   AFTER {TARGET_DB}.{SCHEMA}.TASK_ENRICH_ADSB
   AS CALL {TARGET_DB}.{SCHEMA}.PROC_REFRESH_DERIVED();
 
 CREATE TASK {TARGET_DB}.{SCHEMA}.TASK_REFRESH_ANALYTICS
   WAREHOUSE = {WAREHOUSE}
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
   AFTER {TARGET_DB}.{SCHEMA}.TASK_REFRESH_DERIVED
   AS CALL {TARGET_DB}.{SCHEMA}.PROC_REFRESH_ANALYTICS();
 ```

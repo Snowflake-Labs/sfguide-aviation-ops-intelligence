@@ -38,11 +38,11 @@ CREATE SCHEMA IF NOT EXISTS {TARGET_DB}.TAGS
 
 CREATE TAG IF NOT EXISTS {TARGET_DB}.TAGS.SOLUTION
   ALLOWED_VALUES 'aviation-ops-intelligence'
-  COMMENT = 'Identifies objects belonging to Aviation Ops Intelligence solution';
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 
 CREATE TAG IF NOT EXISTS {TARGET_DB}.TAGS.COMPONENT
   ALLOWED_VALUES 'etl', 'analytics', 'realtime', 'backfill', 'properties'
-  COMMENT = 'Functional component categorization';
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-base-setup","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
 ## Step 3: Create UDFs

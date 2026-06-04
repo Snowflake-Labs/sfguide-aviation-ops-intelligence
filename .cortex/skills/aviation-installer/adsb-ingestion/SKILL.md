@@ -147,16 +147,19 @@ Python procedures for downloading globe_history archives from adsb.lol GitHub re
 CREATE TASK {TARGET_DB}.{SCHEMA}.TASK_INGEST_ADSB
   WAREHOUSE = {WAREHOUSE}
   SCHEDULE = 'USING CRON 30 1 * * * UTC'
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-adsb-ingestion","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
   AS CALL {TARGET_DB}.{SCHEMA}.PROC_ADSB_INGEST_AND_ETL();
 
 CREATE TASK {TARGET_DB}.{SCHEMA}.TASK_ENRICH_ADSB
   WAREHOUSE = {WAREHOUSE}
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-adsb-ingestion","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
   AFTER {TARGET_DB}.{SCHEMA}.TASK_INGEST_ADSB
   AS CALL {TARGET_DB}.{SCHEMA}.PROC_ENRICH_ADSB_WITH_SCHEDULE(1);
 
 CREATE TASK {TARGET_DB}.{SCHEMA}.TASK_ENRICH_AIRCRAFT_META
   WAREHOUSE = {WAREHOUSE}
   SCHEDULE = 'USING CRON 15 3 * * * UTC'
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-adsb-ingestion","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
   AS CALL {TARGET_DB}.{SCHEMA}.PROC_ENRICH_AIRCRAFT_META_AND_BACKFILL();
 ```
 

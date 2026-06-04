@@ -26,6 +26,9 @@ USE DATABASE   IDENTIFIER($PARAM_DB);
 USE SCHEMA     IDENTIFIER($PARAM_SCHEMA);
 USE WAREHOUSE  IDENTIFIER($PARAM_WAREHOUSE);
 
+-- ── Attribution tracking (required for every session that creates objects) ────
+ALTER SESSION SET query_tag = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-tsa-throughput","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
+
 -- =============================================================================
 -- 1. STAGES
 -- Both stages must use SNOWFLAKE_SSE encryption — required for AI_EXTRACT.
@@ -34,12 +37,12 @@ USE WAREHOUSE  IDENTIFIER($PARAM_WAREHOUSE);
 CREATE STAGE IF NOT EXISTS TSA_pdf_stage
   DIRECTORY  = (ENABLE = TRUE)
   ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE')
-  COMMENT    = 'Stores the weekly downloaded TSA throughput PDF';
+  COMMENT    = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-tsa-throughput","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 
 CREATE STAGE IF NOT EXISTS TSA_pdf_pages_stage
   DIRECTORY  = (ENABLE = TRUE)
   ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE')
-  COMMENT    = 'Scratch space for 1-page PDF splits — files are removed after extraction';
+  COMMENT    = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-tsa-throughput","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 
 -- =============================================================================
 -- 2. TABLE
@@ -57,7 +60,8 @@ CREATE TABLE IF NOT EXISTS tsa_throughput (
     checkpoint         VARCHAR,
     total_pax_kcm_pax  VARCHAR,
     extracted_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
-);
+)
+COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-tsa-throughput","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 
 -- =============================================================================
 -- 3. STORED PROCEDURES  (in dependency order)
@@ -75,6 +79,7 @@ RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python', 'requests')
 EXTERNAL_ACCESS_INTEGRATIONS = (BROAD_EAI_INTEGRATION)   -- update if using a different EAI
 HANDLER = 'run'
+COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-tsa-throughput","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
 AS $$
 import io
 import requests
@@ -113,6 +118,7 @@ RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python', 'requests')
 EXTERNAL_ACCESS_INTEGRATIONS = (BROAD_EAI_INTEGRATION)   -- update if using a different EAI
 HANDLER = 'run'
+COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-tsa-throughput","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
 AS $$
 import re
 import requests
@@ -173,6 +179,7 @@ LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python', 'pypdf')
 HANDLER = 'run'
+COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-tsa-throughput","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
 AS $$
 import io
 import json
@@ -321,12 +328,14 @@ $$;
 CREATE OR REPLACE TASK fetch_tsa_pdf_task
   WAREHOUSE = SNOWHOUSE                                      -- update to match PARAM_WAREHOUSE
   SCHEDULE  = 'USING CRON 0 9 * * 1 America/Los_Angeles'   -- every Monday 9am PT
+  COMMENT   = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-tsa-throughput","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
 AS
   CALL fetch_latest_tsa_throughput_pdf('@TSA_pdf_stage');   -- note: unqualified, resolved via USE SCHEMA above
 
 -- Child task (chained after root)
 CREATE OR REPLACE TASK extract_tsa_pdf_task
   WAREHOUSE = SNOWHOUSE                                      -- update to match PARAM_WAREHOUSE
+  COMMENT   = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-tsa-throughput","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
   AFTER     fetch_tsa_pdf_task
 AS
   CALL process_tsa_pdf(

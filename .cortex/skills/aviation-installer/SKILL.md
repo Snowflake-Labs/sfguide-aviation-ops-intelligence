@@ -256,7 +256,8 @@ The airline CSV and skill files are loaded from a Git Repository Stage inside th
 ```sql
 CREATE OR REPLACE GIT REPOSITORY {TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO
   API_INTEGRATION = (ask user or use existing)
-  ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-aviation-ops-intelligence.git';
+  ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-aviation-ops-intelligence.git'
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-installer","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
 Set `{GIT_REPO_STAGE_BASE}` = `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main`.
