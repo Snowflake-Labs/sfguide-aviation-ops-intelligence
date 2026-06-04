@@ -44,7 +44,7 @@ AS
 
 ALTER TASK {TARGET_DB}.{SCHEMA}.TASK_EXTRACT_TSA_PDF
   SET TAG {TARGET_DB}.TAGS.SOLUTION = 'aviation-ops-intelligence',
-          {TARGET_DB}.TAGS.COMPONENT = 'tsa-throughput';
+          {TARGET_DB}.TAGS.COMPONENT = 'etl';
 ```
 
 > **Note:** Task is created SUSPENDED. The router resumes it (child first, then root) after all tasks are ready.
