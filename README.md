@@ -196,4 +196,6 @@ For skill conventions and developer rules, see [AGENTS.md](AGENTS.md).
 
 ## License
 
-Apache License 2.0
+Snowflake Skills License — © 2026 Snowflake Inc. All rights reserved.
+
+Use of these materials is governed by your agreement with Snowflake for the Service, or, if no separate agreement exists, by Snowflake's [Terms of Service](https://www.snowflake.com/en/legal/terms-of-service/). See [LICENSE](LICENSE) for full terms, including additional restrictions and the disclaimer of warranties.
