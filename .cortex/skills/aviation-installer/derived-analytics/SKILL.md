@@ -85,7 +85,7 @@ Report all friction points (errors, warnings, workarounds, race conditions) back
 > - `references/06a-procedures.md` — PROC_REFRESH_DERIVED, PROC_SMOKE_CHECK, PROC_REFRESH_ANALYTICS, PROC_RESUME_OPTIONAL_TASK
 > - `references/06b-tasks.md` — Task CREATE statements (no COMMENT on AFTER tasks) + ALTER TAG
 > - `references/06c-operations.md` — DT refresh, DT resume, install-time calls, verification
-> - `references/07-tsa-checkpoint-geo.md` — V_TSA_CHECKPOINT_GEO view (TSA throughput mapped to terminal geometries)
+> - `references/07-tsa-checkpoint-geo.md` — V_TSA_THROUGHPUT_CLEAN view (REQUIRED by TSA dashboard KPIs/charts) + V_TSA_CHECKPOINT_GEO view (TSA throughput mapped to terminal geometries)
 >
 > **Execute ALL SQL from each file in order. Do NOT skip or optimize away any queries.**
 
@@ -140,6 +140,7 @@ In dependency order:
 - `H2H_CONFLICT_PAIRS` — head-to-head conflict placeholder table
 - `V_AIR_OPS_TIMELINE` — operational timeline view (placeholder structure)
 - `V_AIR_OPS_DAILY_KPIS` — daily KPI view (placeholder structure for Performance page)
+- `V_TSA_THROUGHPUT_CLEAN` — typed/cleaned TSA throughput (REQUIRED by the TSA dashboard page; airport-agnostic, parses date/hour/passengers, drops misaligned-extraction rows)
 - `V_TSA_CHECKPOINT_GEO` — TSA checkpoint throughput mapped to terminal building geometries (fuzzy-matched from PROPERTIES_INFRASTRUCTURE)
 
 ### Step 6: Create Refresh Procedures
@@ -154,11 +155,13 @@ In dependency order:
 ```sql
 CREATE TASK {TARGET_DB}.{SCHEMA}.TASK_REFRESH_DERIVED
   WAREHOUSE = {WAREHOUSE}
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
   AFTER {TARGET_DB}.{SCHEMA}.TASK_ENRICH_ADSB
   AS CALL {TARGET_DB}.{SCHEMA}.PROC_REFRESH_DERIVED();
 
 CREATE TASK {TARGET_DB}.{SCHEMA}.TASK_REFRESH_ANALYTICS
   WAREHOUSE = {WAREHOUSE}
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
   AFTER {TARGET_DB}.{SCHEMA}.TASK_REFRESH_DERIVED
   AS CALL {TARGET_DB}.{SCHEMA}.PROC_REFRESH_ANALYTICS();
 ```
@@ -206,7 +209,7 @@ After completing all steps, return to the `aviation-installer` router to proceed
 
 ## Cleanup
 
-Derived analytics creates 13 Dynamic Tables and multiple views/procedures. Use the `aviation-cleanup` skill which reads `references/drop-order.sql` to tear down objects in the correct dependency order.
+Derived analytics creates 13 Dynamic Tables and multiple views/procedures. Use the `aviation-cleanup` skill which reads `.cortex/skills/aviation-cleanup/references/drop-order.sql` to tear down objects in the correct dependency order.
 
 For manual cleanup, suspend tasks first:
 
@@ -215,4 +218,4 @@ ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_REFRESH_DERIVED SUSPEND;
 ALTER TASK IF EXISTS {TARGET_DB}.{SCHEMA}.TASK_REFRESH_ANALYTICS SUSPEND;
 ```
 
-Then drop objects in reverse dependency order — see `aviation-cleanup` skill's `references/drop-order.sql` for the full sequence.
+Then drop objects in reverse dependency order — see `.cortex/skills/aviation-cleanup/references/drop-order.sql` for the full sequence.

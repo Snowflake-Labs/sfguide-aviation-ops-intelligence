@@ -16,8 +16,8 @@ Chained after TASK_INGEST_ADSB — runs daily schedule sync.
 ```sql
 CREATE OR REPLACE TASK {TARGET_DB}.{SCHEMA}.TASK_FLIGHT_SCHEDULE
   WAREHOUSE = {WAREHOUSE}
-  AFTER {TARGET_DB}.{SCHEMA}.TASK_INGEST_ADSB
   COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-flight-schedules","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
+  AFTER {TARGET_DB}.{SCHEMA}.TASK_INGEST_ADSB
 AS
   CALL {TARGET_DB}.{SCHEMA}.PROC_FLIGHT_SCHEDULE_INGEST_AND_ETL();
 ```

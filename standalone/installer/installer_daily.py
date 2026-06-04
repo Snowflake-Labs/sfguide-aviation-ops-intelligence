@@ -2255,8 +2255,8 @@ ALTER TASK {database}.{schema}.TASK_INGEST_ADSB
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE TASK {database}.{schema}.TASK_ENRICH_ADSB
   WAREHOUSE = {warehouse}
-  AFTER {database}.{schema}.TASK_INGEST_ADSB
   COMMENT = '{tracking_tag}'
+  AFTER {database}.{schema}.TASK_INGEST_ADSB
 AS
   CALL {database}.{schema}.PROC_ENRICH_ADSB_WITH_SCHEDULE(2);
 
@@ -2267,8 +2267,8 @@ ALTER TASK {database}.{schema}.TASK_ENRICH_ADSB
 -- Task DAG: TASK_REFRESH_DERIVED runs after TASK_ENRICH_ADSB completes
 CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_DERIVED
   WAREHOUSE = {warehouse}
-  AFTER {database}.{schema}.TASK_ENRICH_ADSB
   COMMENT = '{tracking_tag}'
+  AFTER {database}.{schema}.TASK_ENRICH_ADSB
 AS
   CALL {database}.{schema}.PROC_REFRESH_DERIVED();
 
@@ -2279,8 +2279,8 @@ ALTER TASK {database}.{schema}.TASK_REFRESH_DERIVED
 -- Task DAG: TASK_REFRESH_ANALYTICS runs after TASK_REFRESH_DERIVED completes
 CREATE OR REPLACE TASK {database}.{schema}.TASK_REFRESH_ANALYTICS
   WAREHOUSE = {warehouse}
-  AFTER {database}.{schema}.TASK_REFRESH_DERIVED
   COMMENT = '{tracking_tag}'
+  AFTER {database}.{schema}.TASK_REFRESH_DERIVED
 AS
   CALL {database}.{schema}.PROC_REFRESH_ANALYTICS();
 
@@ -3240,6 +3240,7 @@ BEGIN
       -- 5-day backfill can take a while (downloads + extract + SQL filter). Give it room.
       USER_TASK_TIMEOUT_MS = 86400000
       ALLOW_OVERLAPPING_EXECUTION = FALSE
+      COMMENT = ''{tracking_tag}''
     AS
       CALL {database}.{schema}.PROC_RUN_BACKFILL_ONCE();
   ';
@@ -3492,6 +3493,7 @@ BEGIN
       SCHEDULE = ''60 MINUTE''
       USER_TASK_TIMEOUT_MS = 21600000
       ALLOW_OVERLAPPING_EXECUTION = FALSE
+      COMMENT = ''{tracking_tag}''
     AS
       CALL {database}.{schema}.PROC_RUN_BACKFILL_RETRY_UTC();
   ';
@@ -5507,8 +5509,8 @@ $$;
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE TASK {database}.{schema}.TASK_FLIGHT_SCHEDULE
   WAREHOUSE = {warehouse}
-  AFTER {database}.{schema}.TASK_INGEST_ADSB
   COMMENT = '{tracking_tag}'
+  AFTER {database}.{schema}.TASK_INGEST_ADSB
 AS
   CALL {database}.{schema}.PROC_FLIGHT_SCHEDULE_INGEST_AND_ETL();
 
@@ -5796,8 +5798,8 @@ AS
 
 CREATE OR REPLACE TASK {database}.{schema}.TASK_EXTRACT_TSA_PDF
   WAREHOUSE = {warehouse}
-  AFTER     {database}.{schema}.TASK_FETCH_TSA_PDF
   COMMENT   = '{tracking_tag}'
+  AFTER     {database}.{schema}.TASK_FETCH_TSA_PDF
 AS
   CALL {database}.{schema}.PROC_PROCESS_TSA_PDF(
     '@{database}.{schema}.TSA_PDF_PAGES_STAGE',

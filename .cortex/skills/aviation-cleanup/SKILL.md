@@ -54,6 +54,7 @@ Drop order reverses creation dependencies (most-dependent objects first).
 | # | Object Type | How to Discover | Drop Command |
 |---|-------------|-----------------|--------------|
 | 1 | Streamlit Apps | `SHOW STREAMLITS` + comment match | `DROP STREAMLIT IF EXISTS <db>.<schema>.<name>` |
+| 1b | SPCS dashboard | `SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN ACCOUNT` (by name) | `DROP SERVICE IF EXISTS <db>.PUBLIC.AVIATION_DASHBOARD_SERVICE;` then `DROP COMPUTE POOL IF EXISTS AVIATION_DASHBOARD_COMPUTE_POOL;` `DROP IMAGE REPOSITORY IF EXISTS <db>.PUBLIC.AVIATION_DASHBOARD_REPO;` |
 | 2 | Tasks | `SHOW TASKS IN <db>.<schema>` per airport | `ALTER TASK <name> SUSPEND; DROP TASK IF EXISTS <name>` |
 | 3 | Dynamic Tables | `SHOW DYNAMIC TABLES IN <db>.<schema>` per airport | `DROP DYNAMIC TABLE IF EXISTS <name>` |
 | 4 | Views | `INFORMATION_SCHEMA.VIEWS` + comment match | `DROP VIEW IF EXISTS <name>` |

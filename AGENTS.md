@@ -41,14 +41,69 @@ logs/                        # Legacy error/friction logs
 ## Build, Test, and Lint
 
 ```bash
-# Run skill evals (trigger accuracy, quality checks, cross-ref validation)
+# Run skill evals (trigger accuracy, quality checks, cross-ref, sql, image-version consistency)
 python3 .cortex/skills/evals/run_evals.py
+
+# Run only the image-version consistency eval (fast pre-deploy gate)
+python3 .cortex/skills/evals/run_evals.py --type images
 
 # Audit a single skill interactively
 # Invoke the skill-optimiser skill in Cortex Code: "audit skill <name>"
 ```
 
 No global build/lint step — each skill is independently deployable via its own SKILL.md workflow.
+
+## SPCS Image Versioning (Required Pattern)
+
+Skills that ship SPCS container images MUST follow this pattern to prevent stale-image deployments:
+
+1. **Single source of truth**: pin every image tag in `<skill>/dashboard-*/image-versions.env` (e.g. [aviation-dashboard/dashboard-react/image-versions.env](.cortex/skills/aviation-dashboard/dashboard-react/image-versions.env)).
+2. **Never use `:latest`** in service YAMLs or `ALTER SERVICE ... FROM SPECIFICATION`. SPCS caches `:latest` and will not re-pull on service update, causing stale deployments. Use semver tags (`v1.0.0`, `v1.0.1`, ...).
+3. **Bump tags only via `scripts/bump_tag.sh`** (`patch|minor|major`). Hand-editing `image-versions.env` is discouraged — the script enforces semver parsing and re-runs the validator automatically so a silent tag reuse is impossible.
+4. **Service YAML uses a placeholder** (`{AVIATION_DASHBOARD_TAG}`) that the skill substitutes at deploy time with the value from `image-versions.env`. `scripts/apply_service_spec.sh` performs the substitution and fails if any placeholder remains unresolved.
+5. **Two-file `.dockerignore` pattern** for ARM Mac builds: `.dockerignore` excludes `dist/`, `.dockerignore.prebuilt` allows it (use with `podman build --ignorefile`).
+6. **Always build with `--no-cache`**. Cached layers can silently reuse a stale `dist/` COPY step and ship old bytes under a new tag. `scripts/deploy.sh` enforces this.
+7. **Validator with code-drift guard**: `scripts/check_image_versions.sh` fails if any YAML/manifest/doc drifts from `image-versions.env` AND fails if React/server sources have changed since the tag-bump commit (or are uncommitted). The `images` eval auto-discovers and runs these.
+8. **Orchestrator**: `scripts/deploy.sh` is the entry point — it chains validate -> compile -> build (`--no-cache`) -> push -> `ALTER SERVICE` -> digest verification, aborting on any failure.
+9. **Post-deploy digest verification**: `scripts/verify_service_image.sh` parses `SYSTEM$GET_SERVICE_STATUS` and asserts the running container image ends with the pinned tag. Catches the case where SPCS served a cached digest despite the `ALTER SERVICE`.
+10. **Rolling update**: run `scripts/bump_tag.sh <level>` then `scripts/deploy.sh`. Rollback = edit `image-versions.env` back and re-run `scripts/deploy.sh` with `SKIP_BUILD=1` (no rebuild needed).
+
+## Fix Discipline (new-deployment-first)
+
+**MANDATORY:** Every bug fix or improvement MUST first land in the source artifacts that a fresh, from-scratch deployment consumes, so the next clean install is correct with no manual step. A live-environment hotfix is always secondary and is only valid once the same change exists in the repo source.
+
+- **Data / SQL fixes** → skill SQL in `.cortex/skills/aviation-installer/**/references/*.md`, seed data (`.cortex/skills/aviation-installer/base-setup/data/airlines.csv`, `standalone/installer/airlines.csv`), and/or the Streamlit installer in `standalone/installer/`. NOT just an ad-hoc `snow sql` run against a live account.
+- **Dashboard fixes** (React/Streamlit) → source under `.cortex/skills/aviation-dashboard/dashboard-react/` or `dashboard-streamlit/` PLUS an image-version bump via `scripts/bump_tag.sh` when deploying React/SPCS (see **SPCS Image Versioning**). NOT just a redeploy of an unchanged image.
+- **Config / seed fixes** → seed in the skill reference SQL or installer boot path so a fresh `aviation-installer` run never depends on a one-off ALTER against live objects.
+
+Before considering any fix done, reason through the fresh-install path (`aviation-installer` router → sub-skills): "does a brand-new deploy of this repo already include this fix without manual intervention?" If not, fix the source first, then (optionally) apply the same change to the live install. When both are needed, do the repo source edit BEFORE the live hotfix.
+
+## Commit Discipline
+
+**MANDATORY:** After each logical change is completed and verified, create a git commit. Do not batch unrelated changes into a single commit.
+
+### Branching Rules
+
+- **`main`** is the release branch (`origin/HEAD` → `main`). Changes land on `main` only via merged PRs from `dev`. Do not commit directly to `main`.
+- **`dev`** is the integration branch. Feature work merges into `dev` via PRs. Avoid committing directly to `dev` when a topic branch is appropriate.
+- **Topic branches** (`doc`, `ports`, `coco-skill`, etc.) are used for focused work. Create or checkout a branch from `dev`, open a PR targeting `dev`, and merge when reviewable.
+- Promotion **`dev` → `main`** is human-only — assistants do not open release PRs unless explicitly asked.
+
+Before starting work, confirm you are on the intended branch (`git branch --show-current`). If `gh` is available, use it to open or update PRs into `dev`.
+
+### Commit Rules
+
+- One commit per logical change (one skill edit, one bug fix, one doc update)
+- Verify before commit: SQL compiles, `python3 .cortex/skills/evals/run_evals.py` passes (or the relevant `--type` subset)
+- Stage only files related to the current change — avoid blanket `git add .` when unrelated edits exist in the working tree
+- Commit message format: `<type>(<scope>): <subject>` where type is one of `feat`, `fix`, `docs`, `refactor`, `chore`, `test`
+  - Examples:
+    - `feat(derived-analytics): tighten ADSB_DATA_LOCAL airport filter`
+    - `fix(aviation-dashboard): bump image tag after LiveView map fix`
+    - `docs(AGENTS.md): add geospatial conventions`
+- If a change spans multiple skills, prefer multiple smaller commits over one large one
+- Never amend or force-push commits the user has not explicitly authorized
+- Never commit directly to `main`
 
 ## Skills Inventory
 
@@ -133,7 +188,8 @@ Sub-skills executed via `runSubagent` should report their friction points back t
 - **Duplicate conventions** — point to `skill-optimiser` references instead of repeating rules
 - **Require ACCOUNTADMIN** — document minimum privileges in `## Required Privileges`; never assume ACCOUNTADMIN
 - **Skip cleanup instructions** — every deployment skill must have a `## Cleanup` section with DROP statements
-- **Create any Snowflake object or run any query without tracking tags** — this is a hard requirement with no exceptions. Every new Snowflake object (TABLE, VIEW, PROCEDURE, FUNCTION, STAGE, SCHEMA, DATABASE, WAREHOUSE, TASK, DYNAMIC TABLE, STREAMLIT, TAG, SECRET, FILE FORMAT) MUST have a COMMENT tracking tag. Every SQL session MUST set `query_tag` before executing statements. This applies to all skills, installer app, stored procedures, dynamic SQL inside procedure bodies, and any other code path that creates objects or runs queries. For objects created via CTAS or dynamic SQL, use `ALTER ... SET COMMENT` immediately after creation. For account-level objects that do not support COMMENT (EAIs, network rules), use consistent naming patterns (`{TARGET_DB}_PUBLIC_{SERVICE}_EAI`, `PUBLIC_{SERVICE}_RULE`) so `aviation-cleanup` can discover them.
+- **Create any Snowflake object or run any query without tracking tags** — this is a hard requirement with no exceptions. Every new Snowflake object (TABLE, VIEW, PROCEDURE, FUNCTION, STAGE, SCHEMA, DATABASE, WAREHOUSE, TASK, DYNAMIC TABLE, STREAMLIT, TAG, SECRET, FILE FORMAT, GIT REPOSITORY, IMAGE REPOSITORY, COMPUTE POOL, SERVICE, NETWORK RULE, EXTERNAL ACCESS INTEGRATION, AGENT) MUST have a COMMENT tracking tag. Every SQL session MUST set `query_tag` before executing statements. This applies to all skills, installer app, dashboard SPCS infrastructure, stored procedures, dynamic SQL inside procedure bodies, and any other code path that creates objects or runs queries. For objects created via CTAS or dynamic SQL, use `ALTER ... SET COMMENT` immediately after creation. For SPCS services, set `COMMENT` on the `CREATE SERVICE` statement (the service YAML spec itself cannot carry the tracking tag); if a service function (`SERVICE=...` clause) does not support COMMENT, document the limitation and ensure the parent procedure has a COMMENT tag. For account-level objects that do not support COMMENT, use consistent naming patterns (`{TARGET_DB}_PUBLIC_{SERVICE}_EAI`, `PUBLIC_{SERVICE}_RULE`) so `aviation-cleanup` can discover them.
+- **Place `COMMENT` after the `AFTER` clause on chained tasks** — for `CREATE TASK ... AFTER <predecessor>`, the `COMMENT` clause is valid but MUST appear **before** the `AFTER` clause (`WAREHOUSE` → `COMMENT` → `AFTER` → `AS`). Putting `COMMENT` after `AFTER` is a syntax error (`unexpected 'COMMENT'`) that silently breaks a fresh install. Do NOT claim COMMENT is unsupported on AFTER-clause tasks — it is supported with correct clause ordering.
 
 ## Tracking Tags
 
@@ -207,7 +263,7 @@ graph TD
     MAIN_FILE = 'streamlit_app.py'
     QUERY_WAREHOUSE = {WAREHOUSE};
   ```
-- React deployed via SPCS (see `dashboard-react/Dockerfile.runtime` and `aviation_dashboard_service.yaml`)
+- React deployed via **SPCS**: manual Docker pipeline (see `dashboard-react/Dockerfile.runtime`, `aviation_dashboard_service.yaml`, `image-versions.env`, `scripts/`). CARTO basemap tiles proxied through Express server (requires CARTO EAI attached to service).
 
 ## Streamlit Installer (Legacy Approach)
 
@@ -274,3 +330,92 @@ TASK_INGEST_ADSB (root, 5-min schedule)
 └── TASK_FETCH_TSA_PDF (optional, weekly Monday 9am PT)
     └── TASK_EXTRACT_TSA_PDF
 ```
+
+## Geospatial Conventions
+
+### Prefer Airport Polygon over Bounding Box
+
+Whenever airport geometry is available in `PROPERTIES_AIRPORT` — and it is after base-setup (`geometry` from Overture, plus `airport_bbox` as a derived axis-aligned polygon) — filter spatial data with the real polygon, not separate `min_lat`/`max_lat`/`min_lon`/`max_lon` predicates alone. Bbox over-includes areas outside the airfield footprint.
+
+| Use case | Bbox (avoid as sole filter) | Polygon (preferred) |
+|---|---|---|
+| Filter ADS-B / telemetry in airport | `LAT BETWEEN min_lat AND max_lat AND LON BETWEEN ...` | `ST_WITHIN(geog, pa.geometry)` or `ST_DWITHIN(geog, pa.geometry, meters)` |
+| Map recenter | midpoint of min/max lat/lon | `center_lat` / `center_lon` or `ST_X(ST_CENTROID(geometry))` |
+| Gate/runway proximity | bbox prefilter only | `ST_WITHIN` / `ST_DWITHIN` against `PROPERTIES_GATES.gate_geom`, `PROPERTIES_RUNWAYS.runway_geog` |
+
+Standard join pattern (use across skill SQL and dashboard queries):
+
+```sql
+JOIN {TARGET_DB}.{SCHEMA}.PROPERTIES_AIRPORT pa
+  ON pa.geometry IS NOT NULL
+WHERE ST_WITHIN(<your_geog_col>, pa.geometry)
+-- or, for a buffer around the airfield (as in ADSB_DATA_LOCAL):
+-- ST_DWITHIN(<your_geog_col>, pa.geometry, <meters>)
+```
+
+In React components, prefer server-side `ST_X`/`ST_Y` or `ST_ASGEOJSON` in SQL rather than serializing full airport polygons into the client query string.
+
+Bbox (`min_lat`, `max_lat`, `min_lon`, `max_lon`, or `airport_bbox`) is acceptable ONLY when:
+- Airport geometry is not yet loaded (mid-install).
+- A cheap bbox prefilter is layered ahead of `ST_WITHIN` / `ST_DWITHIN` — but the spatial predicate MUST still be present as the authoritative filter.
+- `CLUSTER BY` requires numeric columns (GEOGRAPHY is not allowed in `CLUSTER BY`).
+
+### GEOGRAPHY-First Schema Design
+
+- Store point locations as `GEOGRAPHY` columns (not separate FLOAT lat/lon as the primary representation).
+- Construct via `ST_MAKEPOINT(longitude, latitude)` — note: **longitude first**.
+- Line/polygon geometries: use `TO_GEOGRAPHY(...)` or `ST_MAKELINE`.
+- Keep redundant FLOAT lat/lon only when required (CLUSTER BY, legacy APIs, bounding-box configs).
+
+### Preferred Functions
+
+| Instead of | Use |
+|---|---|
+| `H3_LATLNG_TO_CELL(lat, lon, res)` | `H3_POINT_TO_CELL_STRING(geography, res)` |
+| `HAVERSINE(lat1, lon1, lat2, lon2)` (returns km) | `ST_DISTANCE(geog_a, geog_b) / 1000` (meters→km) |
+| `ST_DISTANCE` + filter | `ST_DWITHIN(geog_a, geog_b, meters)` (uses spatial index) |
+| Separate FLOAT lat/lon in WHERE | `ST_WITHIN`, `ST_INTERSECTS`, `ST_CONTAINS` |
+
+### H3 Index Storage
+
+- Always store H3 indices as `VARCHAR` (string format, e.g. `'8928308280fffff'`).
+- Use `H3_POINT_TO_CELL_STRING` (returns VARCHAR directly) — not `H3_LATLNG_TO_CELL` which returns NUMBER.
+- Never cast H3 between NUMBER and STRING at query time — store as string from the start.
+
+### Loading GEOGRAPHY Data
+
+- **COPY INTO with transform**: use `ST_MAKEPOINT($col_lon, $col_lat)` or `TO_GEOGRAPHY($col_wkb)` in the SELECT.
+- **INSERT via SELECT…UNION ALL**: compute `ST_MAKEPOINT(lon, lat)` inline (VALUES clauses cannot contain function calls).
+- `MATCH_BY_COLUMN_NAME` cannot be used when adding computed columns — switch to explicit transform SELECT.
+
+### Direct GEOGRAPHY Column References
+
+All tables are created with GEOGRAPHY columns from the start. Reference them directly:
+
+```sql
+a.LOCATION          -- ADS-B telemetry point
+g.gate_geom         -- gate reference
+r.runway_geog       -- runway polygon
+pa.geometry         -- airport footprint
+```
+
+### deck.gl Layer Selection
+
+| Layer | Data format | Extraction |
+|---|---|---|
+| `ScatterplotLayer` | `[lng, lat]` array | `ST_X(geog)` / `ST_Y(geog)` in SQL |
+| `H3HexagonLayer` | H3 string index | `H3_POINT_TO_CELL_STRING(geog, res)` in SQL |
+| `GeoJsonLayer` | GeoJSON string | `ST_ASGEOJSON(geog)::STRING` in SQL |
+| `PathLayer` | coordinate array | `ST_ASGEOJSON(geog)` → parse coords client-side |
+
+### When FLOAT lat/lon is Acceptable
+
+- Bounding-box configs stored on `PROPERTIES_AIRPORT` (`min_lat`, `max_lat`, `min_lon`, `max_lon`)
+- `CLUSTER BY` expressions (GEOGRAPHY not supported in CLUSTER BY)
+- Direct deck.gl `getPosition` callbacks expecting `[Number, Number]`
+- External API payloads that require numeric coordinate arrays
+
+## Documentation
+
+- [docs/tracking-tags.md](docs/tracking-tags.md) — Session `query_tag` and object `COMMENT` tracking requirements
+- [docs/s_airport_intelligence.png](docs/s_airport_intelligence.png) — Solution architecture diagram

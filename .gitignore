@@ -33,6 +33,9 @@ dist-server/
 build/
 *.egg-info/
 
+# Build/push logs
+push.log
+
 # Cortex Code session artifacts
 .snowflake/cortex/plans/
 
@@ -50,4 +53,5 @@ BACKLOG/BACKLOG_A.md
 INSTALLER_FIX.md
 sfguide-aviation-ops-intelligence.code-workspace
 /reports
+/.venv
 /.snowflake

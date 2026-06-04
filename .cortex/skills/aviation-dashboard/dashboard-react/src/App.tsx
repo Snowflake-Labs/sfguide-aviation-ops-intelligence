@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AirportProvider } from './hooks/useAirport';
 import AirportSwitcher from './shared/AirportSwitcher';
 import Home from './components/Home';
@@ -65,6 +65,14 @@ const FULL_WIDTH_PAGES: Page[] = ['live', 'tracker', 'ground'];
 
 export default function App() {
   const [activePage, setActivePage] = useState<Page>('home');
+  const [appVersion, setAppVersion] = useState('');
+
+  useEffect(() => {
+    fetch('/api/status')
+      .then(r => r.json())
+      .then(d => setAppVersion(d.version || ''))
+      .catch(() => {});
+  }, []);
 
   const navigateTo = (p: Page) => setActivePage(p);
   const isFullWidth = FULL_WIDTH_PAGES.includes(activePage);
@@ -76,6 +84,9 @@ export default function App() {
           <div className="sidebar-brand">
             <img src="/snowflake_h3.png" height="28" alt="" />
             <span>Aviation Ops</span>
+          </div>
+          <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+            <AirportSwitcher />
           </div>
           <div className="sidebar-nav">
             <button
@@ -100,8 +111,7 @@ export default function App() {
             ))}
           </div>
           <div className="sidebar-footer">
-            <AirportSwitcher />
-            <div className="sidebar-version">v1.0.0</div>
+            <div className="sidebar-version">{appVersion ? `v${appVersion}` : ''}</div>
           </div>
         </div>
         <div className="app-content">

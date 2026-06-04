@@ -7,3 +7,4 @@ dist-server
 .env
 *.md
 .dockerignore
+.dockerignore.prebuilt

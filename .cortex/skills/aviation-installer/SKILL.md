@@ -49,7 +49,7 @@ The installer detects existing airport databases before proceeding. When `AIRPOR
 
 ### Dashboard Location
 
-The dashboard is deployed once and auto-discovers all `AIRPORT_XXX` databases. When installing a second (or third) airport, the installer detects the existing dashboard and updates it in-place rather than creating a duplicate. The dashboard always lives in whichever airport database was installed first.
+Both dashboards (Streamlit app and React SPCS service) are deployed once per account and auto-discover all `AIRPORT_XXX` databases. When installing a second (or third) airport, the installer detects existing dashboard objects and updates them in-place rather than creating duplicates. Both always live in the same host database (whichever airport database was installed first, or whichever already hosts an existing dashboard).
 
 ### Object Safety Reference
 
@@ -179,13 +179,14 @@ This shortcut path skips all data pipeline sub-skills and only updates the dashb
    ```
    Fall back to `AVIA_{IATA}_WH` if no audit record exists.
 
-2. Locate the existing dashboard. Check if a dashboard is already deployed in ANY airport database:
+2. Locate the existing dashboard host database. Check BOTH object types in ANY airport database:
    ```sql
    SHOW STREAMLITS IN ACCOUNT;
+   SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN ACCOUNT;
    ```
-   Filter results for rows where the `comment` column contains `"sf_sit-is-aviation"` and `"oss-aviation-dashboard"`. Record the database where it was found as `{DASHBOARD_DB}`.
+   Filter results for rows where the `comment` column contains `"sf_sit-is-aviation"` and `"oss-aviation-dashboard"`. Record the database from either result as `{DASHBOARD_DB}` (prefer the database that hosts both; if only one exists, use that database).
 
-   If no existing dashboard is found, set `{DASHBOARD_DB}` = `{TARGET_DB}`.
+   If no existing Streamlit or SPCS dashboard is found, set `{DASHBOARD_DB}` = `{TARGET_DB}`.
 
 3. Ensure the Git Repository Stage is up to date:
    ```sql
@@ -193,10 +194,10 @@ This shortcut path skips all data pipeline sub-skills and only updates the dashb
    ```
    If the Git Repository Stage does not exist in `{DASHBOARD_DB}`, create it (same as Step 5).
 
-4. Invoke the dashboard skill: Read and follow `.cortex/skills/aviation-dashboard/SKILL.md` with `{DASHBOARD_DB}` as the target.
-   The dashboard skill's version check (Step 3.5 in that skill) determines whether to actually redeploy.
+4. Invoke the dashboard skill: Read and follow `.cortex/skills/aviation-dashboard/SKILL.md` with `{DASHBOARD_DB}` as the target (`{TARGET_DB}` = `{DASHBOARD_DB}` for the React phase).
+   The skill deploys **both** Streamlit and React/SPCS; per-stack version checks determine whether each stack is redeployed.
 
-5. Print summary: "Dashboard check complete for {AIRPORT_NAME} ({IATA})." and stop.
+5. Print summary: "Dashboard check complete for {AIRPORT_NAME} ({IATA}) — Streamlit and React/SPCS." and stop. Include both URLs from the dashboard skill [Final Output](.cortex/skills/aviation-dashboard/SKILL.md#final-output).
 
 ### Step 3.5: Create Dedicated Warehouse
 
@@ -255,7 +256,8 @@ The airline CSV and skill files are loaded from a Git Repository Stage inside th
 ```sql
 CREATE OR REPLACE GIT REPOSITORY {TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO
   API_INTEGRATION = (ask user or use existing)
-  ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-aviation-ops-intelligence.git';
+  ORIGIN = 'https://github.com/Snowflake-Labs/sfguide-aviation-ops-intelligence.git'
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-installer","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}';
 ```
 
 Set `{GIT_REPO_STAGE_BASE}` = `@{TARGET_DB}.{SCHEMA}.AVIA_OPS_REPO/branches/main`.
@@ -281,17 +283,18 @@ Execute sub-skills in order:
 5. **Derived Analytics** -- Read and follow `.cortex/skills/aviation-installer/derived-analytics/SKILL.md`
    - Creates Dynamic Tables, monitoring views, task DAG, operational KPIs
 
-6. **Dashboard** -- Before deploying, locate any existing dashboard across all airport databases:
+6. **Dashboard (Streamlit + React/SPCS)** -- Before deploying, locate any existing dashboard objects across all airport databases:
    ```sql
    SHOW STREAMLITS IN ACCOUNT;
+   SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN ACCOUNT;
    ```
    Filter results for rows where the `comment` column contains `"sf_sit-is-aviation"` and `"oss-aviation-dashboard"`.
 
-   - **If a dashboard already exists** in another airport database: set `{DASHBOARD_DB}` to that database. The dashboard auto-discovers all `AIRPORT_XXX` databases, so one copy serves all airports. Do NOT create a duplicate.
-   - **If no dashboard exists anywhere**: set `{DASHBOARD_DB}` = `{TARGET_DB}`.
+   - **If either object already exists** in another airport database: set `{DASHBOARD_DB}` to that database (same host for both stacks). Both dashboards auto-discover all `AIRPORT_XXX` databases — do NOT create duplicates.
+   - **If neither exists anywhere**: set `{DASHBOARD_DB}` = `{TARGET_DB}`.
 
-   Then read and follow `.cortex/skills/aviation-dashboard/SKILL.md` with `{DASHBOARD_DB}` as the target.
-   The dashboard skill's version check determines whether to redeploy or skip.
+   Then read and follow `.cortex/skills/aviation-dashboard/SKILL.md` with `{DASHBOARD_DB}` as the target (`{TARGET_DB}` = `{DASHBOARD_DB}`).
+   The skill always runs Phase A (Streamlit) then attempts Phase B (React/SPCS). Per-stack version checks determine whether each stack is redeployed or skipped. If Docker/Podman, `snow` CLI, or SPCS privileges are missing, Phase B is skipped and installation **still succeeds** with Streamlit only (`{REACT_DEPLOYED}` = false from the dashboard skill).
 
 ### Step 7: Start Task DAG
 
@@ -371,26 +374,26 @@ Actions:
 1. Search Overture Maps for "San Diego" → find SAN / KSAN
 2. Confirm airport selection with user
 3. Gather config: skip flight schedules, enable TSA, 5-day backfill, default warehouse
-4. Run sub-skills in order: base-setup → adsb-ingestion → tsa-throughput → derived-analytics → dashboard
+4. Run sub-skills in order: base-setup → adsb-ingestion → tsa-throughput → derived-analytics → dashboard (Streamlit + React/SPCS)
 5. Resume task DAG, trigger initial data load, verify
-Result: `AIRPORT_SAN` database with full analytics pipeline and dashboard link
+Result: `AIRPORT_SAN` database with full analytics pipeline and both dashboard URLs
 
 ### Example 2: Add a second airport to existing installation
 User says: "Set up LAX — I already have SAN installed"
 Actions:
 1. Search for "LAX" → find Los Angeles International
 2. Create `AIRPORT_LAX` database (new)
-3. Existing dashboard in `AIRPORT_SAN` is detected and reused (no duplicate)
+3. Existing dashboards in `AIRPORT_SAN` are detected and reused (no duplicate Streamlit or SPCS)
 4. Run all sub-skills for LAX
-Result: `AIRPORT_LAX` database, dashboard auto-discovers both SAN and LAX
+Result: `AIRPORT_LAX` database; dashboards in SAN auto-discover both SAN and LAX
 
 ### Example 3: Update dashboard for existing airport
 User says: "Update the dashboard for my SAN airport"
 Actions:
 1. Detect `AIRPORT_SAN` exists → prompt user
 2. User selects "Update dashboard only"
-3. Fetch latest Git repo, redeploy dashboard
-Result: Dashboard updated, all data and pipelines untouched
+3. Fetch latest Git repo, redeploy both Streamlit and React/SPCS dashboards
+Result: Both dashboards updated, all data and pipelines untouched
 
 ## Troubleshooting
 
@@ -437,45 +440,50 @@ After Step 9 verification completes, print the following summary to the user (su
 - Dynamic Tables: 13 cascading DTs (traffic facts, gate analysis, runway crossings, flight tracker)
 - Views: V_AIR_OPS_DAILY_KPIS, HELPER_MONITOR_LAST_REFRESH, HELPER_QA_COUNTS_DAILY
 - Task DAG: TASK_INGEST_ADSB (root, 5-min schedule) with child tasks for enrichment, derived analytics, and optional flight schedule / TSA ingestion
-- Dashboard: deployed (see link below)
+- Dashboards: Streamlit app (always); React SPCS service when Phase B deployed (see links below)
 
 ---
 
-### Final Step: Open the Dashboard
+### Final Step: Open the Dashboards
 
-**If React dashboard (SPCS) was deployed:**
+Use `{DASHBOARD_DB}` from Step 6; default `{DASHBOARD_SCHEMA}` = `PUBLIC`, `{APP_NAME}` = `AIRPORT_ANALYTICS_DASHBOARD`. Follow the dashboard skill [Final Output](.cortex/skills/aviation-dashboard/SKILL.md#final-output) — Streamlit URL always; React/SPCS only when `{REACT_DEPLOYED}` = true.
 
-Retrieve the dashboard endpoint URL:
-
-```sql
-SHOW ENDPOINTS IN SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
-SELECT 'https://' || "ingress_url" AS dashboard_url
-FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
-WHERE "name" = 'dashboard';
-```
-
-Print this exact message to the user (substituting the actual URL):
-
-> **Open this URL and log in with your Snowflake credentials to see the Airport Analytics Dashboard:**
->
-> `<url>`
-
-Then open it automatically:
-```bash
-open "<url>"
-```
-
-**If Streamlit dashboard was deployed:**
+**Streamlit (Snowsight)** — always:
 
 ```sql
 SELECT SYSTEM$GET_SNOWSIGHT_HOST() AS host;
 ```
 
-Print this message (substituting actual values):
+**React (SPCS public endpoint)** — only if the service exists:
 
-> **Open the Airport Analytics Dashboard in Snowsight:**
+```sql
+SHOW SERVICES LIKE 'AVIATION_DASHBOARD_SERVICE' IN {DASHBOARD_DB}.PUBLIC;
+```
+
+If a row is returned:
+
+```sql
+SHOW ENDPOINTS IN SERVICE {DASHBOARD_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE;
+SELECT 'https://' || "ingress_url" AS dashboard_url
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'dashboard';
+```
+
+**When both stacks deployed** (`{REACT_DEPLOYED}` = true), print:
+
+> **Airport Analytics Dashboards deployed (both stacks):**
 >
-> `https://<host>/api/streamlit/{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
+> **Streamlit (Snowsight):** `https://<host>/api/streamlit/{DASHBOARD_DB}.{DASHBOARD_SCHEMA}.{APP_NAME}`
+>
+> **React (SPCS):** `https://<ingress_url>` — log in with your Snowflake credentials.
+
+Then open the SPCS URL automatically when running locally:
+
+```bash
+open "https://<ingress_url>"
+```
+
+**When React/SPCS was skipped** (`{REACT_DEPLOYED}` = false), print the Streamlit URL and the skip reason from the dashboard skill (container runtime, CLI, or privileges).
 
 ## Cleanup
 

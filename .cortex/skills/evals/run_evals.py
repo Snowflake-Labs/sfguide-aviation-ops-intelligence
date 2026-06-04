@@ -2,10 +2,11 @@
 """Skill evals runner.
 
 Usage:
-    python run_evals.py [--skill NAME] [--type trigger|quality|xref|sql] [--verbose] [--save]
+    python run_evals.py [--skill NAME] [--type trigger|quality|xref|sql|images] [--verbose] [--save]
 """
 import argparse
 import json
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -140,15 +141,57 @@ def run_sql_evals(skill_filter: str | None, verbose: bool) -> tuple[int, int, li
     return passed, total, results
 
 
+def run_image_version_evals(skill_filter: str | None, verbose: bool) -> tuple[int, int, list]:
+    """Run image-tag consistency validators declared under <skill>/scripts/check_image_versions.sh.
+
+    A skill opts in by providing an executable check_image_versions.sh. Exit 0 = pass.
+    Only the aviation-dashboard skill ships one today; others are silently skipped.
+    """
+    results: list = []
+    skills_with_checks = sorted(SKILLS_ROOT.glob("*/scripts/check_image_versions.sh"))
+    for script in skills_with_checks:
+        skill_name = script.parent.parent.name
+        if skill_filter and skill_name != skill_filter:
+            continue
+        proc = subprocess.run(
+            [str(script)],
+            capture_output=True,
+            text=True,
+        )
+        status = "pass" if proc.returncode == 0 else "fail"
+        results.append({
+            "skill": skill_name,
+            "status": status,
+            "returncode": proc.returncode,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+        })
+
+    passed = sum(1 for r in results if r["status"] == "pass")
+    total = len(results)
+    print(f"\n{'='*60}")
+    print(f"IMAGE VERSION EVALS: {passed}/{total} skills pass")
+    print(f"{'='*60}")
+    for r in results:
+        icon = "PASS" if r["status"] == "pass" else "FAIL"
+        print(f"  [{icon}] {r['skill']:<35} rc={r['returncode']}")
+        if verbose and r["status"] == "fail":
+            for line in r["stdout"].splitlines():
+                print(f"         {line}")
+            for line in r["stderr"].splitlines():
+                print(f"         ERR: {line}")
+    return passed, total, results
+
+
 def main():
     parser = argparse.ArgumentParser(description="Skill evals runner")
     parser.add_argument("--skill", help="Run evals for a single skill only")
-    parser.add_argument("--type", choices=["trigger", "quality", "xref", "sql"], help="Run a single eval type")
+    parser.add_argument("--type", choices=["trigger", "quality", "xref", "sql", "images"], help="Run a single eval type")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show detailed failure info")
     parser.add_argument("--save", action="store_true", help="Save results to reports/")
     args = parser.parse_args()
 
-    eval_types = [args.type] if args.type else ["trigger", "quality", "xref", "sql"]
+    eval_types = [args.type] if args.type else ["trigger", "quality", "xref", "sql", "images"]
     all_results = {}
     total_passed = 0
     total_total = 0
@@ -176,6 +219,12 @@ def main():
         total_passed += p
         total_total += t
         all_results["sql"] = r
+
+    if "images" in eval_types:
+        p, t, r = run_image_version_evals(args.skill, args.verbose)
+        total_passed += p
+        total_total += t
+        all_results["images"] = r
 
     print(f"\n{'='*60}")
     print(f"OVERALL: {total_passed}/{total_total} eval groups pass")

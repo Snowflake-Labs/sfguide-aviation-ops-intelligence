@@ -1,11 +1,13 @@
 import { useState, useMemo, useCallback } from 'react';
-import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
+import { ScatterplotLayer, PathLayer, IconLayer } from '@deck.gl/layers';
 import MapView from '../shared/MapView';
 import MetricCard from '../shared/MetricCard';
 import { fmtNum, fmtAltitude, fmtSpeed, fmtTime } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSnowflake, useSfQuery } from '../hooks/useSnowflake';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
+import { useInfrastructure, type LayerPreset } from '../shared/useInfrastructure';
+import LayerPresetSelector from '../shared/LayerPresetSelector';
 
 interface TrackPoint {
   lat: number; lon: number; sec: number;
@@ -15,6 +17,12 @@ interface TrackPoint {
 const GROUND_CATEGORIES = new Set([
   'TOWER', 'SERVICE_VEHICLE', 'GROUND_VEHICLE', 'LIGHT_SURFACE_VEHICLE', 'UNKNOWN_SURFACE',
 ]);
+
+// Max seconds between consecutive ADS-B points to still treat them as one
+// continuous segment. Larger gaps (coverage holes, or separate legs that share
+// a callsign on the same day) are NOT interpolated across: the path is split
+// and the replay marker holds at the last real point instead of gliding.
+const MAX_GAP_SEC = 90;
 
 const VEHICLE_TYPE_LABELS: Record<string, string> = {
   HEAVY_AIRCRAFT: 'Heavy (A380, 777)',
@@ -42,7 +50,7 @@ function secToHMS(sec: number): string {
 
 function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
 
-function interpolateTrackPoint(pts: TrackPoint[], sec: number): TrackPoint | null {
+function interpolateTrackPoint(pts: TrackPoint[], sec: number, maxGap = MAX_GAP_SEC): TrackPoint | null {
   if (!pts.length) return null;
   if (sec <= pts[0].sec) return { ...pts[0] };
   if (sec >= pts[pts.length - 1].sec) return { ...pts[pts.length - 1] };
@@ -52,6 +60,9 @@ function interpolateTrackPoint(pts: TrackPoint[], sec: number): TrackPoint | nul
     if (pts[mid].sec <= sec) lo = mid; else hi = mid;
   }
   const a = pts[lo], b = pts[hi];
+  // Don't interpolate across a large coverage gap (e.g. between two legs that
+  // share a callsign). Hold at the last real point until the next segment.
+  if (b.sec - a.sec > maxGap) return { ...a };
   const t = b.sec > a.sec ? (sec - a.sec) / (b.sec - a.sec) : 0;
   return {
     lat: lerp(a.lat, b.lat, t),
@@ -64,14 +75,16 @@ function interpolateTrackPoint(pts: TrackPoint[], sec: number): TrackPoint | nul
   };
 }
 
+// Matches the on-screen altitude legend gradient:
+// low #00897B (teal) -> mid #FDD835 (yellow) -> high #E53935 (red)
 function altColor(alt: number, min: number, max: number): [number, number, number] {
   const t = max > min ? Math.max(0, Math.min(1, (alt - min) / (max - min))) : 0;
   if (t < 0.5) {
-    const s = t * 2;
-    return [Math.round(0 + 255 * s), Math.round(137 + (221 - 137) * s), Math.round(53 - 70 * s)];
+    const s = t * 2; // #00897B -> #FDD835
+    return [Math.round(0 + 253 * s), Math.round(137 + 79 * s), Math.round(123 - 70 * s)];
   }
-  const s = (t - 0.5) * 2;
-  return [Math.round(255 - 26 * s), Math.round(221 - 168 * s), Math.round(53 - 53 * s)];
+  const s = (t - 0.5) * 2; // #FDD835 -> #E53935
+  return [Math.round(253 - 24 * s), Math.round(216 - 159 * s), 53];
 }
 
 function flightLabel(f: any): string {
@@ -92,6 +105,9 @@ export default function FlightTracker() {
   const { airport } = useAirport();
   const { query } = useSnowflake();
   const db = airport ? `${airport}.PUBLIC` : '';
+  const [infraPreset, setInfraPreset] = useState<LayerPreset>('airport-ops');
+  const [customTypes, setCustomTypes] = useState<Set<string>>(new Set());
+  const { layers: infraLayers, availableTypes } = useInfrastructure(infraPreset, customTypes);
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedFlight, setSelectedFlight] = useState<string | null>(null);
   const [trackData, setTrackData] = useState<any[]>([]);
@@ -182,7 +198,7 @@ export default function FlightTracker() {
   }, [airport, db, date, tz, query]);
 
   const trackPoints = useMemo<TrackPoint[]>(() => {
-    return trackData
+    const raw = trackData
       .filter((d: any) => d.LAT != null && d.LON != null)
       .map((d: any) => ({
         lat: Number(d.LAT),
@@ -193,6 +209,15 @@ export default function FlightTracker() {
         track: Number(d.TRACK) || 0,
         onGround: d.ON_GROUND === true || d.ON_GROUND === 'true',
       }));
+    // Collapse multiple pings stamped to the same second (keep the last) so the
+    // scrubber doesn't jitter between near-duplicate positions at one tick.
+    const out: TrackPoint[] = [];
+    for (const p of raw) {
+      const last = out[out.length - 1];
+      if (last && last.sec === p.sec) out[out.length - 1] = p;
+      else out.push(p);
+    }
+    return out;
   }, [trackData]);
 
   const currentPos = useMemo(() => {
@@ -200,19 +225,33 @@ export default function FlightTracker() {
   }, [trackPoints, currentTime]);
 
   const layers = useMemo(() => {
-    if (!trackPoints.length) return [];
+    const base = [...infraLayers];
+    if (!trackPoints.length) return base;
     const alts = trackPoints.map(d => d.alt);
     const minAlt = Math.min(...alts, 0);
     const maxAlt = Math.max(...alts, 1);
 
     const path = trackPoints.map(d => [d.lon, d.lat]);
-    const avgAlt = alts.length ? alts.reduce((a, b) => a + b, 0) / alts.length : 0;
-    const color = altColor(avgAlt, minAlt, maxAlt);
+
+    // Build per-edge segments colored by altitude so the trajectory matches the
+    // on-screen Low -> High legend gradient (teal -> yellow -> red). Edges that
+    // straddle a large time gap (coverage hole / separate leg of the same
+    // callsign) are dropped so the line doesn't draw a straight chord across them.
+    const segments: { path: number[][]; color: [number, number, number] }[] = [];
+    for (let i = 0; i < trackPoints.length - 1; i++) {
+      const a = trackPoints[i], b = trackPoints[i + 1];
+      if (b.sec - a.sec > MAX_GAP_SEC) continue;
+      segments.push({
+        path: [[a.lon, a.lat], [b.lon, b.lat]],
+        color: altColor((a.alt + b.alt) / 2, minAlt, maxAlt),
+      });
+    }
 
     const result: any[] = [
+      ...base,
       new PathLayer({
         id: 'flight-path',
-        data: [{ path, color }],
+        data: segments,
         getPath: (d: any) => d.path,
         getColor: (d: any) => [...d.color, 200],
         widthMinPixels: 3,
@@ -233,24 +272,36 @@ export default function FlightTracker() {
 
     if (currentPos) {
       result.push(
-        new ScatterplotLayer({
+        new IconLayer({
           id: 'flight-current-pos',
           data: [currentPos],
           getPosition: (d: TrackPoint) => [d.lon, d.lat],
-          getFillColor: [41, 181, 232, 230],
-          getLineColor: [255, 255, 255, 220],
-          getRadius: 120,
-          radiusMinPixels: 7,
-          radiusMaxPixels: 14,
-          stroked: true,
-          lineWidthMinPixels: 2,
+          getIcon: () => ({
+            url: '/plane.png',
+            width: 256,
+            height: 256,
+            anchorX: 128,
+            anchorY: 128,
+            // mask:false preserves the PNG's own colors instead of tinting
+            mask: false,
+          }),
+          // ADS-B TRACK is degrees clockwise from north; the plane.png nose
+          // points northwest (~315deg) at rest. deck.gl getAngle is CCW-positive
+          // and displayed_bearing = 315 - getAngle, so align nose with heading
+          // via getAngle = -45 - track (equivalent to 315 - track).
+          getAngle: (d: TrackPoint) => -45 - (d.track || 0),
+          getSize: 40,
+          sizeUnits: 'pixels',
+          sizeMinPixels: 20,
+          sizeMaxPixels: 64,
+          billboard: true,
           pickable: true,
         })
       );
     }
 
     return result;
-  }, [trackPoints, currentPos]);
+  }, [trackPoints, currentPos, infraLayers]);
 
   const profileData = useMemo(() => {
     return trackData
@@ -263,16 +314,32 @@ export default function FlightTracker() {
       }));
   }, [trackData]);
 
-  const currentTimeLabel = useMemo(() => {
-    const match = profileData.find((d, i) => {
+  const currentIndex = useMemo(() => {
+    let idx = -1;
+    for (let i = 0; i < profileData.length; i++) {
       const next = profileData[i + 1];
-      return d.sec <= currentTime && (!next || next.sec > currentTime);
-    });
-    return match?.time || secToHMS(currentTime);
+      if (profileData[i].sec <= currentTime && (!next || next.sec > currentTime)) { idx = i; break; }
+    }
+    return idx;
   }, [profileData, currentTime]);
 
+  const currentProfilePoint = currentIndex >= 0 ? profileData[currentIndex] : null;
+
+  const currentTimeLabel = currentProfilePoint?.time || secToHMS(currentTime);
+
   const getTooltip = useCallback(({ object, layer }: any) => {
-    if (!object || layer?.id !== 'flight-current-pos') return null;
+    if (!object) return null;
+    const layerId = String(layer?.id || '');
+    if (layerId.startsWith('infra-')) {
+      const type = object.properties?.type || object.TYPE || '';
+      const name = object.properties?.name || object.NAME || '';
+      const typeLabel = String(type).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      return {
+        html: `<b>${typeLabel || 'Infrastructure'}</b>${name ? `<br/>${name}` : ''}`,
+        style: { backgroundColor: '#24323D', color: '#fff', fontSize: '12px', padding: '6px 10px', borderRadius: '6px' },
+      };
+    }
+    if (layer?.id !== 'flight-current-pos') return null;
     return {
       html: `<b>${selectedFlight}</b><br/>Alt: ${fmtAltitude(object.alt)}<br/>Speed: ${fmtSpeed(object.vel)}<br/>${object.onGround ? 'On Ground' : 'Airborne'}`,
       style: { backgroundColor: '#24323D', color: '#fff', fontSize: '12px', padding: '6px 10px', borderRadius: '6px' },
@@ -289,6 +356,8 @@ export default function FlightTracker() {
     <div className="page-full">
       <div className="page-sidebar-panel">
         <h2>Flight Tracker</h2>
+        <LayerPresetSelector preset={infraPreset} onPresetChange={setInfraPreset}
+          customTypes={customTypes} onCustomTypesChange={setCustomTypes} availableTypes={availableTypes} />
         <div className="form-group">
           <label>Date</label>
           <input type="date" className="form-input" value={date} onChange={e => { setDate(e.target.value); setSelectedFlight(null); setTrackData([]); }} />
@@ -348,7 +417,20 @@ export default function FlightTracker() {
                 <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                 <YAxis tick={{ fontSize: 10 }} />
                 <Tooltip />
-                <Line type="monotone" dataKey="altitude" stroke="#29B5E8" dot={false} strokeWidth={1.5} />
+                <Line
+                  type="monotone"
+                  dataKey="altitude"
+                  stroke="#29B5E8"
+                  strokeWidth={1.5}
+                  isAnimationActive={false}
+                  dot={(props: any) => {
+                    if (props.index !== currentIndex) return <g key={`d-${props.index}`} />;
+                    return (
+                      <circle key={`d-${props.index}`} cx={props.cx} cy={props.cy} r={5}
+                        fill="#E53935" stroke="#fff" strokeWidth={2} />
+                    );
+                  }}
+                />
                 {trackData.length > 0 && (
                   <ReferenceLine x={currentTimeLabel} stroke="#E53935" strokeWidth={2} strokeDasharray="3 3" />
                 )}

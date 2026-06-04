@@ -9,6 +9,49 @@
 
 ---
 
+## V_TSA_THROUGHPUT_CLEAN (View)
+
+Normalizes the raw `TSA_THROUGHPUT` table (populated by AI_EXTRACT from FOIA PDFs) into typed, dashboard-ready columns. Parses the `MM/DD/YYYY` date string into a real `DATE`, extracts the integer hour, strips thousands separators from the passenger count, and filters out misaligned-extraction rows (where the `date` cell failed to parse, or `checkpoint` is empty / a stray numeric token > 40 chars).
+
+> **REQUIRED**: The React dashboard's **TSA Throughput** page (`TSAThroughput.tsx`) and the Streamlit TSA page both query `V_TSA_THROUGHPUT_CLEAN` for every KPI (Total Passengers, Daily Average, Peak Hour, Checkpoints), the daily/hourly/checkpoint charts, the day-of-week × hour heatmap, and the raw data table. If this view is missing, the entire TSA page renders zeros and "No data" even when `TSA_THROUGHPUT` is fully populated. Create it in the same step as `V_TSA_CHECKPOINT_GEO`.
+
+The view is intentionally **airport-agnostic** — it exposes `airport_code` so the dashboard can filter (`WHERE airport_code = '{IATA}'`); do not bake `{IATA}` into the view.
+
+```sql
+CREATE OR REPLACE VIEW {TARGET_DB}.{SCHEMA}.V_TSA_THROUGHPUT_CLEAN
+  COMMENT = '{"origin":"sf_sit-is-aviation","name":"oss-aviation-derived-analytics","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}'
+AS
+SELECT
+    UPPER(airport_code)                                          AS airport_code,
+    date                                                         AS date,
+    TRY_TO_DATE(date, 'MM/DD/YYYY')                              AS throughput_date,
+    TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1))               AS hour_num,
+    checkpoint                                                   AS checkpoint,
+    TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0)    AS total_pax,
+    airport_name                                                 AS airport_name,
+    city                                                         AS city,
+    state                                                        AS state
+FROM {TARGET_DB}.{SCHEMA}.TSA_THROUGHPUT
+WHERE TRY_TO_DATE(date, 'MM/DD/YYYY') IS NOT NULL
+  AND checkpoint IS NOT NULL
+  AND checkpoint != ''
+  AND LEN(checkpoint) < 40;
+```
+
+### Columns consumed by the dashboard
+
+| Column | Used for |
+| --- | --- |
+| `airport_code` | Filter to the current airport's IATA |
+| `date` | `dateRangeSql` re-parses raw `MM/DD/YYYY` to derive available min/max date |
+| `throughput_date` | Date filtering + daily trend / heatmap day-of-week |
+| `hour_num` | Hourly bar chart + heatmap hour axis + Peak Hour KPI |
+| `checkpoint` | Checkpoint bar chart, Checkpoint Share pie, Checkpoints KPI |
+| `total_pax` | All passenger sums (Total Passengers, Daily Average) |
+| `airport_name`, `city`, `state` | Raw data table |
+
+---
+
 ## V_TSA_CHECKPOINT_GEO (View)
 
 Maps TSA checkpoint throughput data to physical terminal building geometries from `PROPERTIES_INFRASTRUCTURE`. Uses fuzzy text matching (substring containment + Jaro-Winkler similarity) to link checkpoint names to terminal polygons. Unmatched checkpoints fall back to the airport centroid.

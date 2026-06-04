@@ -202,6 +202,7 @@ BEGIN
       -- 5-day backfill can take a while (downloads + extract + SQL filter). Give it room.
       USER_TASK_TIMEOUT_MS = 86400000
       ALLOW_OVERLAPPING_EXECUTION = FALSE
+      COMMENT = ''{"origin":"sf_sit-is-aviation","name":"oss-aviation-adsb-ingestion","version":{"major":1,"minor":0},"attributes":{"is_quickstart":1,"source":"sql"}}''
     AS
       CALL {TARGET_DB}.{SCHEMA}.PROC_RUN_BACKFILL_ONCE();
   ';

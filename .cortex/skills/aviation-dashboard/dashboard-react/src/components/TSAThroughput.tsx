@@ -6,6 +6,8 @@ import DataTable from '../shared/DataTable';
 import { fmtNum } from '../shared/format';
 import { useAirport } from '../hooks/useAirport';
 import { useSfQuery } from '../hooks/useSnowflake';
+import { useInfrastructure, type LayerPreset } from '../shared/useInfrastructure';
+import LayerPresetSelector from '../shared/LayerPresetSelector';
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Area, AreaChart,
@@ -52,6 +54,9 @@ function intensityColor(t: number): [number, number, number, number] {
 export default function TSAThroughput() {
   const { airport } = useAirport();
   const db = airport ? `${airport}.PUBLIC` : '';
+  const [infraPreset, setInfraPreset] = useState<LayerPreset>('airport-ops');
+  const [customTypes, setCustomTypes] = useState<Set<string>>(new Set());
+  const { layers: infraLayers, availableTypes } = useInfrastructure(infraPreset, customTypes);
   const today = new Date().toISOString().split('T')[0];
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
   const [dateFrom, setDateFrom] = useState(weekAgo);
@@ -97,69 +102,61 @@ export default function TSAThroughput() {
 
   const dateRangeSql = airport && iata && hasTable
     ? `SELECT MIN(TRY_TO_DATE(date, 'MM/DD/YYYY')) AS MIN_DATE, MAX(TRY_TO_DATE(date, 'MM/DD/YYYY')) AS MAX_DATE
-       FROM ${db}.TSA_THROUGHPUT WHERE UPPER(airport_code) = '${iata}' AND TRY_TO_DATE(date, 'MM/DD/YYYY') IS NOT NULL`
+       FROM ${db}.V_TSA_THROUGHPUT_CLEAN WHERE airport_code = '${iata}'`
     : '';
   const { data: dateRangeRows } = useSfQuery(dateRangeSql, airport, 'PUBLIC', [iata, hasTable]);
 
   const dailySql = airport && iata && hasTable
-    ? `SELECT TO_CHAR(TRY_TO_DATE(date, 'MM/DD/YYYY'), 'YYYY-MM-DD') AS TSA_DATE,
-             SUM(TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0)) AS TOTAL_PAX,
+    ? `SELECT TO_CHAR(throughput_date, 'YYYY-MM-DD') AS TSA_DATE,
+             SUM(total_pax) AS TOTAL_PAX,
              COUNT(DISTINCT checkpoint) AS CHECKPOINT_COUNT
-       FROM ${db}.TSA_THROUGHPUT
-       WHERE UPPER(airport_code) = '${iata}'
-         AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
-         AND LEN(checkpoint) < 40
+       FROM ${db}.V_TSA_THROUGHPUT_CLEAN
+       WHERE airport_code = '${iata}'
+         AND throughput_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        GROUP BY TSA_DATE ORDER BY TSA_DATE`
     : '';
   const { data: dailyData } = useSfQuery(dailySql, airport, 'PUBLIC', [iata, hasTable, dateFrom, dateTo]);
 
   const hourlySql = airport && iata && hasTable
-    ? `SELECT TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) AS HOUR_OF_DAY,
-             SUM(TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0)) AS TOTAL_PAX
-       FROM ${db}.TSA_THROUGHPUT
-       WHERE UPPER(airport_code) = '${iata}'
-         AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
-         AND TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) IS NOT NULL
-         AND LEN(checkpoint) < 40
+    ? `SELECT hour_num AS HOUR_OF_DAY,
+             SUM(total_pax) AS TOTAL_PAX
+       FROM ${db}.V_TSA_THROUGHPUT_CLEAN
+       WHERE airport_code = '${iata}'
+         AND throughput_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        GROUP BY HOUR_OF_DAY ORDER BY HOUR_OF_DAY`
     : '';
   const { data: hourlyData } = useSfQuery(hourlySql, airport, 'PUBLIC', [iata, hasTable, dateFrom, dateTo]);
 
   const checkpointSql = airport && iata && hasTable
     ? `SELECT checkpoint AS CHECKPOINT,
-             SUM(TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0)) AS TOTAL_PAX
-       FROM ${db}.TSA_THROUGHPUT
-       WHERE UPPER(airport_code) = '${iata}'
-         AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
-         AND checkpoint IS NOT NULL AND checkpoint != ''
-         AND LEN(checkpoint) < 40
+             SUM(total_pax) AS TOTAL_PAX
+       FROM ${db}.V_TSA_THROUGHPUT_CLEAN
+       WHERE airport_code = '${iata}'
+         AND throughput_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        GROUP BY CHECKPOINT ORDER BY TOTAL_PAX DESC`
     : '';
   const { data: checkpointData } = useSfQuery(checkpointSql, airport, 'PUBLIC', [iata, hasTable, dateFrom, dateTo]);
 
   const heatmapSql = airport && iata && hasTable
-    ? `SELECT TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) AS HOUR,
-             DAYOFWEEK(TRY_TO_DATE(date, 'MM/DD/YYYY')) AS DAY_OF_WEEK,
-             SUM(TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0)) AS TOTAL_PAX
-       FROM ${db}.TSA_THROUGHPUT
-       WHERE UPPER(airport_code) = '${iata}'
-         AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
-         AND TRY_TO_NUMBER(SPLIT_PART(hour_of_day, ':', 1)) IS NOT NULL
-         AND LEN(checkpoint) < 40
+    ? `SELECT hour_num AS HOUR,
+             DAYOFWEEK(throughput_date) AS DAY_OF_WEEK,
+             SUM(total_pax) AS TOTAL_PAX
+       FROM ${db}.V_TSA_THROUGHPUT_CLEAN
+       WHERE airport_code = '${iata}'
+         AND throughput_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        GROUP BY HOUR, DAY_OF_WEEK ORDER BY DAY_OF_WEEK, HOUR`
     : '';
   const { data: heatmapData } = useSfQuery(heatmapSql, airport, 'PUBLIC', [iata, hasTable, dateFrom, dateTo]);
 
   const rawSql = airport && iata && hasTable
-    ? `SELECT TO_CHAR(TRY_TO_DATE(date, 'MM/DD/YYYY'), 'YYYY-MM-DD') AS DATE,
-             SPLIT_PART(hour_of_day, ':', 1) AS HOUR,
+    ? `SELECT TO_CHAR(throughput_date, 'YYYY-MM-DD') AS DATE,
+             LPAD(hour_num::STRING, 2, '0') AS HOUR,
              checkpoint AS CHECKPOINT,
-             TRY_TO_NUMBER(REPLACE(total_pax_kcm_pax, ',', ''), 10, 0) AS PASSENGERS,
+             total_pax AS PASSENGERS,
              airport_name AS AIRPORT_NAME, city AS CITY, state AS STATE
-       FROM ${db}.TSA_THROUGHPUT
-       WHERE UPPER(airport_code) = '${iata}'
-         AND TRY_TO_DATE(date, 'MM/DD/YYYY') BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
-         AND LEN(checkpoint) < 40
+       FROM ${db}.V_TSA_THROUGHPUT_CLEAN
+       WHERE airport_code = '${iata}'
+         AND throughput_date BETWEEN '${dateFrom}'::DATE AND '${dateTo}'::DATE
        ORDER BY DATE DESC, HOUR LIMIT 1000`
     : '';
   const { data: rawData } = useSfQuery(rawSql, airport, 'PUBLIC', [iata, hasTable, dateFrom, dateTo]);
@@ -188,9 +185,9 @@ export default function TSAThroughput() {
   }, [heatmapData]);
 
   const mapLayers = useMemo(() => {
-    if (!geoData.length || !meta) return [];
+    if (!geoData.length || !meta) return [...infraLayers];
     const maxPax = Math.max(...geoData.map((r: any) => Number(r.TOTAL_PAX) || 0), 1);
-    const layers: any[] = [];
+    const layers: any[] = [...infraLayers];
 
     const features: any[] = [];
     const seen = new Set<string>();
@@ -253,7 +250,7 @@ export default function TSAThroughput() {
     }));
 
     return layers;
-  }, [geoData, meta]);
+  }, [geoData, meta, infraLayers]);
 
   const [showRaw, setShowRaw] = useState(false);
 
@@ -278,11 +275,15 @@ export default function TSAThroughput() {
           <label>To</label>
           <input type="date" className="form-input" value={dateTo} onChange={e => setDateTo(e.target.value)} />
         </div>
+        <div className="form-group" style={{ marginBottom: 0, minWidth: 180 }}>
+          <LayerPresetSelector preset={infraPreset} onPresetChange={setInfraPreset}
+            customTypes={customTypes} onCustomTypesChange={setCustomTypes} availableTypes={availableTypes} />
+        </div>
       </div>
 
       <div className="metric-grid">
         <MetricCard label="Total Passengers" value={fmtNum(totalPax)} />
-        <MetricCard label="Daily Average" value={fmtNum(dailyAvg)} />
+        <MetricCard label="Daily Average" value={numDays >= 2 ? fmtNum(dailyAvg) : '—'} />
         <MetricCard label="Peak Hour" value={peakHour} />
         <MetricCard label="Checkpoints" value={fmtNum(maxCheckpoints)} />
       </div>

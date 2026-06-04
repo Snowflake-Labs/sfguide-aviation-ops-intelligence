@@ -19,7 +19,7 @@ def run(skills_root: str, overrides: dict | None = None) -> list[dict]:
 
 
 def _clean_ref_name(name: str) -> str:
-    name = name.rstrip("`).,:;!?'\"")
+    name = name.rstrip("`).,:;!?'\"*")
     name = name.lstrip("[(`'\"")
     name = re.sub(r"\].*$", "", name)
     name = re.sub(r"#.*$", "", name)
@@ -41,7 +41,7 @@ def _check_skill(skill_md: Path, ignore_prefixes: list[str] | None = None) -> di
             if ref_file.name not in text:
                 issues.append(f"Orphaned reference: {ref_file.name} not linked from SKILL.md")
 
-        raw_refs = re.findall(r"references/([^\s)>]+)", text)
+        raw_refs = re.findall(r"(?<!/)references/([^\s)>]+)", text)
         seen = set()
         for raw in raw_refs:
             cleaned = _clean_ref_name(raw)

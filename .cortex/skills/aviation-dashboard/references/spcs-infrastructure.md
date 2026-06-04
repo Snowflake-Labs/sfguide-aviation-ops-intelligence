@@ -102,7 +102,7 @@ CREATE SERVICE {TARGET_DB}.PUBLIC.AVIATION_DASHBOARD_SERVICE
 spec:
   containers:
     - name: aviation-dashboard
-      image: /{TARGET_DB}/public/aviation_dashboard_repo/aviation_dashboard:latest
+      image: /{TARGET_DB}/public/aviation_dashboard_repo/aviation_dashboard:{AVIATION_DASHBOARD_TAG}
       env:
         SNOWFLAKE_DATABASE: "{TARGET_DB}"
         SNOWFLAKE_WAREHOUSE: "{WAREHOUSE}"
